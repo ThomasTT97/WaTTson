@@ -154,7 +154,12 @@ export const sendChatMessage = async (
   - Recent 7-day Load: ${contextData.recentLoad || 0} TSS
   - Readiness Score: ${contextData.readiness || 'Unknown'}/10
 
-  Keep answers concise, motivating, and data-driven. Do not provide medical advice.`;
+  INSTRUCTIONS:
+  1. Be EXTREMELY direct and concise.
+  2. Answer ONLY what is asked. No pleasantries.
+  3. Max 1-2 sentences per response unless a list is needed.
+  4. Use bullet points for data.
+  5. No medical advice.`;
 
   // Map internal ChatMessage to Gemini Content format
   const history = previousMessages.map(m => ({
