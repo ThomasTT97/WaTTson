@@ -44,12 +44,8 @@ import {
   Zap,
   Flame,
   Info,
-  Bot,
-  X
+  Bot
 } from 'lucide-react';
-
-// Increment this version number to show the popup again in future updates
-const APP_VERSION = '1.1.0';
 
 const App: React.FC = () => {
   // Safe initialization of credentials
@@ -89,9 +85,6 @@ const App: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [lastSync, setLastSync] = useState<Date | null>(null);
   
-  // Update Modal State
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
-  
   // Chat State
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -115,21 +108,6 @@ const App: React.FC = () => {
 
   const appOrigin = window.location.origin;
   const isStravaError = error?.includes("STRAVA_DATA_ERROR");
-
-  // Version Check Effect
-  useEffect(() => {
-    const seenVersion = localStorage.getItem('wattson_version_seen');
-    if (seenVersion !== APP_VERSION) {
-      // Small delay to let the app load first
-      const timer = setTimeout(() => setShowUpdateModal(true), 1000);
-      return () => clearTimeout(timer);
-    }
-  }, []);
-
-  const dismissUpdateModal = () => {
-    localStorage.setItem('wattson_version_seen', APP_VERSION);
-    setShowUpdateModal(false);
-  };
 
   const loadData = async (credentials: IntervalsCredentials, isInitial = false) => {
     if (isInitial) setLoading(true);
@@ -485,7 +463,7 @@ const App: React.FC = () => {
 
   // APP DASHBOARD
   return (
-    <div className="phone-container flex flex-col h-[100dvh] overflow-hidden relative">
+    <div className="phone-container flex flex-col h-[100dvh] overflow-hidden">
       <div className="gradient-bg"></div>
       
       {/* 
@@ -779,4 +757,173 @@ const App: React.FC = () => {
                   disabled={!chatInput.trim() || isChatLoading}
                   className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center text-white shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 disabled:opacity-0 disabled:scale-75 transition-all active:scale-95"
                 >
-                  <Send size={18}
+                  <Send size={18} className="ml-0.5" />
+                </button>
+              </div>
+            </form>
+           </div>
+        )}
+
+        {activeTab === 'settings' && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+             {!isEditingGoal ? (
+               <>
+                 <header className="mb-2">
+                    <h1 className="text-xl font-bold text-white tracking-tight">Settings</h1>
+                    <p className="text-slate-400 text-xs mt-0.5">Manage your connection</p>
+                </header>
+                
+                <div className="glass-panel rounded-2xl overflow-hidden border-white/5">
+                  <div className="p-4 border-b border-white/5 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-cyan-500/10 flex items-center justify-center text-cyan-400">
+                            <User size={16} />
+                        </div>
+                        <p className="text-xs font-bold text-white">Account Status</p>
+                    </div>
+                    <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-white/5 ${activities.length > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {activities.length > 0 ? 'Connected' : 'Offline'}
+                    </span>
+                  </div>
+                  
+                  <div className="p-4 border-b border-white/5 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-slate-400">
+                            <History size={16} />
+                        </div>
+                        <p className="text-xs font-bold text-white">Last Sync</p>
+                    </div>
+                    <p className="text-[10px] text-slate-400">{lastSync ? lastSync.toLocaleTimeString() : 'Never'}</p>
+                  </div>
+
+                  <button 
+                    onClick={openGoalEditor}
+                    className="w-full p-4 text-left text-xs font-bold text-white hover:bg-white/5 transition-colors flex items-center justify-between border-b border-white/5"
+                  >
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center text-purple-400">
+                            <Target size={16} />
+                        </div>
+                        <p>Training Goal</p>
+                    </div>
+                    <ChevronRight size={14} className="text-slate-600" />
+                  </button>
+
+                  <button 
+                    onClick={() => {
+                      localStorage.removeItem('wattson_creds');
+                      localStorage.removeItem('wattson_goal');
+                      setCreds(null);
+                      setActivities([]);
+                      setWellnessData([]);
+                      setSuggestion(null);
+                      setUserGoal('');
+                      setError(null);
+                      setFormKey('');
+                      setActiveTab('dashboard');
+                    }}
+                    className="w-full p-4 text-left text-xs font-bold text-red-400 hover:bg-red-500/5 transition-colors flex items-center gap-3"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center text-red-400">
+                        <LogOut size={14} />
+                    </div>
+                    Disconnect Account
+                  </button>
+                </div>
+              </>
+             ) : (
+               <div className="animate-in slide-in-from-right duration-300">
+                 <header className="mb-4 flex items-center gap-4">
+                    <button onClick={() => setIsEditingGoal(false)} className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center">
+                      <ArrowLeft size={16} className="text-white" />
+                    </button>
+                    <div>
+                      <h1 className="text-xl font-bold text-white tracking-tight">Set Goal</h1>
+                    </div>
+                 </header>
+
+                 <div className="glass-panel p-5 rounded-2xl border-white/10 space-y-4">
+                   <div>
+                     <textarea 
+                        value={tempGoal}
+                        onChange={(e) => setTempGoal(e.target.value)}
+                        placeholder="e.g., Increase my FTP to 300W"
+                        className="w-full h-24 bg-slate-900/60 border border-white/10 rounded-xl p-3 text-white text-sm placeholder-slate-700 focus:outline-none resize-none"
+                     />
+                   </div>
+                   <div className="flex flex-wrap gap-1.5">
+                     {suggestedGoals.map((goal) => (
+                       <button
+                         key={goal}
+                         onClick={() => setTempGoal(goal)}
+                         className="px-2 py-1 rounded-full bg-white/5 border border-white/5 text-[9px] font-medium text-slate-400 hover:bg-purple-500/10 transition-colors"
+                       >
+                         {goal}
+                       </button>
+                     ))}
+                   </div>
+                   <button 
+                     onClick={handleSaveGoal}
+                     className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white font-bold py-3 rounded-xl transition-all shadow-lg active:scale-[0.98] flex items-center justify-center gap-2"
+                   >
+                     <Save size={16} />
+                     Save Goal
+                   </button>
+                 </div>
+               </div>
+             )}
+          </div>
+        )}
+      </div>
+
+      <nav className="fixed bottom-6 left-6 right-6 max-w-[402px] mx-auto h-16 bg-slate-900/80 backdrop-blur-xl rounded-2xl border border-white/10 flex items-center justify-around z-50 shadow-2xl px-2">
+        <button 
+          onClick={() => setActiveTab('dashboard')} 
+          className={`relative flex-1 h-full flex flex-col items-center justify-center gap-1 transition-all duration-300 ${activeTab === 'dashboard' ? 'text-cyan-400' : 'text-slate-500 hover:text-slate-400'}`}
+        >
+          {activeTab === 'dashboard' && <div className="absolute inset-0 bg-cyan-500/10 blur-lg rounded-full scale-50"></div>}
+          <LayoutDashboard size={20} strokeWidth={activeTab === 'dashboard' ? 2.5 : 2} className="relative z-10" />
+          <span className="text-[9px] font-bold tracking-wide relative z-10">Home</span>
+        </button>
+        
+        <button 
+          onClick={() => setActiveTab('rides')} 
+          className={`relative flex-1 h-full flex flex-col items-center justify-center gap-1 transition-all duration-300 ${activeTab === 'rides' ? 'text-cyan-400' : 'text-slate-500 hover:text-slate-400'}`}
+        >
+          {activeTab === 'rides' && <div className="absolute inset-0 bg-cyan-500/10 blur-lg rounded-full scale-50"></div>}
+          <Bike size={20} strokeWidth={activeTab === 'rides' ? 2.5 : 2} className="relative z-10" />
+          <span className="text-[9px] font-bold tracking-wide relative z-10">Rides</span>
+        </button>
+        
+        <button 
+          onClick={() => setActiveTab('chat')} 
+          className={`relative flex-1 h-full flex flex-col items-center justify-center gap-1 transition-all duration-300 ${activeTab === 'chat' ? 'text-cyan-400' : 'text-slate-500 hover:text-slate-400'}`}
+        >
+          {activeTab === 'chat' && <div className="absolute inset-0 bg-cyan-500/10 blur-lg rounded-full scale-50"></div>}
+          <MessageSquare size={20} strokeWidth={activeTab === 'chat' ? 2.5 : 2} className="relative z-10" />
+          <span className="text-[9px] font-bold tracking-wide relative z-10">Coach</span>
+        </button>
+        
+        <button 
+          onClick={() => setActiveTab('settings')} 
+          className={`relative flex-1 h-full flex flex-col items-center justify-center gap-1 transition-all duration-300 ${activeTab === 'settings' ? 'text-cyan-400' : 'text-slate-500 hover:text-slate-400'}`}
+        >
+          {activeTab === 'settings' && <div className="absolute inset-0 bg-cyan-500/10 blur-lg rounded-full scale-50"></div>}
+          <Settings size={20} strokeWidth={activeTab === 'settings' ? 2.5 : 2} className="relative z-10" />
+          <span className="text-[9px] font-bold tracking-wide relative z-10">Profile</span>
+        </button>
+      </nav>
+
+      {selectedActivity && creds && (
+        <CoachingModal 
+          activity={selectedActivity} 
+          creds={creds}
+          onClose={() => setSelectedActivity(null)}
+          userGoal={userGoal}
+        />
+      )}
+    </div>
+  );
+};
+
+export default App;
