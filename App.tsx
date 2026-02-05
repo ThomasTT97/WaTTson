@@ -48,10 +48,23 @@ import {
 } from 'lucide-react';
 
 const App: React.FC = () => {
+  // Safe initialization of credentials
   const [creds, setCreds] = useState<IntervalsCredentials | null>(() => {
-    const saved = localStorage.getItem('wattson_creds');
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem('wattson_creds');
+      // Ensure we have a valid object with an apiKey
+      const parsed = saved ? JSON.parse(saved) : null;
+      if (parsed && typeof parsed === 'object' && parsed.apiKey) {
+        return parsed;
+      }
+      return null;
+    } catch (e) {
+      console.warn("Corrupt credentials in storage, clearing.");
+      localStorage.removeItem('wattson_creds');
+      return null;
+    }
   });
+
   const [activities, setActivities] = useState<Activity[]>([]);
   const [wellnessData, setWellnessData] = useState<Wellness[]>([]);
   const [loading, setLoading] = useState(false);
@@ -109,7 +122,14 @@ const App: React.FC = () => {
       localStorage.setItem('wattson_creds', JSON.stringify(credentials));
     } catch (err: any) {
       console.error("Sync Error:", err);
-      setError(err.message || "Failed to sync training data.");
+      const errorMessage = err.message || "Failed to sync training data.";
+      setError(errorMessage);
+      
+      // CRITICAL: If auth fails, clear credentials so user can try again
+      if (errorMessage.includes("Invalid API Key") || errorMessage.includes("Access Denied")) {
+        setCreds(null);
+        localStorage.removeItem('wattson_creds');
+      }
     } finally {
       setLoading(false);
       setIsSyncing(false);
@@ -154,12 +174,13 @@ const App: React.FC = () => {
   }, [messages, activeTab]);
 
   const useDemoMode = () => {
-    setActivities(getMockActivities());
-    setWellnessData(getMockWellness());
-    setLastSync(new Date());
     const demoCreds = { apiKey: 'demo', athleteId: 'demo' };
     setCreds(demoCreds);
     localStorage.setItem('wattson_creds', JSON.stringify(demoCreds));
+    
+    setActivities(getMockActivities());
+    setWellnessData(getMockWellness());
+    setLastSync(new Date());
   };
 
   // Goal Management
@@ -351,6 +372,8 @@ const App: React.FC = () => {
     }
   };
 
+  // --- RENDER LOGIC ---
+
   if (loading) {
     return (
       <div className="phone-container flex flex-col items-center justify-center p-8">
@@ -365,6 +388,7 @@ const App: React.FC = () => {
     );
   }
 
+  // LOGIN SCREEN - Display if no credentials exist
   if (!creds) {
     return (
       <div className="phone-container flex flex-col p-6 min-h-screen overflow-y-auto py-12">
@@ -427,6 +451,7 @@ const App: React.FC = () => {
     );
   }
 
+  // APP DASHBOARD
   return (
     <div className="phone-container flex flex-col pb-28">
       <div className="gradient-bg"></div>

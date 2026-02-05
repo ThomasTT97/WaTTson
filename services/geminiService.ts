@@ -2,8 +2,15 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Activity, ActivityInterval, CoachingFeedback, DailySuggestion, PlannedWorkout, ChatMessage } from "../types";
 
-// Force cast API Key to string to satisfy strict TypeScript checks in CI/CD
-const ai = new GoogleGenAI({ apiKey: (process.env.API_KEY as string) });
+// Helper to get AI instance safely. 
+// We interpret the API key here to prevent module-level crashes if the environment variable is missing during build.
+const getAI = () => {
+  const apiKey = (process.env.API_KEY as string) || '';
+  if (!apiKey) {
+    console.warn("API_KEY is missing in environment variables.");
+  }
+  return new GoogleGenAI({ apiKey });
+};
 
 export const getRideFeedback = async (
   activity: Activity, 
@@ -11,12 +18,13 @@ export const getRideFeedback = async (
   plannedWorkout: PlannedWorkout | null,
   userGoal?: string
 ): Promise<CoachingFeedback> => {
+  const ai = getAI();
+  
   // Use correct load field
   const load = activity.icu_training_load ?? activity.icu_tss ?? 0;
   const durationMins = Math.round(activity.moving_time / 60);
   
   // Format intervals for the AI
-  // Filter out tiny intervals (<30s) that might be noise unless they are high power
   const meaningfulIntervals = intervals.filter(i => i.moving_time > 30);
   
   const intervalSummary = meaningfulIntervals.length > 0 
@@ -46,7 +54,6 @@ export const getRideFeedback = async (
     ? `ATHLETE GOAL: "${userGoal}". \nIMPORTANT: Frame your analysis and recommendations specifically to help the athlete achieve this goal.`
     : "";
 
-  // Enhanced prompt to force data-driven analysis including Laps and Plan
   const prompt = `As an elite cycling coach, analyze this training activity.
     
     ${goalContext}
@@ -96,6 +103,8 @@ export const getRideFeedback = async (
 };
 
 export const getDailySuggestion = async (recentActivities: Activity[], userGoal?: string): Promise<DailySuggestion> => {
+  const ai = getAI();
+  
   const summary = recentActivities.map(a => ({
     date: a.start_date_local.split('T')[0],
     load: a.icu_training_load ?? a.icu_tss ?? 0,
@@ -145,6 +154,7 @@ export const sendChatMessage = async (
   newMessage: string, 
   contextData: { goal?: string, recentLoad?: number, readiness?: number }
 ): Promise<string> => {
+  const ai = getAI();
   
   // Construct system instruction with context
   const systemInstruction = `You are WaTTson, an expert cycling coach. 
