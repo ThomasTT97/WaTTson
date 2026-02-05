@@ -50,6 +50,13 @@ import {
 const App: React.FC = () => {
   // Safe initialization of credentials
   const [creds, setCreds] = useState<IntervalsCredentials | null>(() => {
+    // 1. Check for Cloudflare/Environment injected key
+    const envKey = (process.env.INTERVALS_API_KEY as string) || '';
+    if (envKey && envKey.length > 5) {
+      return { apiKey: envKey, athleteId: '0' };
+    }
+
+    // 2. Fallback to Local Storage
     try {
       const saved = localStorage.getItem('wattson_creds');
       // Ensure we have a valid object with an apiKey
@@ -119,7 +126,10 @@ const App: React.FC = () => {
       
       setCreds(credentials);
       setLastSync(new Date());
-      localStorage.setItem('wattson_creds', JSON.stringify(credentials));
+      // Only save to localStorage if it's NOT the env key, to avoid clutter or confusion
+      if (credentials.apiKey !== process.env.INTERVALS_API_KEY) {
+        localStorage.setItem('wattson_creds', JSON.stringify(credentials));
+      }
     } catch (err: any) {
       console.error("Sync Error:", err);
       const errorMessage = err.message || "Failed to sync training data.";
