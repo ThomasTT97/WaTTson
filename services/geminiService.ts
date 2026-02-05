@@ -154,12 +154,13 @@ export const sendChatMessage = async (
   - Recent 7-day Load: ${contextData.recentLoad || 0} TSS
   - Readiness Score: ${contextData.readiness || 'Unknown'}/10
 
-  INSTRUCTIONS:
-  1. Be EXTREMELY direct and concise.
-  2. Answer ONLY what is asked. No pleasantries.
-  3. Max 1-2 sentences per response unless a list is needed.
-  4. Use bullet points for data.
-  5. No medical advice.`;
+  FORMATTING RULES:
+  1. Structure your answer: Direct Answer first -> Supporting Data -> Actionable Advice.
+  2. Use bullet points (•) for lists to make them easy to read.
+  3. Keep paragraphs short (1-2 sentences).
+  4. Do NOT use markdown bolding (asterisks). Use capital letters for emphasis if absolutely necessary.
+  5. Tone: Professional, data-driven, concise.
+  6. No medical advice.`;
 
   // Map internal ChatMessage to Gemini Content format
   const history = previousMessages.map(m => ({

@@ -39,6 +39,16 @@ export interface PlannedWorkout {
   icu_training_load: number; // planned load
 }
 
+export interface Wellness {
+  id: string;
+  date: string;
+  ctl: number;
+  atl: number;
+  trainingLoad?: number;
+  restHR?: number;
+  hrv?: number;
+}
+
 export interface CoachingFeedback {
   summary: string;
   highlights: string[];

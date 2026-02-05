@@ -4,9 +4,10 @@ import {
   Activity, 
   IntervalsCredentials, 
   DailySuggestion,
-  ChatMessage
+  ChatMessage,
+  Wellness
 } from './types';
-import { fetchActivities, getMockActivities } from './services/intervalsService';
+import { fetchActivities, fetchWellness, getMockActivities, getMockWellness } from './services/intervalsService';
 import { getDailySuggestion, sendChatMessage } from './services/geminiService';
 import { ActivityCard } from './components/ActivityCard';
 import { CoachingModal } from './components/CoachingModal';
@@ -42,7 +43,8 @@ import {
   Send,
   Zap,
   Flame,
-  Info
+  Info,
+  Bot
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -51,6 +53,7 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : null;
   });
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [wellnessData, setWellnessData] = useState<Wellness[]>([]);
   const [loading, setLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,8 +95,15 @@ const App: React.FC = () => {
     
     setError(null);
     try {
-      const data = await fetchActivities(credentials);
-      setActivities(data);
+      // Fetch both activities and wellness data
+      const [fetchedActivities, fetchedWellness] = await Promise.all([
+        fetchActivities(credentials),
+        fetchWellness(credentials)
+      ]);
+      
+      setActivities(fetchedActivities);
+      setWellnessData(fetchedWellness);
+      
       setCreds(credentials);
       setLastSync(new Date());
       localStorage.setItem('wattson_creds', JSON.stringify(credentials));
@@ -110,6 +120,7 @@ const App: React.FC = () => {
     if (creds) {
       if (creds.apiKey === 'demo') {
         setActivities(getMockActivities());
+        setWellnessData(getMockWellness());
         setLastSync(new Date());
       } else {
         loadData(creds, true);
@@ -143,8 +154,8 @@ const App: React.FC = () => {
   }, [messages, activeTab]);
 
   const useDemoMode = () => {
-    const mock = getMockActivities();
-    setActivities(mock);
+    setActivities(getMockActivities());
+    setWellnessData(getMockWellness());
     setLastSync(new Date());
     const demoCreds = { apiKey: 'demo', athleteId: 'demo' };
     setCreds(demoCreds);
@@ -172,7 +183,7 @@ const App: React.FC = () => {
     "Prepare for race season"
   ];
 
-  // Chart Data: Last 7 Calendar Days
+  // Chart Data: Last 7 Calendar Days (Load Trend)
   const chartData = useMemo(() => {
     const data = [];
     const today = new Date();
@@ -206,67 +217,73 @@ const App: React.FC = () => {
   }, [activities]);
 
   const stats = useMemo(() => {
-    // Basic Sums
+    // Basic Sums from Activities
     const totalTss = activities.reduce((acc, curr) => acc + (curr.icu_training_load ?? curr.icu_tss ?? 0), 0);
     const sevenDayLoad = chartData.reduce((acc, day) => acc + day.tss, 0);
     const avgTss = activities.length ? Math.round(totalTss / activities.length) : 0;
 
-    // --- ACCURATE CTL/ATL/TSB CALCULATION (EWMA) ---
-    // Using standard time constants: 42 days (Fitness), 7 days (Fatigue)
-    
-    if (activities.length === 0) {
-      return { totalTss: 0, sevenDayLoad: 0, avgTss: 0, fitness: 0, fatigue: 0, form: 0, formZone: 'N/A' };
-    }
+    // --- FITNESS / FATIGUE / FORM ---
+    // Prefer data from the Wellness API which is pre-calculated by Intervals.icu
+    let fitness = 0;
+    let fatigue = 0;
+    let form = 0;
 
-    // 1. Sort activities by date ascending
-    const sortedActs = [...activities].sort((a, b) => 
-      new Date(a.start_date_local).getTime() - new Date(b.start_date_local).getTime()
-    );
+    if (wellnessData.length > 0) {
+      // Wellness data is sorted by date desc
+      const sortedWellness = [...wellnessData].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      
+      // Look for latest available value for each metric independently
+      const latestFitness = sortedWellness.find(w => w.ctl !== null && w.ctl !== undefined);
+      if (latestFitness) fitness = Math.round(latestFitness.ctl);
+      
+      const latestFatigue = sortedWellness.find(w => w.atl !== null && w.atl !== undefined);
+      if (latestFatigue) fatigue = Math.round(latestFatigue.atl);
+      
+      // Form (TSB) is Fitness (CTL) - Fatigue (ATL)
+      form = fitness - fatigue;
 
-    // 2. Determine date range (from oldest activity to TODAY)
-    const startDate = new Date(sortedActs[0].start_date_local);
-    startDate.setHours(0,0,0,0);
-    const endDate = new Date();
-    endDate.setHours(0,0,0,0);
+    } else if (activities.length > 0) {
+      // Fallback: Estimate if API wellness is missing
+       const sortedActs = [...activities].sort((a, b) => 
+        new Date(a.start_date_local).getTime() - new Date(b.start_date_local).getTime()
+      );
+      
+      const startDate = new Date(sortedActs[0].start_date_local);
+      startDate.setHours(0,0,0,0);
+      const endDate = new Date();
+      endDate.setHours(0,0,0,0);
+      
+      const loadMap = new Map<string, number>();
+      sortedActs.forEach(a => {
+        const d = a.start_date_local.split('T')[0];
+        const l = a.icu_training_load ?? a.icu_tss ?? 0;
+        loadMap.set(d, (loadMap.get(d) || 0) + l);
+      });
 
-    // 3. Create a map of daily load
-    const loadMap = new Map<string, number>();
-    sortedActs.forEach(a => {
-      const d = a.start_date_local.split('T')[0];
-      const l = a.icu_training_load ?? a.icu_tss ?? 0;
-      loadMap.set(d, (loadMap.get(d) || 0) + l);
-    });
+      let ctl = 0;
+      let atl = 0;
+      const msPerDay = 24 * 60 * 60 * 1000;
+      const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / msPerDay);
 
-    let ctl = 0;
-    let atl = 0;
-
-    // 4. Iterate day by day to simulate exponential decay
-    // We assume starting values of 0. This is why we fetch 84 days (to allow settle time).
-    const msPerDay = 24 * 60 * 60 * 1000;
-    const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / msPerDay);
-
-    for (let i = 0; i <= daysDiff; i++) {
-      const currentD = new Date(startDate.getTime() + i * msPerDay);
-      const dateStr = currentD.toISOString().split('T')[0];
-      const dayLoad = loadMap.get(dateStr) || 0;
-
-      // Formula: Avg(today) = Avg(yesterday) + (Load(today) - Avg(yesterday)) / TimeConstant
-      if (i === 0) {
-        // Initialize with first day's load to avoid slow ramp up from 0
-        ctl = dayLoad;
-        atl = dayLoad;
-      } else {
-        ctl = ctl + (dayLoad - ctl) / 42;
-        atl = atl + (dayLoad - atl) / 7;
+      for (let i = 0; i <= daysDiff; i++) {
+        const currentD = new Date(startDate.getTime() + i * msPerDay);
+        const dateStr = currentD.toISOString().split('T')[0];
+        const dayLoad = loadMap.get(dateStr) || 0;
+        if (i === 0) { ctl = dayLoad; atl = dayLoad; } 
+        else {
+          ctl = ctl + (dayLoad - ctl) / 42;
+          atl = atl + (dayLoad - atl) / 7;
+        }
       }
+      fitness = Math.round(ctl);
+      fatigue = Math.round(atl);
+      form = Math.round(ctl - atl);
     }
-
-    const form = ctl - atl;
 
     // Determine Zone
     let formZone = 'Neutral';
     if (form > 5) formZone = 'Fresh';
-    else if (form >= -10 && form <= 5) formZone = 'Optimal'; // Grey Zone / Maintenance
+    else if (form >= -10 && form <= 5) formZone = 'Optimal'; 
     else if (form >= -30 && form < -10) formZone = 'High Load';
     else if (form < -30) formZone = 'Overload';
 
@@ -274,12 +291,12 @@ const App: React.FC = () => {
       totalTss: Math.round(totalTss),
       sevenDayLoad: Math.round(sevenDayLoad),
       avgTss,
-      fitness: Math.round(ctl),
-      fatigue: Math.round(atl),
-      form: Math.round(form),
+      fitness,
+      fatigue,
+      form,
       formZone
     };
-  }, [activities, chartData]);
+  }, [activities, chartData, wellnessData]);
 
   const getReadinessColor = (score: number) => {
     if (score >= 8) return 'text-emerald-400';
@@ -443,19 +460,19 @@ const App: React.FC = () => {
                  {/* Fitness */}
                  <div className="flex flex-col items-center justify-center py-3">
                     <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-1">
-                      <Zap size={10} className="text-cyan-400" fill="currentColor" /> CTL
+                      <Zap size={10} className="text-cyan-400" fill="currentColor" /> Fitness
                     </span>
                     <span className="text-2xl font-bold text-white leading-none tracking-tight">{stats.fitness}</span>
-                    <span className="text-[8px] text-slate-600 font-medium mt-1">Fitness</span>
+                    <span className="text-[8px] text-slate-600 font-medium mt-1">Conditie (CTL)</span>
                  </div>
                  
                  {/* Fatigue */}
                  <div className="flex flex-col items-center justify-center py-3">
                     <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-1">
-                      <Flame size={10} className="text-pink-500" fill="currentColor" /> ATL
+                      <Flame size={10} className="text-pink-500" fill="currentColor" /> Fatigue
                     </span>
                     <span className="text-2xl font-bold text-white leading-none tracking-tight">{stats.fatigue}</span>
-                    <span className="text-[8px] text-slate-600 font-medium mt-1">Fatigue</span>
+                    <span className="text-[8px] text-slate-600 font-medium mt-1">Verm. (ATL)</span>
                  </div>
 
                  {/* Form */}
@@ -464,13 +481,13 @@ const App: React.FC = () => {
                     <div className={`absolute inset-0 opacity-10 ${getFormBg(stats.form)} blur-xl transition-colors duration-500`}></div>
                     
                     <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-1">
-                      <ActivityIcon size={10} className={getFormColor(stats.form)} /> TSB
+                      <ActivityIcon size={10} className={getFormColor(stats.form)} /> Form
                     </span>
                     <span className={`text-2xl font-bold leading-none tracking-tight ${getFormColor(stats.form)}`}>
                       {stats.form > 0 ? `+${stats.form}` : stats.form}
                     </span>
                     <span className={`text-[8px] font-bold mt-1 px-1.5 py-0.5 rounded-full bg-white/5 uppercase tracking-wide ${getFormColor(stats.form)}`}>
-                      {stats.formZone}
+                      Vorm (TSB)
                     </span>
                  </div>
               </div>
@@ -665,20 +682,34 @@ const App: React.FC = () => {
                 <p className="text-slate-400 text-sm mt-1">AI Powered Training Guidance</p>
             </header>
             
-            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 mb-4 pr-1">
+            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-5 mb-4 pr-1 pb-4">
                {messages.length === 0 ? (
                  <div className="h-full flex flex-col items-center justify-center text-center p-6 opacity-40">
-                    <MessageSquare size={32} className="text-slate-500 mb-4" />
+                    <div className="w-16 h-16 rounded-3xl bg-cyan-500/10 flex items-center justify-center mb-6 ring-1 ring-cyan-500/20">
+                      <Bot size={32} className="text-cyan-400" />
+                    </div>
                     <p className="text-sm font-medium text-slate-300">Your coach is online.</p>
-                    <p className="text-[10px] text-slate-500 mt-1 max-w-[180px]">Ask about your training load, recovery, or goal progress.</p>
+                    <p className="text-[11px] text-slate-500 mt-2 max-w-[200px] leading-relaxed">
+                      Ask about your training load, recovery status, or progress towards your {userGoal ? 'goal' : 'goals'}.
+                    </p>
                  </div>
                ) : (
                  messages.map((msg, idx) => (
-                   <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                     <div className={`max-w-[85%] p-3.5 rounded-2xl text-sm leading-relaxed ${
+                   <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                     {/* Avatar */}
+                     <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
                        msg.role === 'user' 
-                         ? 'bg-cyan-600 text-white rounded-tr-sm shadow-lg' 
-                         : 'bg-white/10 text-slate-200 rounded-tl-sm border border-white/5'
+                        ? 'bg-slate-700 text-slate-300' 
+                        : 'bg-cyan-500/10 text-cyan-400 ring-1 ring-cyan-500/30'
+                     }`}>
+                       {msg.role === 'user' ? <User size={14} /> : <Sparkles size={14} />}
+                     </div>
+
+                     {/* Message Bubble */}
+                     <div className={`max-w-[85%] p-4 rounded-2xl text-[13px] leading-relaxed whitespace-pre-wrap shadow-lg ${
+                       msg.role === 'user' 
+                         ? 'bg-gradient-to-br from-cyan-600 to-blue-600 text-white rounded-tr-sm' 
+                         : 'glass-panel text-slate-200 rounded-tl-sm border-white/5'
                      }`}>
                        {msg.text}
                      </div>
@@ -686,11 +717,14 @@ const App: React.FC = () => {
                  ))
                )}
                {isChatLoading && (
-                  <div className="flex justify-start">
-                    <div className="bg-white/5 px-4 py-2 rounded-2xl rounded-tl-sm flex gap-1">
-                      <div className="w-1 h-1 bg-slate-500 rounded-full animate-bounce" style={{animationDelay: '0ms'}} />
-                      <div className="w-1 h-1 bg-slate-500 rounded-full animate-bounce" style={{animationDelay: '150ms'}} />
-                      <div className="w-1 h-1 bg-slate-500 rounded-full animate-bounce" style={{animationDelay: '300ms'}} />
+                  <div className="flex justify-start gap-3">
+                    <div className="w-8 h-8 rounded-full bg-cyan-500/10 flex items-center justify-center shrink-0 ring-1 ring-cyan-500/30">
+                       <Bot size={14} className="text-cyan-400" />
+                    </div>
+                    <div className="glass-panel px-4 py-3 rounded-2xl rounded-tl-sm flex gap-1 items-center h-10 border-white/5">
+                      <div className="w-1.5 h-1.5 bg-cyan-400/50 rounded-full animate-bounce" style={{animationDelay: '0ms'}} />
+                      <div className="w-1.5 h-1.5 bg-cyan-400/50 rounded-full animate-bounce" style={{animationDelay: '150ms'}} />
+                      <div className="w-1.5 h-1.5 bg-cyan-400/50 rounded-full animate-bounce" style={{animationDelay: '300ms'}} />
                     </div>
                   </div>
                )}
@@ -699,22 +733,27 @@ const App: React.FC = () => {
 
             <form 
               onSubmit={(e) => { e.preventDefault(); handleSendMessage(chatInput); }}
-              className="mt-auto relative shrink-0"
+              className="mt-auto relative shrink-0 pb-1"
             >
-              <input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Message Coach WaTTson..."
-                disabled={isChatLoading}
-                className="w-full bg-slate-800/60 border border-white/10 rounded-2xl pl-4 pr-12 py-3 text-sm text-white focus:outline-none focus:border-cyan-500/50"
-              />
-              <button 
-                type="submit" 
-                disabled={!chatInput.trim() || isChatLoading}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2 text-cyan-400 disabled:opacity-0 transition-all"
-              >
-                <Send size={16} />
-              </button>
+              <div className="relative group">
+                {/* Floating Input Capsule */}
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Message Coach WaTTson..."
+                  disabled={isChatLoading}
+                  className="w-full bg-slate-900/80 backdrop-blur-md border border-white/10 rounded-3xl pl-5 pr-14 py-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 focus:border-cyan-500/30 shadow-2xl transition-all"
+                />
+                
+                {/* Send Button */}
+                <button 
+                  type="submit" 
+                  disabled={!chatInput.trim() || isChatLoading}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center text-white shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 disabled:opacity-0 disabled:scale-75 transition-all active:scale-95"
+                >
+                  <Send size={18} className="ml-0.5" />
+                </button>
+              </div>
             </form>
            </div>
         )}
@@ -770,6 +809,7 @@ const App: React.FC = () => {
                       localStorage.removeItem('wattson_goal');
                       setCreds(null);
                       setActivities([]);
+                      setWellnessData([]);
                       setSuggestion(null);
                       setUserGoal('');
                       setError(null);

@@ -1,5 +1,5 @@
 
-import { Activity, ActivityInterval, IntervalsCredentials, PlannedWorkout } from '../types';
+import { Activity, ActivityInterval, IntervalsCredentials, PlannedWorkout, Wellness } from '../types';
 
 export const fetchActivities = async (creds: IntervalsCredentials): Promise<Activity[]> => {
   const { apiKey } = creds;
@@ -110,6 +110,42 @@ export const fetchActivities = async (creds: IntervalsCredentials): Promise<Acti
     }
     
     throw new Error(error.message || "Failed to sync activities.");
+  }
+};
+
+export const fetchWellness = async (creds: IntervalsCredentials): Promise<Wellness[]> => {
+  if (creds.apiKey === 'demo') {
+    return getMockWellness();
+  }
+
+  const { apiKey } = creds;
+  const auth = btoa(`API_KEY:${apiKey.trim()}`);
+  const headers = {
+    'Authorization': `Basic ${auth}`,
+    'Accept': 'application/json'
+  };
+
+  // Fetch last 28 days (increased from 14) to ensure we find a valid CTL/ATL entry
+  // sometimes today's entry is empty or only weight is logged.
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const newest = tomorrow.toISOString().split('T')[0];
+  
+  const past = new Date();
+  past.setDate(now.getDate() - 28);
+  const oldest = past.toISOString().split('T')[0];
+
+  const url = `https://intervals.icu/api/v1/athlete/0/wellness?oldest=${oldest}&newest=${newest}`;
+
+  try {
+    const response = await fetch(url, { method: 'GET', headers });
+    if (!response.ok) return [];
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.error("Failed to fetch wellness", error);
+    return [];
   }
 };
 
@@ -229,6 +265,21 @@ export const getMockActivities = (): Activity[] => {
     }
   }
   return mock;
+};
+
+export const getMockWellness = (): Wellness[] => {
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+  
+  return [
+    {
+      id: 'mock-wellness-1',
+      date: todayStr,
+      ctl: 53,
+      atl: 52,
+      trainingLoad: 0
+    }
+  ];
 };
 
 export const getMockIntervals = (): ActivityInterval[] => {
