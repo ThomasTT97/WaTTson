@@ -2,7 +2,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Activity, ActivityInterval, CoachingFeedback, DailySuggestion, PlannedWorkout, ChatMessage } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Force cast API Key to string to satisfy strict TypeScript checks in CI/CD
+const ai = new GoogleGenAI({ apiKey: (process.env.API_KEY as string) });
 
 export const getRideFeedback = async (
   activity: Activity, 
@@ -13,7 +14,6 @@ export const getRideFeedback = async (
   // Use correct load field
   const load = activity.icu_training_load ?? activity.icu_tss ?? 0;
   const durationMins = Math.round(activity.moving_time / 60);
-  const distanceKm = Math.round(activity.distance / 1000);
   
   // Format intervals for the AI
   // Filter out tiny intervals (<30s) that might be noise unless they are high power
@@ -92,7 +92,7 @@ export const getRideFeedback = async (
     }
   });
 
-  return JSON.parse(response.text);
+  return JSON.parse(response.text as string);
 };
 
 export const getDailySuggestion = async (recentActivities: Activity[], userGoal?: string): Promise<DailySuggestion> => {
@@ -137,7 +137,7 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
     }
   });
 
-  return JSON.parse(response.text);
+  return JSON.parse(response.text as string);
 };
 
 export const sendChatMessage = async (
