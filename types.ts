@@ -8,6 +8,7 @@ export interface Activity {
   moving_time: number;
   total_elevation_gain: number;
   average_watts?: number;
+  weighted_average_watts?: number; // Normalized Power
   average_heartrate?: number;
   max_watts?: number;
   training_load?: number;
@@ -15,6 +16,8 @@ export interface Activity {
   icu_variability_index?: number;
   icu_intensity?: number;
   icu_training_load?: number; // Primary field for TSS/Load
+  icu_joules?: number;
+  calories?: number;
   source?: string; // To detect 'STRAVA' origin
 }
 

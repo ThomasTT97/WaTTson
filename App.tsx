@@ -50,30 +50,38 @@ import {
 const App: React.FC = () => {
   // Safe initialization of credentials
   const [creds, setCreds] = useState<IntervalsCredentials | null>(() => {
-    // 1. Check for Cloudflare/Environment injected key
     const envKey = (process.env.INTERVALS_API_KEY as string) || '';
     if (envKey && envKey.length > 5) {
       return { apiKey: envKey, athleteId: '0' };
     }
-
-    // 2. Fallback to Local Storage
     try {
       const saved = localStorage.getItem('wattson_creds');
-      // Ensure we have a valid object with an apiKey
       const parsed = saved ? JSON.parse(saved) : null;
       if (parsed && typeof parsed === 'object' && parsed.apiKey) {
         return parsed;
       }
       return null;
     } catch (e) {
-      console.warn("Corrupt credentials in storage, clearing.");
       localStorage.removeItem('wattson_creds');
       return null;
     }
   });
 
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [wellnessData, setWellnessData] = useState<Wellness[]>([]);
+  // PERFORMANCE: Initialize from localStorage for instant-load feel
+  const [activities, setActivities] = useState<Activity[]>(() => {
+    try {
+      const cached = localStorage.getItem('wattson_activities');
+      return cached ? JSON.parse(cached) : [];
+    } catch { return []; }
+  });
+
+  const [wellnessData, setWellnessData] = useState<Wellness[]>(() => {
+    try {
+      const cached = localStorage.getItem('wattson_wellness');
+      return cached ? JSON.parse(cached) : [];
+    } catch { return []; }
+  });
+
   const [loading, setLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,12 +89,18 @@ const App: React.FC = () => {
   const [suggestion, setSuggestion] = useState<DailySuggestion | null>(null);
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'rides' | 'settings' | 'chat'>('dashboard');
-  const [showHelp, setShowHelp] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [lastSync, setLastSync] = useState<Date | null>(null);
+  const [lastSync, setLastSync] = useState<Date | null>(() => {
+    const saved = localStorage.getItem('wattson_last_sync');
+    return saved ? new Date(saved) : null;
+  });
   
-  // Chat State
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Chat State - Persistent
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const saved = localStorage.getItem('wattson_chat_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -106,11 +120,17 @@ const App: React.FC = () => {
   
   const [formKey, setFormKey] = useState('');
 
-  const appOrigin = window.location.origin;
   const isStravaError = error?.includes("STRAVA_DATA_ERROR");
 
+  // Save messages whenever they change
+  useEffect(() => {
+    localStorage.setItem('wattson_chat_history', JSON.stringify(messages));
+  }, [messages]);
+
   const loadData = async (credentials: IntervalsCredentials, isInitial = false) => {
-    if (isInitial) setLoading(true);
+    // Only show full screen loader if we have NO data. Otherwise just show sync spinner.
+    const hasData = activities.length > 0;
+    if (isInitial && !hasData) setLoading(true);
     else setIsSyncing(true);
     
     setError(null);
@@ -124,9 +144,15 @@ const App: React.FC = () => {
       setActivities(fetchedActivities);
       setWellnessData(fetchedWellness);
       
+      // Cache data for next load
+      localStorage.setItem('wattson_activities', JSON.stringify(fetchedActivities));
+      localStorage.setItem('wattson_wellness', JSON.stringify(fetchedWellness));
+
       setCreds(credentials);
-      setLastSync(new Date());
-      // Only save to localStorage if it's NOT the env key, to avoid clutter or confusion
+      const now = new Date();
+      setLastSync(now);
+      localStorage.setItem('wattson_last_sync', now.toISOString());
+
       if (credentials.apiKey !== process.env.INTERVALS_API_KEY) {
         localStorage.setItem('wattson_creds', JSON.stringify(credentials));
       }
@@ -135,7 +161,6 @@ const App: React.FC = () => {
       const errorMessage = err.message || "Failed to sync training data.";
       setError(errorMessage);
       
-      // CRITICAL: If auth fails, clear credentials so user can try again
       if (errorMessage.includes("Invalid API Key") || errorMessage.includes("Access Denied")) {
         setCreds(null);
         localStorage.removeItem('wattson_creds');
@@ -153,7 +178,9 @@ const App: React.FC = () => {
         setWellnessData(getMockWellness());
         setLastSync(new Date());
       } else {
-        loadData(creds, true);
+        // If we have cached data, just sync in background. 
+        // If no data, loadData will handle the loading state.
+        loadData(creds, activities.length === 0);
       }
     }
   }, []);
@@ -254,7 +281,6 @@ const App: React.FC = () => {
     const avgTss = activities.length ? Math.round(totalTss / activities.length) : 0;
 
     // --- FITNESS / FATIGUE / FORM ---
-    // Prefer data from the Wellness API which is pre-calculated by Intervals.icu
     let fitness = 0;
     let fatigue = 0;
     let form = 0;
@@ -263,18 +289,16 @@ const App: React.FC = () => {
       // Wellness data is sorted by date desc
       const sortedWellness = [...wellnessData].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       
-      // Look for latest available value for each metric independently
       const latestFitness = sortedWellness.find(w => w.ctl !== null && w.ctl !== undefined);
       if (latestFitness) fitness = Math.round(latestFitness.ctl);
       
       const latestFatigue = sortedWellness.find(w => w.atl !== null && w.atl !== undefined);
       if (latestFatigue) fatigue = Math.round(latestFatigue.atl);
       
-      // Form (TSB) is Fitness (CTL) - Fatigue (ATL)
       form = fitness - fatigue;
 
     } else if (activities.length > 0) {
-      // Fallback: Estimate if API wellness is missing
+      // Fallback calculation logic...
        const sortedActs = [...activities].sort((a, b) => 
         new Date(a.start_date_local).getTime() - new Date(b.start_date_local).getTime()
       );
@@ -311,7 +335,6 @@ const App: React.FC = () => {
       form = Math.round(ctl - atl);
     }
 
-    // Determine Zone
     let formZone = 'Neutral';
     if (form > 5) formZone = 'Fresh';
     else if (form >= -10 && form <= 5) formZone = 'Optimal'; 
@@ -335,21 +358,6 @@ const App: React.FC = () => {
     return 'text-red-400';
   };
 
-  const getFormColor = (form: number) => {
-    if (form > 5) return 'text-emerald-400';
-    if (form >= -10) return 'text-emerald-400'; // Optimal
-    if (form >= -30) return 'text-amber-400'; // High Load
-    return 'text-red-400'; // Overload
-  };
-
-  const getFormBg = (form: number) => {
-    if (form > 5) return 'bg-emerald-500';
-    if (form >= -10) return 'bg-emerald-500';
-    if (form >= -30) return 'bg-amber-500';
-    return 'bg-red-500';
-  };
-
-  // Chat Handlers
   const handleSendMessage = async (text: string) => {
     if (!text.trim()) return;
     
@@ -382,11 +390,11 @@ const App: React.FC = () => {
     }
   };
 
-  // --- RENDER LOGIC ---
+  // --- RENDER ---
 
   if (loading) {
     return (
-      <div className="phone-container flex flex-col items-center justify-center p-8">
+      <div className="phone-container flex flex-col items-center justify-center p-8 h-[100dvh]">
         <div className="gradient-bg"></div>
         <div className="relative">
           <div className="w-24 h-24 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin"></div>
@@ -398,10 +406,9 @@ const App: React.FC = () => {
     );
   }
 
-  // LOGIN SCREEN - Display if no credentials exist
   if (!creds) {
     return (
-      <div className="phone-container flex flex-col p-6 min-h-screen overflow-y-auto py-12">
+      <div className="phone-container flex flex-col p-6 min-h-[100dvh] overflow-y-auto py-12">
         <div className="gradient-bg"></div>
         <div className="glass-panel p-8 rounded-3xl shadow-2xl mb-6 border border-white/10">
           <div className="text-center mb-10">
@@ -461,26 +468,22 @@ const App: React.FC = () => {
     );
   }
 
-  // APP DASHBOARD
   return (
     <div className="phone-container flex flex-col h-[100dvh] overflow-hidden">
       <div className="gradient-bg"></div>
       
-      {/* 
-        Changes for notch and layout:
-        1. Added pt-16 to clear iPhone 16 dynamic island/notch.
-        2. Dashboard: flex flex-col to allow children to fill space.
-        3. Other tabs: overflow-y-auto to allow scrolling.
-      */}
-      <div className={`flex-1 ${activeTab === 'dashboard' ? 'flex flex-col overflow-hidden' : 'overflow-y-auto custom-scrollbar'} p-5 pt-16 pb-24`}>
+      <div 
+        className={`flex-1 ${activeTab === 'dashboard' ? 'flex flex-col overflow-hidden' : 'overflow-y-auto custom-scrollbar'} p-5 pb-24`}
+        style={{ paddingTop: 'max(env(safe-area-inset-top), 1.5rem)' }}
+      >
         
         {activeTab === 'dashboard' && (
           <div className="flex flex-col h-full space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {/* Header - Compact */}
-            <header className="flex items-center justify-between px-1 shrink-0">
+            {/* Header */}
+            <header className="flex items-start justify-between px-1 shrink-0 pb-2">
               <div>
-                <h1 className="text-2xl font-bold text-white tracking-tight">Dashboard</h1>
-                <div className="flex items-center gap-2 mt-0.5">
+                <h1 className="text-2xl font-bold text-white tracking-tight leading-none">Dashboard</h1>
+                <div className="flex items-center gap-2 mt-1.5">
                   <span className={`w-1.5 h-1.5 rounded-full ${lastSync ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-500'}`}></span>
                   <span className="text-slate-400 text-[10px] font-medium tracking-wide">
                     {lastSync ? `Updated ${lastSync.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Syncing...'}
@@ -490,15 +493,13 @@ const App: React.FC = () => {
               <button 
                 onClick={() => loadData(creds)}
                 disabled={isSyncing}
-                className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition-all active:scale-95 border border-white/5 backdrop-blur-sm shadow-lg"
+                className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 transition-all active:scale-95 border border-white/5 backdrop-blur-sm shadow-lg mt-0.5"
               >
-                <RefreshCw size={16} className={isSyncing ? 'animate-spin' : ''} />
+                <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
               </button>
             </header>
 
-            {/* REMOVED UNIFIED STATUS WIDGET (Fitness/Fatigue/Form) as requested */}
-
-            {/* Daily Insight Card - Denser */}
+            {/* Daily Insight Card */}
             <div className="relative group shrink-0">
               <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-3xl blur opacity-15 group-hover:opacity-25 transition duration-1000"></div>
               <div className="relative glass-panel rounded-2xl overflow-hidden border-white/10">
@@ -588,7 +589,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Load Section - FLEX-1 to fill remaining space without scrolling */}
+            {/* Load Section */}
             <div className="glass-panel p-4 rounded-2xl border-white/5 flex flex-col gap-3 flex-1 min-h-0">
                <div className="flex justify-between items-end shrink-0">
                   <div>
@@ -612,7 +613,6 @@ const App: React.FC = () => {
                   </div>
                </div>
 
-               {/* Chart Container - expands to fill flex parent */}
                <div className="flex-1 w-full mt-1 min-h-0">
                 {activities.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
@@ -698,11 +698,11 @@ const App: React.FC = () => {
                     <p className="text-[11px] text-slate-500 mt-2 max-w-[200px] leading-relaxed">
                       Ask about your training load, recovery status, or progress towards your {userGoal ? 'goal' : 'goals'}.
                     </p>
+                    <p className="text-[9px] text-slate-600 mt-4 font-bold uppercase tracking-wider">History is saved locally</p>
                  </div>
                ) : (
                  messages.map((msg, idx) => (
                    <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                     {/* Avatar */}
                      <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
                        msg.role === 'user' 
                         ? 'bg-slate-700 text-slate-300' 
@@ -711,7 +711,6 @@ const App: React.FC = () => {
                        {msg.role === 'user' ? <User size={14} /> : <Sparkles size={14} />}
                      </div>
 
-                     {/* Message Bubble */}
                      <div className={`max-w-[85%] p-4 rounded-2xl text-[13px] leading-relaxed whitespace-pre-wrap shadow-lg ${
                        msg.role === 'user' 
                          ? 'bg-gradient-to-br from-cyan-600 to-blue-600 text-white rounded-tr-sm' 
@@ -742,7 +741,6 @@ const App: React.FC = () => {
               className="mt-auto relative shrink-0 pb-1"
             >
               <div className="relative group">
-                {/* Floating Input Capsule */}
                 <input
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
@@ -751,7 +749,6 @@ const App: React.FC = () => {
                   className="w-full bg-slate-900/80 backdrop-blur-md border border-white/10 rounded-3xl pl-5 pr-14 py-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 focus:border-cyan-500/30 shadow-2xl transition-all"
                 />
                 
-                {/* Send Button */}
                 <button 
                   type="submit" 
                   disabled={!chatInput.trim() || isChatLoading}
@@ -813,6 +810,10 @@ const App: React.FC = () => {
                     onClick={() => {
                       localStorage.removeItem('wattson_creds');
                       localStorage.removeItem('wattson_goal');
+                      localStorage.removeItem('wattson_activities');
+                      localStorage.removeItem('wattson_wellness');
+                      localStorage.removeItem('wattson_last_sync');
+                      localStorage.removeItem('wattson_chat_history'); // Clear chat
                       setCreds(null);
                       setActivities([]);
                       setWellnessData([]);
@@ -820,6 +821,7 @@ const App: React.FC = () => {
                       setUserGoal('');
                       setError(null);
                       setFormKey('');
+                      setMessages([]); // Reset state
                       setActiveTab('dashboard');
                     }}
                     className="w-full p-4 text-left text-xs font-bold text-red-400 hover:bg-red-500/5 transition-colors flex items-center gap-3"

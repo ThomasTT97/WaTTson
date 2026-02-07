@@ -1,4 +1,5 @@
-import React from 'react';
+
+import React, { memo } from 'react';
 import { Activity } from '../types';
 import { Zap, Clock, ChevronRight } from 'lucide-react';
 
@@ -7,7 +8,7 @@ interface ActivityCardProps {
   onClick: (activity: Activity) => void;
 }
 
-export const ActivityCard: React.FC<ActivityCardProps> = ({ activity, onClick }) => {
+export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onClick }) => {
   const dateObj = new Date(activity.start_date_local);
   const date = dateObj.toLocaleDateString(undefined, {
     month: 'short',
@@ -15,7 +16,14 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({ activity, onClick })
   });
   const weekday = dateObj.toLocaleDateString(undefined, { weekday: 'short' });
 
-  const duration = Math.round(activity.moving_time / 60);
+  // Formatting duration: Xh Ym
+  const formatDuration = (totalSeconds: number) => {
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.round((totalSeconds % 3600) / 60);
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  };
+  const durationStr = formatDuration(activity.moving_time);
 
   // Correctly access TSS from icu_training_load (the API standard)
   const load = activity.icu_training_load ?? activity.icu_tss;
@@ -24,8 +32,6 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({ activity, onClick })
     ? Math.round(load) 
     : 0;
 
-  // Format source (e.g., "GARMIN_CONNECT" -> "Garmin")
-  // Now infers "Zwift" if the activity type is VirtualRide, even if source is Strava
   const formatSource = (source?: string, type?: string) => {
     if (source === 'ZWIFT') return 'Zwift';
     if (type === 'VirtualRide') return 'Zwift';
@@ -70,7 +76,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({ activity, onClick })
         <div className="flex gap-4">
           <div className="flex items-center gap-1 text-[11px] text-slate-500 font-medium">
             <Clock size={12} />
-            {duration}m
+            {durationStr}
           </div>
           
           <div className="flex items-center gap-1 text-[11px] text-slate-300 font-bold">
@@ -92,4 +98,4 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({ activity, onClick })
       </div>
     </div>
   );
-};
+});

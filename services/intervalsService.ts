@@ -40,8 +40,8 @@ export const fetchActivities = async (creds: IntervalsCredentials): Promise<Acti
   // Explicitly request fields to ensure we get clean JSON and minimize payload
   const fields = [
     'id', 'name', 'type', 'start_date_local', 'moving_time', 'elapsed_time',
-    'distance', 'total_elevation_gain', 'average_watts', 'average_heartrate',
-    'icu_training_load', 'icu_intensity', 'source', 'icu_tss'
+    'distance', 'total_elevation_gain', 'average_watts', 'weighted_average_watts', 'average_heartrate',
+    'icu_training_load', 'icu_intensity', 'source', 'icu_tss', 'icu_joules', 'calories'
   ].join(',');
 
   // URL for the authenticated athlete (ID 0)
@@ -78,13 +78,10 @@ export const fetchActivities = async (creds: IntervalsCredentials): Promise<Acti
     // --- SMART FILTERING ---
     const validActivities = data.filter(activity => {
       // 1. ALWAYS Allow Virtual Rides (Zwift, Rouvy, etc.)
-      // These are important even if load calculation varies.
       if (activity.type === 'VirtualRide') return true;
       if (activity.source === 'ZWIFT') return true;
 
       // 2. Filter out "Empty" Strava activities
-      // Strava activities without training load usually mean permissions issues 
-      // or lack of power/HR data to calculate load. We hide these to avoid clutter.
       if (activity.source === 'STRAVA') {
         const load = activity.icu_training_load ?? activity.icu_tss;
         if (load === undefined || load === null) {
@@ -126,7 +123,6 @@ export const fetchWellness = async (creds: IntervalsCredentials): Promise<Wellne
   };
 
   // Fetch last 28 days (increased from 14) to ensure we find a valid CTL/ATL entry
-  // sometimes today's entry is empty or only weight is logged.
   const now = new Date();
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
@@ -166,7 +162,7 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
 
   try {
     const response = await fetch(url, { method: 'GET', headers });
-    if (!response.ok) return []; // Fail silently for laps, analysis will just use summary
+    if (!response.ok) return [];
     const data = await response.json();
     return Array.isArray(data) ? data : [];
   } catch (error) {
@@ -187,7 +183,6 @@ export const fetchPlannedWorkout = async (dateStr: string, creds: IntervalsCrede
     'Accept': 'application/json'
   };
 
-  // Fetch events for the specific date
   const url = `https://intervals.icu/api/v1/athlete/0/events?oldest=${dateStr}&newest=${dateStr}`;
 
   try {
@@ -197,7 +192,6 @@ export const fetchPlannedWorkout = async (dateStr: string, creds: IntervalsCrede
     const events = await response.json();
     if (!Array.isArray(events)) return null;
 
-    // Find the first event that is a workout
     const workout = events.find((e: any) => e.category === 'WORKOUT');
     return workout || null;
   } catch (error) {
@@ -223,6 +217,8 @@ export const getMockActivities = (): Activity[] => {
     average_heartrate: 155,
     icu_training_load: 85,
     icu_intensity: 0.85,
+    icu_joules: 860000,
+    calories: 860,
     source: 'ZWIFT'
   });
 
@@ -241,6 +237,8 @@ export const getMockActivities = (): Activity[] => {
     average_heartrate: 135,
     icu_training_load: 110,
     icu_intensity: 0.65,
+    icu_joules: 1500000,
+    calories: 1500,
     source: 'WAHOO'
   });
 
@@ -258,9 +256,11 @@ export const getMockActivities = (): Activity[] => {
         distance: 30000 + Math.random() * 20000,
         moving_time: 3600 + Math.random() * 3000,
         total_elevation_gain: 500,
-        icu_training_load: 50 + Math.random() * 80, // Random load between 50 and 130
+        icu_training_load: 50 + Math.random() * 80,
         icu_intensity: 0.7,
-        source: 'GARMIN_CONNECT'
+        source: 'GARMIN_CONNECT',
+        average_watts: 200,
+        calories: 800 + Math.floor(Math.random() * 500)
       });
     }
   }

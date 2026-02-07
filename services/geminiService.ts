@@ -2,8 +2,14 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Activity, ActivityInterval, CoachingFeedback, DailySuggestion, PlannedWorkout, ChatMessage } from "../types";
 
+// Hierarchy of models to try if one fails (Quota/Rate Limits)
+const FALLBACK_MODELS = [
+  'gemini-3-flash-preview',  // Primary: Fast & Intelligent
+  'gemini-flash-lite-latest', // Fallback 1: Extremely fast, lower quota usage
+  'gemini-3-pro-preview'      // Fallback 2: Powerful, use if Flash is fully exhausted
+];
+
 // Helper to get AI instance safely. 
-// We interpret the API key here to prevent module-level crashes if the environment variable is missing during build.
 const getAI = () => {
   const apiKey = (process.env.API_KEY as string) || '';
   if (!apiKey) {
@@ -11,6 +17,44 @@ const getAI = () => {
   }
   return new GoogleGenAI({ apiKey });
 };
+
+// Timeout helper (12 seconds default)
+const timeoutPromise = (ms: number) => new Promise<never>((_, reject) => 
+  setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
+);
+
+/**
+ * Executes a Gemini API call with automatic fallback to other models on failure.
+ * Includes a timeout to prevent hanging on unresponsive models.
+ * @param operationCallback Function that takes a model name and returns a Promise (the API call)
+ */
+async function executeWithFallback<T>(
+  operationCallback: (model: string) => Promise<T>
+): Promise<T> {
+  let lastError: any = null;
+
+  for (const model of FALLBACK_MODELS) {
+    try {
+      // Race the operation against a timeout to ensure responsiveness
+      return await Promise.race([
+        operationCallback(model),
+        timeoutPromise(12000) // 12s timeout per model
+      ]);
+    } catch (err: any) {
+      console.warn(`Gemini Model [${model}] failed/timed out:`, err.message);
+      lastError = err;
+      
+      // If it's a specific auth error (bad key), fail fast. 
+      // 429 (Quota), 503 (Overloaded), or Timeout errors should trigger fallback.
+      if (err.status === 400 || err.status === 403) {
+        throw err;
+      }
+      // Otherwise loop to next model
+    }
+  }
+
+  throw lastError || new Error("All AI models failed to respond.");
+}
 
 export const getRideFeedback = async (
   activity: Activity, 
@@ -81,25 +125,26 @@ export const getRideFeedback = async (
     - recommendations: Specific advice based on this performance.
     - metrics_analysis: A deep dive into the numbers. Explicitly compare executed vs planned load/intensity if a plan was present.`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          summary: { type: Type.STRING },
-          highlights: { type: Type.ARRAY, items: { type: Type.STRING } },
-          recommendations: { type: Type.STRING },
-          metrics_analysis: { type: Type.STRING }
-        },
-        required: ['summary', 'highlights', 'recommendations', 'metrics_analysis']
+  return executeWithFallback(async (modelName) => {
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            summary: { type: Type.STRING },
+            highlights: { type: Type.ARRAY, items: { type: Type.STRING } },
+            recommendations: { type: Type.STRING },
+            metrics_analysis: { type: Type.STRING }
+          },
+          required: ['summary', 'highlights', 'recommendations', 'metrics_analysis']
+        }
       }
-    }
+    });
+    return JSON.parse(response.text as string);
   });
-
-  return JSON.parse(response.text as string);
 };
 
 export const getDailySuggestion = async (recentActivities: Activity[], userGoal?: string): Promise<DailySuggestion> => {
@@ -125,28 +170,29 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
 
     Provide the response in JSON format.`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          title: { type: Type.STRING, description: "Name of the workout" },
-          description: { type: Type.STRING, description: "Specific workout structure details" },
-          intensity: { type: Type.STRING, enum: ['Low', 'Moderate', 'High', 'Rest'] },
-          duration_minutes: { type: Type.NUMBER },
-          reasoning: { type: Type.STRING },
-          readiness_score: { type: Type.NUMBER, description: "0 to 10, where 10 is fully fresh" },
-          readiness_analysis: { type: Type.STRING, description: "Short health/readiness status update" }
-        },
-        required: ['title', 'description', 'intensity', 'duration_minutes', 'reasoning', 'readiness_score', 'readiness_analysis']
+  return executeWithFallback(async (modelName) => {
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING, description: "Name of the workout" },
+            description: { type: Type.STRING, description: "Specific workout structure details" },
+            intensity: { type: Type.STRING, enum: ['Low', 'Moderate', 'High', 'Rest'] },
+            duration_minutes: { type: Type.NUMBER },
+            reasoning: { type: Type.STRING },
+            readiness_score: { type: Type.NUMBER, description: "0 to 10, where 10 is fully fresh" },
+            readiness_analysis: { type: Type.STRING, description: "Short health/readiness status update" }
+          },
+          required: ['title', 'description', 'intensity', 'duration_minutes', 'reasoning', 'readiness_score', 'readiness_analysis']
+        }
       }
-    }
+    });
+    return JSON.parse(response.text as string);
   });
-
-  return JSON.parse(response.text as string);
 };
 
 export const sendChatMessage = async (
@@ -157,35 +203,36 @@ export const sendChatMessage = async (
   const ai = getAI();
   
   // Construct system instruction with context
-  const systemInstruction = `You are WaTTson, an expert cycling coach. 
+  const systemInstruction = `You are WaTTson, a friendly, intelligent, and human-like cycling coach. 
   
   CONTEXT:
   - Athlete's Goal: ${contextData.goal || 'Not set'}
   - Recent 7-day Load: ${contextData.recentLoad || 0} TSS
   - Readiness Score: ${contextData.readiness || 'Unknown'}/10
 
-  FORMATTING RULES:
-  1. Structure your answer: Direct Answer first -> Supporting Data -> Actionable Advice.
-  2. Use bullet points (•) for lists to make them easy to read.
-  3. Keep paragraphs short (1-2 sentences).
-  4. Do NOT use markdown bolding (asterisks). Use capital letters for emphasis if absolutely necessary.
-  5. Tone: Professional, data-driven, concise.
+  GUIDELINES:
+  1. Be natural and conversational. Avoid sounding like a robot.
+  2. Keep answers short and punchy (2-3 sentences max usually).
+  3. Don't use bullet points unless you are listing 3+ distinct items.
+  4. Occasionally ask a relevant follow-up question to keep the athlete engaged.
+  5. Use the provided data to ground your advice.
   6. No medical advice.`;
 
-  // Map internal ChatMessage to Gemini Content format
   const history = previousMessages.map(m => ({
     role: m.role,
     parts: [{ text: m.text }]
   }));
 
-  const chat = ai.chats.create({
-    model: 'gemini-3-flash-preview',
-    history: history,
-    config: {
-      systemInstruction: systemInstruction,
-    }
+  // Wrapper to create a new chat session for each attempt (since sessions are model-bound)
+  return executeWithFallback(async (modelName) => {
+    const chat = ai.chats.create({
+      model: modelName,
+      history: history,
+      config: {
+        systemInstruction: systemInstruction,
+      }
+    });
+    const response = await chat.sendMessage({ message: newMessage });
+    return response.text || "I'm not sure about that, but let's keep training!";
   });
-
-  const response = await chat.sendMessage({ message: newMessage });
-  return response.text || "I'm not sure about that, but let's keep training!";
 };
