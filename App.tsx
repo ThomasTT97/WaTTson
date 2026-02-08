@@ -94,6 +94,9 @@ const App: React.FC = () => {
     return saved ? new Date(saved) : null;
   });
   
+  // Dashboard Insight Card Expansion State
+  const [isExpanded, setIsExpanded] = useState(false);
+
   // Chat State - Persistent
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     try {
@@ -105,9 +108,6 @@ const App: React.FC = () => {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   
-  // Dashboard Question Input
-  const [dashboardQuestion, setDashboardQuestion] = useState('');
-
   // Interactive Chart State
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   
@@ -298,7 +298,7 @@ const App: React.FC = () => {
       form = fitness - fatigue;
 
     } else if (activities.length > 0) {
-      // Fallback calculation logic...
+       // Fallback: Manual calculation if wellness API fails
        const sortedActs = [...activities].sort((a, b) => 
         new Date(a.start_date_local).getTime() - new Date(b.start_date_local).getTime()
       );
@@ -315,21 +315,32 @@ const App: React.FC = () => {
         loadMap.set(d, (loadMap.get(d) || 0) + l);
       });
 
-      let ctl = 0;
-      let atl = 0;
       const msPerDay = 24 * 60 * 60 * 1000;
+      
+      // Improved heuristic: Seed initial CTL/ATL with the average daily load of the first 7 days of available data.
+      // This assumes the athlete was in a somewhat steady state before the data window.
+      const firstWeekActs = sortedActs.filter(a => {
+        const d = new Date(a.start_date_local).getTime();
+        return d < startDate.getTime() + 7 * msPerDay;
+      });
+      const firstWeekLoad = firstWeekActs.reduce((acc, a) => acc + (a.icu_training_load ?? a.icu_tss ?? 0), 0);
+      const initialSeed = firstWeekActs.length > 0 ? (firstWeekLoad / 7) : 0;
+
+      let ctl = initialSeed;
+      let atl = initialSeed;
+      
       const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / msPerDay);
 
       for (let i = 0; i <= daysDiff; i++) {
         const currentD = new Date(startDate.getTime() + i * msPerDay);
         const dateStr = currentD.toISOString().split('T')[0];
         const dayLoad = loadMap.get(dateStr) || 0;
-        if (i === 0) { ctl = dayLoad; atl = dayLoad; } 
-        else {
-          ctl = ctl + (dayLoad - ctl) / 42;
-          atl = atl + (dayLoad - atl) / 7;
-        }
+        
+        // Exponential moving average formula
+        ctl = ctl + (dayLoad - ctl) / 42;
+        atl = atl + (dayLoad - atl) / 7;
       }
+      
       fitness = Math.round(ctl);
       fatigue = Math.round(atl);
       form = Math.round(ctl - atl);
@@ -378,15 +389,6 @@ const App: React.FC = () => {
       setMessages(prev => [...prev, { role: 'model', text: "Sorry, I'm having trouble connecting to the coaching server right now." }]);
     } finally {
       setIsChatLoading(false);
-    }
-  };
-
-  const handleDashboardQuestionSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (dashboardQuestion.trim()) {
-      setActiveTab('chat');
-      handleSendMessage(dashboardQuestion);
-      setDashboardQuestion('');
     }
   };
 
@@ -502,7 +504,10 @@ const App: React.FC = () => {
             {/* Daily Insight Card */}
             <div className="relative group shrink-0">
               <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-3xl blur opacity-15 group-hover:opacity-25 transition duration-1000"></div>
-              <div className="relative glass-panel rounded-2xl overflow-hidden border-white/10">
+              <div 
+                className={`relative glass-panel rounded-2xl overflow-hidden border-white/10 transition-all duration-300 cursor-pointer ${isExpanded ? 'bg-slate-900/80 shadow-2xl' : ''}`}
+                onClick={() => setIsExpanded(!isExpanded)}
+              >
                 
                 <div className="px-4 pt-3 pb-1 flex justify-between items-start">
                   <h3 className="text-white font-bold flex items-center gap-2 text-[11px] uppercase tracking-wider">
@@ -510,7 +515,8 @@ const App: React.FC = () => {
                     Coach WaTTson
                   </h3>
                   <button 
-                    onClick={async () => {
+                    onClick={async (e) => {
+                      e.stopPropagation();
                       if (activities.length === 0) return;
                       setLoadingSuggestion(true);
                       try {
@@ -532,16 +538,18 @@ const App: React.FC = () => {
                 {suggestion ? (
                   <div className="animate-in fade-in duration-300">
                     <div className="px-4 pb-2 border-b border-white/5">
-                       <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 bg-white/5 border border-white/5 shadow-inner ${getReadinessColor(suggestion.readiness_score)}`}>
+                       <div className="flex items-start gap-3">
+                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 bg-white/5 border border-white/5 shadow-inner mt-1 ${getReadinessColor(suggestion.readiness_score)}`}>
                              <HeartPulse size={16} />
                           </div>
-                          <div>
+                          <div className="flex-1 min-w-0">
                              <div className="flex items-baseline gap-2">
                                 <span className={`text-2xl font-bold leading-none ${getReadinessColor(suggestion.readiness_score)}`}>{suggestion.readiness_score}</span>
                                 <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">/ 10 readiness</span>
                              </div>
-                             <p className="text-slate-400 text-[10px] leading-tight truncate max-w-[280px]">{suggestion.readiness_analysis}</p>
+                             <p className={`text-slate-400 text-[10px] leading-tight transition-all duration-300 ${isExpanded ? 'whitespace-pre-wrap' : 'truncate'}`}>
+                               {suggestion.readiness_analysis}
+                             </p>
                           </div>
                        </div>
                     </div>
@@ -560,7 +568,9 @@ const App: React.FC = () => {
                         </span>
                       </div>
                       <h4 className="text-white font-bold text-xs mb-1 truncate">{suggestion.title}</h4>
-                      <p className="text-slate-400 text-[10px] leading-relaxed line-clamp-2">{suggestion.description}</p>
+                      <p className={`text-slate-400 text-[10px] leading-relaxed transition-all duration-300 ${isExpanded ? 'whitespace-pre-wrap' : 'line-clamp-2'}`}>
+                        {suggestion.description}
+                      </p>
                     </div>
                   </div>
                 ) : (
@@ -571,21 +581,6 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 )}
-                
-                <form onSubmit={handleDashboardQuestionSubmit} className="p-1.5 border-t border-white/5">
-                   <div className="relative group/input">
-                     <input 
-                       type="text" 
-                       value={dashboardQuestion}
-                       onChange={(e) => setDashboardQuestion(e.target.value)}
-                       placeholder="Ask WaTTson anything..." 
-                       className="w-full bg-slate-900/40 border border-white/10 rounded-xl pl-3 pr-8 py-2.5 text-[10px] text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/30 transition-all group-hover/input:bg-slate-900/60"
-                     />
-                     <button type="submit" disabled={!dashboardQuestion.trim()} className="absolute right-2 top-1/2 -translate-y-1/2 text-cyan-500 disabled:opacity-0 transition-opacity">
-                       <Send size={12} />
-                     </button>
-                   </div>
-                </form>
               </div>
             </div>
 
@@ -601,14 +596,18 @@ const App: React.FC = () => {
                        <span className="text-[8px] font-bold text-slate-500 uppercase">7d Sum</span>
                     </div>
                   </div>
-                  <div className="flex gap-4 text-right">
+                  <div className="flex gap-3 text-right">
                      <div>
-                        <div className="text-[8px] text-slate-500 uppercase font-bold tracking-tight">30d Sum</div>
-                        <div className="text-base font-bold text-white">{stats.totalTss}</div>
+                        <div className="text-[8px] text-slate-500 uppercase font-bold tracking-tight">Fitness</div>
+                        <div className="text-base font-bold text-cyan-400">{stats.fitness}</div>
                      </div>
                      <div>
-                        <div className="text-[8px] text-slate-500 uppercase font-bold tracking-tight">Avg TSS</div>
-                        <div className="text-base font-bold text-white">{stats.avgTss}</div>
+                        <div className="text-[8px] text-slate-500 uppercase font-bold tracking-tight">Fatigue</div>
+                        <div className="text-base font-bold text-slate-300">{stats.fatigue}</div>
+                     </div>
+                     <div>
+                        <div className="text-[8px] text-slate-500 uppercase font-bold tracking-tight">Form</div>
+                        <div className={`text-base font-bold ${stats.form >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>{stats.form}</div>
                      </div>
                   </div>
                </div>

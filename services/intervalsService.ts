@@ -1,6 +1,13 @@
 
 import { Activity, ActivityInterval, IntervalsCredentials, PlannedWorkout, Wellness } from '../types';
 
+const toLocalDateString = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export const fetchActivities = async (creds: IntervalsCredentials): Promise<Activity[]> => {
   const { apiKey } = creds;
   
@@ -26,13 +33,6 @@ export const fetchActivities = async (creds: IntervalsCredentials): Promise<Acti
   
   const pastDate = new Date();
   pastDate.setDate(now.getDate() - 84); // 12 Weeks
-  
-  const toLocalDateString = (date: Date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
   
   const oldest = toLocalDateString(pastDate);
   const newest = toLocalDateString(tomorrow);
@@ -122,15 +122,15 @@ export const fetchWellness = async (creds: IntervalsCredentials): Promise<Wellne
     'Accept': 'application/json'
   };
 
-  // Fetch last 28 days (increased from 14) to ensure we find a valid CTL/ATL entry
+  // Fetch last 42 days (6 weeks) to ensure robust overlap
   const now = new Date();
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const newest = tomorrow.toISOString().split('T')[0];
+  const newest = toLocalDateString(tomorrow);
   
   const past = new Date();
-  past.setDate(now.getDate() - 28);
-  const oldest = past.toISOString().split('T')[0];
+  past.setDate(now.getDate() - 42);
+  const oldest = toLocalDateString(past);
 
   const url = `https://intervals.icu/api/v1/athlete/0/wellness?oldest=${oldest}&newest=${newest}`;
 
