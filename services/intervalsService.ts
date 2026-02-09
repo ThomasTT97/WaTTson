@@ -122,14 +122,14 @@ export const fetchWellness = async (creds: IntervalsCredentials): Promise<Wellne
     'Accept': 'application/json'
   };
 
-  // Fetch last 42 days (6 weeks) to ensure robust overlap
+  // Fetch last 84 days (12 weeks) to match activity history and ensure robust graphs/calculations
   const now = new Date();
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
   const newest = toLocalDateString(tomorrow);
   
   const past = new Date();
-  past.setDate(now.getDate() - 42);
+  past.setDate(now.getDate() - 84); // Increased from 42 to 84 to ensure enough data for CTL calculations
   const oldest = toLocalDateString(past);
 
   const url = `https://intervals.icu/api/v1/athlete/0/wellness?oldest=${oldest}&newest=${newest}`;

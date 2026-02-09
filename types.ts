@@ -60,6 +60,7 @@ export interface CoachingFeedback {
 }
 
 export interface DailySuggestion {
+  date?: string; // Added for caching
   title: string;
   description: string;
   intensity: 'Low' | 'Moderate' | 'High' | 'Rest';

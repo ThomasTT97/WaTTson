@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Activity, 
@@ -12,7 +11,7 @@ import { getDailySuggestion, sendChatMessage } from './services/geminiService';
 import { ActivityCard } from './components/ActivityCard';
 import { CoachingModal } from './components/CoachingModal';
 import { 
-  BarChart, Bar, ResponsiveContainer, Cell, Tooltip 
+  ComposedChart, Line, Bar, ResponsiveContainer, Cell, Tooltip 
 } from 'recharts';
 import { 
   Settings, 
@@ -86,7 +85,25 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
-  const [suggestion, setSuggestion] = useState<DailySuggestion | null>(null);
+  
+  // Suggestion State with Caching Logic
+  const [suggestion, setSuggestion] = useState<DailySuggestion | null>(() => {
+    try {
+      const savedStr = localStorage.getItem('wattson_daily_suggestion');
+      if (!savedStr) return null;
+      const saved = JSON.parse(savedStr) as DailySuggestion;
+      
+      // Get current local date YYYY-MM-DD
+      const today = new Date().toLocaleDateString('en-CA');
+      
+      // If the saved suggestion is from today, use it. Otherwise return null.
+      if (saved.date === today) {
+        return saved;
+      }
+      return null;
+    } catch { return null; }
+  });
+
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'rides' | 'settings' | 'chat'>('dashboard');
   const [lastSync, setLastSync] = useState<Date | null>(() => {
@@ -187,19 +204,26 @@ const App: React.FC = () => {
 
   // AUTO-FETCH SUGGESTION: Trigger when activities are loaded and no suggestion exists
   useEffect(() => {
-    if (activities.length > 0 && !suggestion && !loadingSuggestion) {
-      const triggerSuggestion = async () => {
-        setLoadingSuggestion(true);
-        try {
-          const data = await getDailySuggestion(activities, userGoal);
-          setSuggestion(data);
-        } catch (err) {
-          console.error("Auto-fetch suggestion failed", err);
-        } finally {
-          setLoadingSuggestion(false);
-        }
-      };
-      triggerSuggestion();
+    const today = new Date().toLocaleDateString('en-CA');
+    
+    // Only fetch if we have activities, and either NO suggestion, or the suggestion is old
+    if (activities.length > 0 && !loadingSuggestion) {
+      if (!suggestion || suggestion.date !== today) {
+        const triggerSuggestion = async () => {
+          setLoadingSuggestion(true);
+          try {
+            const data = await getDailySuggestion(activities, userGoal);
+            const dataWithDate = { ...data, date: today };
+            setSuggestion(dataWithDate);
+            localStorage.setItem('wattson_daily_suggestion', JSON.stringify(dataWithDate));
+          } catch (err) {
+            console.error("Auto-fetch suggestion failed", err);
+          } finally {
+            setLoadingSuggestion(false);
+          }
+        };
+        triggerSuggestion();
+      }
     }
   }, [activities, suggestion, userGoal, loadingSuggestion]);
 
@@ -225,6 +249,10 @@ const App: React.FC = () => {
     setUserGoal(tempGoal);
     localStorage.setItem('wattson_goal', tempGoal);
     setIsEditingGoal(false);
+    
+    // Clear suggestion to force refresh on new goal
+    setSuggestion(null);
+    localStorage.removeItem('wattson_daily_suggestion');
   };
 
   const openGoalEditor = () => {
@@ -241,7 +269,7 @@ const App: React.FC = () => {
     "Prepare for race season"
   ];
 
-  // Chart Data: Last 7 Calendar Days (Load Trend)
+  // Chart Data: Last 7 Calendar Days (Load + Fitness Trend)
   const chartData = useMemo(() => {
     const data = [];
     const today = new Date();
@@ -254,6 +282,10 @@ const App: React.FC = () => {
       loadByDate.set(dateStr, (loadByDate.get(dateStr) || 0) + load);
     });
 
+    // Create lookup for wellness (Fitness/Form)
+    const wellnessByDate = new Map<string, Wellness>();
+    wellnessData.forEach(w => wellnessByDate.set(w.date, w));
+
     for (let i = 6; i >= 0; i--) {
       const d = new Date(today);
       d.setDate(today.getDate() - i);
@@ -265,14 +297,18 @@ const App: React.FC = () => {
       
       const weekday = d.toLocaleDateString('en-US', { weekday: 'narrow' });
       
+      const w = wellnessByDate.get(dateKey);
+
       data.push({
         name: weekday,
         fullDate: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-        tss: Math.round(loadByDate.get(dateKey) || 0)
+        tss: Math.round(loadByDate.get(dateKey) || 0),
+        ctl: w?.ctl ? Math.round(w.ctl) : 0,
+        form: w && w.ctl !== undefined && w.atl !== undefined ? Math.round(w.ctl - w.atl) : 0
       });
     }
     return data;
-  }, [activities]);
+  }, [activities, wellnessData]);
 
   const stats = useMemo(() => {
     // Basic Sums from Activities
@@ -281,70 +317,28 @@ const App: React.FC = () => {
     const avgTss = activities.length ? Math.round(totalTss / activities.length) : 0;
 
     // --- FITNESS / FATIGUE / FORM ---
+    // STRICT RULE: Use Interval.icu's API data (Wellness). 
+    // We look for the most recent valid entry to avoid "0" if today isn't processed.
+    
     let fitness = 0;
     let fatigue = 0;
     let form = 0;
 
     if (wellnessData.length > 0) {
-      // Wellness data is sorted by date desc
+      // Sort wellness by date descending (Newest first)
       const sortedWellness = [...wellnessData].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       
-      const latestFitness = sortedWellness.find(w => w.ctl !== null && w.ctl !== undefined);
-      if (latestFitness) fitness = Math.round(latestFitness.ctl);
-      
-      const latestFatigue = sortedWellness.find(w => w.atl !== null && w.atl !== undefined);
-      if (latestFatigue) fatigue = Math.round(latestFatigue.atl);
-      
-      form = fitness - fatigue;
+      // Find the first entry that has a valid CTL > 0 (Calculated)
+      // This skips "Today" if it hasn't been calculated yet by the backend
+      const validEntry = sortedWellness.find(w => (w.ctl || 0) > 0);
 
-    } else if (activities.length > 0) {
-       // Fallback: Manual calculation if wellness API fails
-       const sortedActs = [...activities].sort((a, b) => 
-        new Date(a.start_date_local).getTime() - new Date(b.start_date_local).getTime()
-      );
-      
-      const startDate = new Date(sortedActs[0].start_date_local);
-      startDate.setHours(0,0,0,0);
-      const endDate = new Date();
-      endDate.setHours(0,0,0,0);
-      
-      const loadMap = new Map<string, number>();
-      sortedActs.forEach(a => {
-        const d = a.start_date_local.split('T')[0];
-        const l = a.icu_training_load ?? a.icu_tss ?? 0;
-        loadMap.set(d, (loadMap.get(d) || 0) + l);
-      });
-
-      const msPerDay = 24 * 60 * 60 * 1000;
-      
-      // Improved heuristic: Seed initial CTL/ATL with the average daily load of the first 7 days of available data.
-      // This assumes the athlete was in a somewhat steady state before the data window.
-      const firstWeekActs = sortedActs.filter(a => {
-        const d = new Date(a.start_date_local).getTime();
-        return d < startDate.getTime() + 7 * msPerDay;
-      });
-      const firstWeekLoad = firstWeekActs.reduce((acc, a) => acc + (a.icu_training_load ?? a.icu_tss ?? 0), 0);
-      const initialSeed = firstWeekActs.length > 0 ? (firstWeekLoad / 7) : 0;
-
-      let ctl = initialSeed;
-      let atl = initialSeed;
-      
-      const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / msPerDay);
-
-      for (let i = 0; i <= daysDiff; i++) {
-        const currentD = new Date(startDate.getTime() + i * msPerDay);
-        const dateStr = currentD.toISOString().split('T')[0];
-        const dayLoad = loadMap.get(dateStr) || 0;
-        
-        // Exponential moving average formula
-        ctl = ctl + (dayLoad - ctl) / 42;
-        atl = atl + (dayLoad - atl) / 7;
+      if (validEntry) {
+        fitness = Math.round(validEntry.ctl || 0);
+        fatigue = Math.round(validEntry.atl || 0);
+        // Recalculate Form (TSB) = Fitness (CTL) - Fatigue (ATL) to ensure consistency
+        form = Math.round((validEntry.ctl || 0) - (validEntry.atl || 0));
       }
-      
-      fitness = Math.round(ctl);
-      fatigue = Math.round(atl);
-      form = Math.round(ctl - atl);
-    }
+    } 
 
     let formZone = 'Neutral';
     if (form > 5) formZone = 'Fresh';
@@ -518,10 +512,14 @@ const App: React.FC = () => {
                     onClick={async (e) => {
                       e.stopPropagation();
                       if (activities.length === 0) return;
+                      // Manual refresh force override
                       setLoadingSuggestion(true);
                       try {
+                        const today = new Date().toLocaleDateString('en-CA');
                         const data = await getDailySuggestion(activities, userGoal);
-                        setSuggestion(data);
+                        const dataWithDate = { ...data, date: today };
+                        setSuggestion(dataWithDate);
+                        localStorage.setItem('wattson_daily_suggestion', JSON.stringify(dataWithDate));
                       } catch (err) {
                         console.error(err);
                       } finally {
@@ -589,16 +587,16 @@ const App: React.FC = () => {
                <div className="flex justify-between items-end shrink-0">
                   <div>
                     <h3 className="text-[9px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
-                       <TrendingUp size={11} className="text-cyan-400"/> Load Trend
+                       <TrendingUp size={11} className="text-cyan-400"/> Training Status
                     </h3>
                     <div className="mt-0.5 flex items-baseline gap-1.5">
                        <span className="text-2xl font-bold text-white tracking-tighter">{stats.sevenDayLoad}</span>
-                       <span className="text-[8px] font-bold text-slate-500 uppercase">7d Sum</span>
+                       <span className="text-[8px] font-bold text-slate-500 uppercase">7d Load</span>
                     </div>
                   </div>
-                  <div className="flex gap-3 text-right">
+                  <div className="flex gap-4 text-right">
                      <div>
-                        <div className="text-[8px] text-slate-500 uppercase font-bold tracking-tight">Fitness</div>
+                        <div className="text-[8px] text-cyan-500/70 uppercase font-bold tracking-tight">Fitness</div>
                         <div className="text-base font-bold text-cyan-400">{stats.fitness}</div>
                      </div>
                      <div>
@@ -615,39 +613,60 @@ const App: React.FC = () => {
                <div className="flex-1 w-full mt-1 min-h-0">
                 {activities.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart 
+                    <ComposedChart 
                       data={chartData} 
-                      barSize={24}
+                      barSize={16}
                       onMouseLeave={() => setActiveIndex(null)}
                     >
                        <Tooltip 
                         cursor={{fill: 'transparent'}}
                         content={({ active, payload }) => {
                           if (active && payload && payload.length) {
+                            const data = payload[0].payload;
                             return (
-                              <div className="bg-slate-900/95 border border-white/20 p-2 rounded-xl text-[10px] backdrop-blur-xl z-50 shadow-2xl ring-1 ring-white/10">
-                                <p className="text-white font-bold">{payload[0].value} <span className="text-slate-500 font-normal">TSS</span></p>
+                              <div className="bg-slate-900/95 border border-white/20 p-2.5 rounded-xl text-[10px] backdrop-blur-xl z-50 shadow-2xl ring-1 ring-white/10">
+                                <p className="text-white font-bold mb-1">{data.fullDate}</p>
+                                <div className="flex justify-between gap-4">
+                                   <span className="text-slate-400">Load</span>
+                                   <span className="text-white font-mono">{data.tss}</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                   <span className="text-cyan-400">Fitness</span>
+                                   <span className="text-cyan-100 font-mono">{data.ctl}</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                   <span className="text-amber-400">Form</span>
+                                   <span className="text-amber-100 font-mono">{data.form}</span>
+                                </div>
                               </div>
                             );
                           }
                           return null;
                         }}
                       />
-                      <Bar dataKey="tss" radius={[4, 4, 4, 4]} isAnimationActive={true}>
+                      <Bar dataKey="tss" radius={[2, 2, 2, 2]}>
                         {chartData.map((entry, index) => {
                            const isActive = activeIndex === index || (activeIndex === null && index === chartData.length - 1);
                            return (
                               <Cell 
                                 key={`cell-${index}`} 
-                                fill={isActive ? '#22d3ee' : '#334155'} 
-                                fillOpacity={isActive ? 1 : 0.4}
+                                fill={isActive ? '#cbd5e1' : '#334155'} 
+                                fillOpacity={isActive ? 0.3 : 0.2}
                                 onMouseEnter={() => setActiveIndex(index)}
                                 style={{ transition: 'all 0.3s ease' }}
                               />
                            );
                         })}
                       </Bar>
-                    </BarChart>
+                      <Line 
+                        type="monotone" 
+                        dataKey="ctl" 
+                        stroke="#22d3ee" 
+                        strokeWidth={2} 
+                        dot={false}
+                        activeDot={{ r: 4, fill: '#22d3ee', strokeWidth: 0 }}
+                      />
+                    </ComposedChart>
                   </ResponsiveContainer>
                 ) : (
                   <div className="h-full w-full flex flex-col items-center justify-center border border-dashed border-white/5 rounded-xl">
@@ -812,6 +831,7 @@ const App: React.FC = () => {
                       localStorage.removeItem('wattson_activities');
                       localStorage.removeItem('wattson_wellness');
                       localStorage.removeItem('wattson_last_sync');
+                      localStorage.removeItem('wattson_daily_suggestion'); // Clear cache
                       localStorage.removeItem('wattson_chat_history'); // Clear chat
                       setCreds(null);
                       setActivities([]);
