@@ -8,17 +8,18 @@ export interface Activity {
   moving_time: number;
   total_elevation_gain: number;
   average_watts?: number;
-  weighted_average_watts?: number; // Normalized Power
+  weighted_average_watts?: number;
   average_heartrate?: number;
   max_watts?: number;
   training_load?: number;
-  icu_tss?: number; // Deprecated in favor of icu_training_load
+  icu_tss?: number;
   icu_variability_index?: number;
   icu_intensity?: number;
-  icu_training_load?: number; // Primary field for TSS/Load
+  icu_efficiency_factor?: number;
+  icu_training_load?: number;
   icu_joules?: number;
   calories?: number;
-  source?: string; // To detect 'STRAVA' origin
+  source?: string;
 }
 
 export interface ActivityInterval {
@@ -27,7 +28,7 @@ export interface ActivityInterval {
   end_index: number;
   average_watts: number;
   average_heartrate: number;
-  moving_time: number; // Seconds
+  moving_time: number;
   type: 'WORK' | 'RECOVERY' | 'WARMUP' | 'COOLDOWN';
   label?: string;
 }
@@ -36,20 +37,22 @@ export interface PlannedWorkout {
   id: string;
   name: string;
   description: string;
-  category: string; // 'WORKOUT'
+  category: string;
   start_date_local: string;
-  moving_time: number; // planned duration in seconds
-  icu_training_load: number; // planned load
+  moving_time: number;
+  icu_training_load: number;
 }
 
 export interface Wellness {
   id: string;
   date: string;
-  ctl: number;
-  atl: number;
+  ctl?: number;
+  atl?: number;
+  tsb?: number;
   trainingLoad?: number;
   restHR?: number;
   hrv?: number;
+  weight?: number;
 }
 
 export interface CoachingFeedback {
@@ -59,15 +62,34 @@ export interface CoachingFeedback {
   metrics_analysis: string;
 }
 
-export interface DailySuggestion {
-  date?: string; // Added for caching
+export interface WorkoutOption {
   title: string;
   description: string;
   intensity: 'Low' | 'Moderate' | 'High' | 'Rest';
   duration_minutes: number;
+  type: 'intervals' | 'endurance';
+}
+
+export interface DailySuggestion {
+  date: string;
+  readiness_score: number;
+  readiness_analysis: string;
   reasoning: string;
-  readiness_score: number; // 0 to 10 scale
-  readiness_analysis: string; // Brief health/recovery status
+  primary: WorkoutOption;
+  alternative: WorkoutOption;
+}
+
+export interface WeeklyBriefing {
+  phase: string;
+  focus: string;
+  outlook_summary: string;
+  days: {
+    day: string;
+    focus: string;
+    load_target: number;
+    intensity: 'Low' | 'Moderate' | 'High' | 'Rest';
+    why: string;
+  }[];
 }
 
 export interface IntervalsCredentials {
