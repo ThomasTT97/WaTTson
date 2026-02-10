@@ -293,7 +293,7 @@ const App: React.FC = () => {
         <div className="w-20 h-20 bg-cyan-500/10 rounded-3xl flex items-center justify-center mx-auto mb-6 ring-1 ring-cyan-500/20">
           <CyclistIcon size={48} className="text-cyan-400" />
         </div>
-        <h1 className="text-3xl font-black text-white mb-2 tracking-tighter uppercase italic">WaTTson</h1>
+        <h1 className="text-3xl mb-2 logo-text">WaTTson</h1>
         {syncError ? (
           <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl mb-6 text-left">
             <div className="flex items-center gap-2 text-red-400 mb-1">
@@ -327,7 +327,7 @@ const App: React.FC = () => {
                   <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20 shadow-lg shadow-cyan-500/10 ring-1 ring-white/5 backdrop-blur-sm">
                     <CyclistIcon size={22} className="text-cyan-400" />
                   </div>
-                  <h1 className="text-2xl font-black text-white tracking-tighter uppercase italic">WaTTson</h1>
+                  <h1 className="text-2xl logo-text">WaTTson</h1>
                 </div>
                 <div onClick={() => setShowGoalEditor(true)} className="flex items-center gap-1.5 cursor-pointer group pt-1">
                   <Target size={12} className="text-cyan-500 group-hover:scale-110 transition-transform" />
