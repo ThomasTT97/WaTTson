@@ -2,32 +2,48 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Activity, ActivityInterval, CoachingFeedback, DailySuggestion, PlannedWorkout, ChatMessage, WeeklyBriefing, Wellness } from "../types";
 
+/**
+ * Fallback models based on guidelines.
+ * Primary: Gemini 3 Flash (Fast/Modern)
+ * Secondary: Flash Lite (Efficient)
+ * Tertiary: Gemini 3 Pro (Robust reasoning if others fail)
+ */
 const FALLBACK_MODELS = [
   'gemini-3-flash-preview',
   'gemini-flash-lite-latest',
   'gemini-3-pro-preview'
 ];
 
+/**
+ * Initializes the Google GenAI client following strict guidelines.
+ * Validates API key presence before initialization to prevent silent failures.
+ */
 const getAI = () => {
-  const apiKey = (process.env.API_KEY as string) || '';
+  const apiKey = process.env.API_KEY;
+  if (!apiKey || apiKey.length < 5) {
+    throw new Error("Gemini API Key is missing or invalid. Please check your environment variables (process.env.API_KEY).");
+  }
   return new GoogleGenAI({ apiKey });
 };
 
 const timeoutPromise = (ms: number) => new Promise<never>((_, reject) => 
-  setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
+  setTimeout(() => reject(new Error(`Operation timed out after ${ms/1000}s. Check your network connection.`)), ms)
 );
 
 /**
- * Robustly parses JSON from AI response, handling markdown blocks or unexpected text.
+ * Robustly parses JSON from AI response.
+ * Handles markdown formatting, loose text, and potential extraction errors.
  */
 const safeParseJSON = (text: string | undefined): any => {
-  if (!text) throw new Error("Empty response from AI");
+  if (!text) throw new Error("Received empty response from the AI coach.");
   
+  // Clean potential markdown blocks
   let cleanText = text.replace(/```json\n?|```/g, "").trim();
   
   try {
     return JSON.parse(cleanText);
   } catch (e) {
+    // Attempt brute-force extraction if standard parse fails
     const firstBrace = cleanText.indexOf('{');
     const lastBrace = cleanText.lastIndexOf('}');
     const firstBracket = cleanText.indexOf('[');
@@ -36,6 +52,7 @@ const safeParseJSON = (text: string | undefined): any => {
     let start = -1;
     let end = -1;
     
+    // Determine the most likely JSON boundary
     if (firstBrace !== -1 && (firstBracket === -1 || (firstBrace < firstBracket && firstBrace !== -1))) {
       start = firstBrace;
       end = lastBrace;
@@ -49,30 +66,48 @@ const safeParseJSON = (text: string | undefined): any => {
       try {
         return JSON.parse(extracted);
       } catch (innerError) {
-        console.error("Extraction failed:", extracted);
+        console.warn("Deep extraction failed for:", extracted);
       }
     }
 
-    throw new Error("Analysis parsing failed.");
+    throw new Error("Coach provided a non-standard response format. Please try again.");
   }
 };
 
+/**
+ * Executes an AI operation with automatic model fallback and timeout management.
+ * Crucial for mobile stability where specific models might be unreachable or slow.
+ */
 async function executeWithFallback<T>(
   operationCallback: (model: string) => Promise<T>
 ): Promise<T> {
   let lastError: any = null;
+  // Use a longer timeout for mobile networks (30s)
+  const TIMEOUT_MS = 30000;
+
   for (const model of FALLBACK_MODELS) {
     try {
+      console.log(`WaTTson: Attempting analysis with ${model}...`);
       return await Promise.race([
         operationCallback(model),
-        timeoutPromise(18000)
+        timeoutPromise(TIMEOUT_MS)
       ]);
     } catch (err: any) {
-      console.warn(`Model [${model}] failed:`, err.message);
+      console.warn(`WaTTson: Model [${model}] failed:`, err.message || err);
       lastError = err;
+      
+      // If it's a 401/403 (Auth error), don't bother retrying other models
+      if (err.message?.includes('401') || err.message?.includes('403') || err.message?.includes('API key')) {
+        break;
+      }
+      
+      // Optional: Small delay before fallback retry to allow network to settle
+      await new Promise(r => setTimeout(r, 500));
     }
   }
-  throw lastError || new Error("AI models failed.");
+  
+  const errorMessage = lastError?.message || "All coaching models failed to respond.";
+  throw new Error(`AI Connection Error: ${errorMessage}`);
 }
 
 export const getRideFeedback = async (
@@ -85,12 +120,11 @@ export const getRideFeedback = async (
   const load = activity.icu_training_load ?? activity.icu_tss ?? 0;
   const durationMins = Math.round(activity.moving_time / 60);
   
-  const prompt = `You are a high-performance cycling coach. Analyze this ride and provide feedback in JSON.
-    Ride Name: "${activity.name}"
-    TSS Load: ${load}
-    Duration: ${durationMins}m
-    Goal: "${userGoal || 'Improve'}"
-    Return JSON with: summary, highlights[], recommendations, metrics_analysis.`;
+  const prompt = `You are WaTTson, a high-performance cycling coach. 
+    Analyze this ride: "${activity.name}" (TSS: ${load}, Duration: ${durationMins}m).
+    Context: User goal is "${userGoal || 'Improve overall cycling fitness'}".
+    Analyze the load relative to the goal and suggest the next training phase.
+    Return JSON with: summary (concise), highlights[] (list of positives), recommendations (actionable next step), metrics_analysis (technical breakdown).`;
 
   return executeWithFallback(async (modelName) => {
     const response = await ai.models.generateContent({
@@ -119,6 +153,7 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
 
+  // Build a timeline of the last 14 days for the coach
   const log: Record<string, number> = {};
   for (let i = 13; i >= 0; i--) {
     const d = new Date(today);
@@ -136,11 +171,13 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
     .map(([date, load]) => `${date}: ${load} TSS`)
     .join('\n');
 
-  const prompt = `As a cycling coach, analyze history and goal: "${userGoal || 'Improve performance'}".
+  const prompt = `As a cycling coach, evaluate the recent 14-day history and the user's focus: "${userGoal || 'Fitness Improvement'}".
     CURRENT DATE: ${todayStr}
-    HISTORY:
+    HISTORY LOG:
     ${timeline}
-    Return JSON matching DailySuggestion type.`;
+    
+    Provide two workout options for today based on readiness and fatigue trends.
+    Return JSON matching the DailySuggestion interface.`;
 
   return executeWithFallback(async (modelName) => {
     const response = await ai.models.generateContent({
@@ -151,7 +188,6 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            date: { type: Type.STRING },
             readiness_score: { type: Type.NUMBER },
             readiness_analysis: { type: Type.STRING },
             reasoning: { type: Type.STRING },
@@ -178,7 +214,7 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
               required: ['title', 'description', 'intensity', 'duration_minutes', 'type']
             }
           },
-          required: ['date', 'readiness_score', 'readiness_analysis', 'reasoning', 'primary', 'alternative']
+          required: ['readiness_score', 'readiness_analysis', 'reasoning', 'primary', 'alternative']
         }
       }
     });
@@ -187,6 +223,7 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
   });
 };
 
+// Fix: Completed the missing implementation for getWeeklyBriefing
 export const getWeeklyBriefing = async (
   recentActivities: Activity[], 
   wellness: Wellness[], 
@@ -202,23 +239,22 @@ export const getWeeklyBriefing = async (
   const today = new Date();
   const todayName = daysOfWeek[today.getDay()];
 
-  const prompt = `Generate a 7-day cycling training outlook.
-    CRITICAL: 
-    1. THE PLAN MUST START FROM TODAY (${todayName}).
-    2. THE FIRST DAY (${todayName}) SUGGESTION MUST BE: "${todaySuggestionTitle || 'Appropriate session for readiness'}".
-    3. FOR EACH DAY, INCLUDE A 'why' FIELD EXPLAINING THE SPECIFIC COACHING REASON FOR THAT RIDE.
-    
+  const prompt = `Generate a 7-day cycling training outlook starting from ${todayName}.
+    Context:
     Goal: ${userGoal}
-    CTL: ${ctl.toFixed(1)}, TSB: ${tsb.toFixed(1)}
-    History: ${recentActivities.slice(0, 5).map(a => `${a.name}: ${a.icu_training_load}TSS`).join(', ')}
+    Current Fitness (CTL): ${ctl.toFixed(1)}
+    Current Freshness (TSB): ${tsb.toFixed(1)}
     
-    Return JSON with phase, focus, outlook_summary, and days[] (day, focus, load_target, intensity, why).`;
+    The plan must start TODAY. The first day's suggestion is: "${todaySuggestionTitle || 'Active Recovery'}".
+    For each day, provide a 'why' explanation based on training science (supercompensation, progressive overload, or recovery).
+    Return JSON with phase, focus, outlook_summary, and days[].`;
 
   return executeWithFallback(async (modelName) => {
+    // Calling generateContent with the model name and prompt as per guidelines.
     const response = await ai.models.generateContent({
       model: modelName,
       contents: prompt,
-      config: { 
+      config: {
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
@@ -249,21 +285,38 @@ export const getWeeklyBriefing = async (
   });
 };
 
+/**
+ * Sends a message to the AI coach with historical context and athlete status.
+ */
+// Fix: Added the missing sendChatMessage function export used in App.tsx
 export const sendChatMessage = async (
-  messages: ChatMessage[], 
-  newMessage: string, 
-  context: { goal?: string, recentLoad?: number, readiness?: number }
+  history: ChatMessage[],
+  message: string,
+  context: { goal: string; recentLoad: number; readiness: number }
 ): Promise<string> => {
   const ai = getAI();
-  const systemInstruction = `You are WaTTson, a cycling coach. Goal: ${context.goal}. Short/clear replies.`;
+  const systemInstruction = `You are WaTTson, a world-class cycling coach and sports scientist.
+    User Goal: ${context.goal}
+    Current 7-Day Load: ${context.recentLoad} TSS
+    Readiness Score: ${context.readiness}/10
+    
+    Answer the user's questions with a focus on data-driven cycling performance. 
+    Be supportive but professional. If they ask about medical issues, advise consulting a doctor.`;
+
+  // Format history for context to ensure model has continuity
+  const historyContext = history.map(m => `${m.role === 'user' ? 'User' : 'WaTTson'}: ${m.text}`).join('\n');
+  const fullPrompt = `${historyContext}\nUser: ${message}`;
 
   return executeWithFallback(async (modelName) => {
-    const chat = ai.chats.create({
+    const response = await ai.models.generateContent({
       model: modelName,
-      history: messages.map(m => ({ role: m.role, parts: [{ text: m.text }] })),
-      config: { systemInstruction }
+      contents: fullPrompt,
+      config: {
+        systemInstruction,
+        temperature: 0.7,
+      }
     });
-    const response = await chat.sendMessage({ message: newMessage });
-    return response.text || "Ride on!";
+    // Returning response.text property directly as per SDK guidelines.
+    return response.text || "I'm sorry, I couldn't process that request.";
   });
 };

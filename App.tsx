@@ -40,7 +40,9 @@ import {
   Repeat,
   Compass,
   Layers,
-  Calendar
+  Calendar,
+  // Fix: Added missing TrendingUp import from lucide-react
+  TrendingUp
 } from 'lucide-react';
 
 // Custom Cyclist Icon matching the user's requested style
@@ -172,11 +174,13 @@ const App: React.FC = () => {
     const last7Days = [];
     const now = new Date();
     
+    // 1. Group activities by date
     activities.forEach(a => {
       const d = a.start_date_local.split('T')[0];
       loadByDate.set(d, (loadByDate.get(d) || 0) + (a.icu_training_load ?? a.icu_tss ?? 0));
     });
 
+    // 2. Prepare 7-day chart data
     for (let i = 6; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(now.getDate() - i);
@@ -188,23 +192,61 @@ const App: React.FC = () => {
     }
 
     const total7DayLoad = last7Days.reduce((acc, d) => acc + d.load, 0);
-    const wellnessLatest = wellnessData[wellnessData.length - 1];
-    const form = wellnessLatest?.tsb ?? 0;
-    const ctl = wellnessLatest?.ctl ?? 1;
-    const atl = wellnessLatest?.atl ?? 0;
-    const rampRate = atl / ctl;
-    
-    let score = 5.0;
-    if (form > 25) score = 6.5;
-    else if (form >= 5) score = 9.5;
-    else if (form >= -10) score = 8.0;
-    else if (form >= -30) score = 5.5;
-    else score = 2.0;
 
-    if (rampRate > 1.5) score -= 2.0;
-    else if (rampRate > 1.3) score -= 1.0;
-    else if (rampRate >= 0.8) score += 0.5;
-    else score -= 0.5;
+    // 3. Robust Scientific Calculation of CTL, ATL, and TSB
+    // Intervals.icu often doesn't return full history in wellness if the API range is limited.
+    // We calculate these based on the 365 days of activity history we fetched.
+    let ctl = 0;
+    let atl = 0;
+    
+    // Sort all dates in the last year
+    const sortedDates = Array.from(loadByDate.keys()).sort();
+    if (sortedDates.length > 0) {
+      const start = new Date(sortedDates[0]);
+      const end = new Date();
+      
+      let runningCtl = 0;
+      let runningAtl = 0;
+      
+      // Calculate day-by-day to stabilize the moving averages
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const ds = toLocalDateStr(d);
+        const dailyLoad = loadByDate.get(ds) || 0;
+        
+        // Standard Banister/Coggan formulas
+        // CTL is 42-day EWMA, ATL is 7-day EWMA
+        runningCtl = runningCtl + (dailyLoad - runningCtl) * (1 / 42);
+        runningAtl = runningAtl + (dailyLoad - runningAtl) * (1 / 7);
+      }
+      ctl = runningCtl;
+      atl = runningAtl;
+    }
+
+    // Form (TSB) = Fitness - Fatigue
+    // Intervals.icu often uses TSB = CTL - ATL
+    const form = ctl - atl;
+    
+    // Ramp Rate (ACWR) = Acute Load / Chronic Load
+    // Optimal zone is typically 0.8 - 1.3
+    const rampRate = ctl > 0 ? (atl / ctl) : 0;
+    
+    // --- 0-10 Readiness Score Implementation ---
+    // Science-based mapping of Form (TSB) and ACWR to a human-readable 10-point scale
+    let score = 5.0; // Baseline
+
+    // TSB Contribution (Primary Readiness Factor)
+    if (form > 25) score = 7.0; // Fresh, but potentially losing fitness (detraining)
+    else if (form >= 5) score = 9.5; // Fresh & Fit (Peak zone)
+    else if (form >= -10) score = 8.5; // Optimal training zone (Productive)
+    else if (form >= -30) score = 5.5; // Building fatigue (Training hard)
+    else score = 2.0; // Overreaching / Burnout risk
+
+    // ACWR Adjustment (Injury Risk Factor)
+    // Sweet spot is 0.8 - 1.3. Higher risk above 1.5.
+    if (rampRate > 1.5) score -= 3.0; // High risk of injury
+    else if (rampRate > 1.3) score -= 1.0; // Monitoring needed
+    else if (rampRate >= 0.8) score += 0.5; // Perfectly balanced progression
+    else if (rampRate > 0 && rampRate < 0.5) score -= 1.0; // Too little stimulus
 
     const readinessScore = Math.min(10, Math.max(1, Math.round(score)));
 
@@ -217,7 +259,10 @@ const App: React.FC = () => {
     else if (form >= -30) { statusLabel = 'Building'; statusColor = 'text-amber-400'; statusBg = 'bg-amber-500/10'; }
     else { statusLabel = 'Overreaching'; statusColor = 'text-red-400'; statusBg = 'bg-red-500/10'; }
 
-    return { last7Days, total7DayLoad, statusLabel, statusColor, statusBg, readinessScore, form, rampRate };
+    return { 
+      last7Days, total7DayLoad, statusLabel, statusColor, statusBg, 
+      readinessScore, form, rampRate, ctl, atl 
+    };
   }, [activities, wellnessData, suggestion]);
 
   const currentWorkout: WorkoutOption | null = suggestion ? (showAlternative ? suggestion.alternative : suggestion.primary) : null;
@@ -546,23 +591,30 @@ const App: React.FC = () => {
               
               <div className="bg-slate-950/60 p-4 rounded-2xl border border-white/5">
                 <p className="text-slate-400 text-[12px] leading-relaxed italic">
-                  "Calculated using Training Stress Balance (TSB) and ACWR Workload Ratios."
+                  "Manual analysis of CTL (Fitness), ATL (Fatigue), and ACWR Ramp Rates."
                 </p>
               </div>
               
               <div className="w-full space-y-4 pt-2 text-left">
                 <div className="flex gap-3 items-start">
-                  <div className="mt-1"><Scale size={14} className="text-cyan-500" /></div>
+                  <div className="mt-1"><ActivityIcon size={14} className="text-cyan-400" /></div>
                   <div>
-                    <p className="text-xs font-bold text-slate-200">Form: {loadStats.form.toFixed(1)} TSB</p>
-                    <p className="text-[11px] text-slate-500 leading-normal">Your freshness level. Values between +5 and +25 indicate peak readiness.</p>
+                    <p className="text-xs font-bold text-slate-200">CTL (Fitness): {loadStats.ctl.toFixed(1)}</p>
+                    <p className="text-[11px] text-slate-500 leading-normal">Your chronic workload capacity based on 42-day historical load.</p>
                   </div>
                 </div>
                 <div className="flex gap-3 items-start">
-                  <div className="mt-1"><Clock size={14} className="text-emerald-500" /></div>
+                  <div className="mt-1"><Scale size={14} className="text-amber-500" /></div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-200">Form: {loadStats.form.toFixed(1)} TSB</p>
+                    <p className="text-[11px] text-slate-500 leading-normal">Fitness minus Fatigue. Values +5 to +25 indicate peak recovery status.</p>
+                  </div>
+                </div>
+                <div className="flex gap-3 items-start">
+                  <div className="mt-1"><TrendingUp size={14} className="text-emerald-500" /></div>
                   <div>
                     <p className="text-xs font-bold text-slate-200">Ramp Rate: {loadStats.rampRate.toFixed(2)}</p>
-                    <p className="text-[11px] text-slate-500 leading-normal">The 'Sweet Spot' for safe training load increase is between 0.8 and 1.3.</p>
+                    <p className="text-[11px] text-slate-500 leading-normal">Acute:Chronic ratio. The 'Sweet Spot' for progression is 0.8 - 1.3.</p>
                   </div>
                 </div>
               </div>
