@@ -74,12 +74,12 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
         </div>
         
         <div className="flex gap-4">
-          <div className="flex items-center gap-1 text-[11px] text-slate-500 font-medium">
-            <Clock size={12} />
+          <div className="flex items-center gap-1 text-[11px] text-slate-200 font-bold">
+            <Clock size={12} className="text-blue-400" />
             {durationStr}
           </div>
           
-          <div className="flex items-center gap-1 text-[11px] text-slate-300 font-bold">
+          <div className="flex items-center gap-1 text-[11px] text-slate-200 font-bold">
             <Zap size={12} className="text-amber-400" fill="currentColor" />
             {tssValue} TSS
           </div>

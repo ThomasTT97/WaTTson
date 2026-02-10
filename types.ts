@@ -87,7 +87,8 @@ export interface WeeklyBriefing {
     day: string;
     focus: string;
     load_target: number;
-    intensity: 'Low' | 'Moderate' | 'High' | 'Rest';
+    duration_target: number;
+    intensity: 'Easy' | 'Medium' | 'Hard' | 'Rest';
     why: string;
   }[];
 }

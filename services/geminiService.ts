@@ -181,14 +181,17 @@ export const getWeeklyBriefing = async (
   recentActivities: Activity[], 
   wellness: Wellness[], 
   userGoal?: string,
-  todaySuggestionTitle?: string
+  startContext?: string
 ): Promise<WeeklyBriefing> => {
   const ai = getAI();
   const latestWellness = wellness[wellness.length - 1];
   const stats = `CTL: ${latestWellness?.ctl || 0}, TSB: ${latestWellness?.tsb || 0}`;
 
   const prompt = `Generate a 7-day outlook. Goal: ${userGoal}. Current: ${stats}. 
-    First day: "${todaySuggestionTitle || 'Active Recovery'}".
+    IMPORTANT: ${startContext || 'Start from today.'}
+    Use intensity: Hard, Medium, Easy, or Rest.
+    Return actual day names (e.g. "Monday", "Tuesday") in the "day" field for each of the 7 days.
+    Include duration_target in minutes for each day.
     Return JSON with phase, focus, outlook_summary, and days[].`;
 
   return executeWithFallback(async (modelName) => {
@@ -211,10 +214,11 @@ export const getWeeklyBriefing = async (
                   day: { type: Type.STRING },
                   focus: { type: Type.STRING },
                   load_target: { type: Type.NUMBER },
+                  duration_target: { type: Type.NUMBER },
                   intensity: { type: Type.STRING },
                   why: { type: Type.STRING }
                 },
-                required: ['day', 'focus', 'load_target', 'intensity', 'why']
+                required: ['day', 'focus', 'load_target', 'duration_target', 'intensity', 'why']
               }
             }
           },
