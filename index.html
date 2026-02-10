@@ -7,7 +7,7 @@
     <title>WaTTson</title>
     
     <!-- PWA Settings -->
-    <link rel="manifest" href="/manifest.json">
+    <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#020617">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -24,10 +24,9 @@
             color: #f8fafc;
             overflow-x: hidden;
             -webkit-tap-highlight-color: transparent;
-            overscroll-behavior-y: none; /* Prevents pull-to-refresh on mobile */
+            overscroll-behavior-y: none;
         }
         
-        /* Premium Background Mesh */
         .gradient-bg {
             position: fixed;
             top: 0;
@@ -61,7 +60,6 @@
             box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
         }
 
-        /* Floating Nav Bar Style */
         .nav-pill {
             background: rgba(15, 23, 42, 0.85);
             backdrop-filter: blur(24px);
@@ -73,9 +71,9 @@
         .phone-container {
             max-width: 450px;
             margin: 0 auto;
-            min-height: 100vh;
+            min-height: 100dvh;
             position: relative;
-            background: transparent; /* Let gradient show through */
+            background: transparent;
         }
 
         @keyframes pulse-soft {
@@ -84,6 +82,19 @@
         }
         .animate-pulse-soft {
             animation: pulse-soft 3s infinite ease-in-out;
+        }
+
+        #mobile-error-boundary {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: #020617;
+            z-index: 9999;
+            padding: 2rem;
+            color: #ef4444;
+            font-family: monospace;
+            font-size: 12px;
+            overflow: auto;
         }
     </style>
 <script type="importmap">
@@ -102,12 +113,26 @@
 </script>
 </head>
 <body>
+    <div id="mobile-error-boundary">
+        <h1 style="font-size: 20px; margin-bottom: 1rem;">System Error</h1>
+        <div id="error-content"></div>
+        <button onclick="location.reload()" style="margin-top: 2rem; padding: 1rem; background: #334155; color: white; border: none; border-radius: 8px;">Retry App</button>
+    </div>
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
+    <script type="module" src="index.tsx"></script>
     <script>
+        window.onerror = function(msg, url, line, col, error) {
+            const boundary = document.getElementById('mobile-error-boundary');
+            const content = document.getElementById('error-content');
+            if (boundary && content) {
+                boundary.style.display = 'block';
+                content.innerHTML = `<p>${msg}</p><p>at ${url}:${line}:${col}</p><pre>${error ? error.stack : ''}</pre>`;
+            }
+            return false;
+        };
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/service-worker.js')
+                navigator.serviceWorker.register('service-worker.js')
                     .then(registration => console.log('SW registered'))
                     .catch(err => console.log('SW registration failed', err));
             });

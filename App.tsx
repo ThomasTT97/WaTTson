@@ -32,7 +32,6 @@ import {
   ChevronRight,
   Info,
   X,
-  PlusCircle,
   Trophy,
   Activity as ActivityIcon,
   Flame,
@@ -41,11 +40,11 @@ import {
   Compass,
   Layers,
   Calendar,
-  // Fix: Added missing TrendingUp import from lucide-react
-  TrendingUp
+  TrendingUp,
+  AlertTriangle,
+  RotateCcw
 } from 'lucide-react';
 
-// Custom Cyclist Icon matching the user's requested style
 const CyclistIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
   <svg 
     width={size} 
@@ -91,6 +90,7 @@ const App: React.FC = () => {
   const [wellnessData, setWellnessData] = useState<Wellness[]>([]);
   const [loading, setLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const [showWeeklyBriefing, setShowWeeklyBriefing] = useState(false);
   
@@ -126,6 +126,7 @@ const App: React.FC = () => {
   const loadData = async (credentials: IntervalsCredentials, isInitial = false) => {
     if (isInitial) setLoading(true);
     else setIsSyncing(true);
+    setSyncError(null);
     try {
       const [fetchedActivities, fetchedWellness] = await Promise.all([
         fetchActivities(credentials),
@@ -135,8 +136,13 @@ const App: React.FC = () => {
       setWellnessData(fetchedWellness);
       setCreds(credentials);
       localStorage.setItem('wattson_creds', JSON.stringify(credentials));
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      let errorMsg = err.message || "Failed to connect to Intervals.icu";
+      if (errorMsg.includes("Failed to fetch")) {
+        errorMsg = "Connection Blocked: Intervals.icu doesn't support direct mobile browser access. Try demo mode or check API Key permissions.";
+      }
+      setSyncError(errorMsg);
     } finally {
       setLoading(false);
       setIsSyncing(false);
@@ -156,31 +162,37 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const todayStr = toLocalDateStr(new Date());
-    if (activities.length > 0 && !loadingSuggestion && (!suggestion || suggestion.date !== todayStr)) {
-      const triggerSuggestion = async () => {
+    const shouldFetch = activities.length > 0 && 
+                        !loadingSuggestion && 
+                        (!suggestion || suggestion.date !== todayStr);
+
+    if (shouldFetch) {
+      const fetchNewSuggestion = async () => {
         setLoadingSuggestion(true);
         try {
           const data = await getDailySuggestion(activities, userGoal);
           setSuggestion(data);
           localStorage.setItem('wattson_daily_cache', JSON.stringify(data));
-        } catch {} finally { setLoadingSuggestion(false); }
+        } catch (err) {
+          console.error("Suggestion fetch failed:", err);
+        } finally {
+          setLoadingSuggestion(false);
+        }
       };
-      triggerSuggestion();
+      fetchNewSuggestion();
     }
-  }, [activities, userGoal]);
+  }, [activities.length, userGoal]);
 
   const loadStats = useMemo(() => {
     const loadByDate = new Map<string, number>();
     const last7Days = [];
     const now = new Date();
     
-    // 1. Group activities by date
     activities.forEach(a => {
       const d = a.start_date_local.split('T')[0];
       loadByDate.set(d, (loadByDate.get(d) || 0) + (a.icu_training_load ?? a.icu_tss ?? 0));
     });
 
-    // 2. Prepare 7-day chart data
     for (let i = 6; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(now.getDate() - i);
@@ -193,66 +205,33 @@ const App: React.FC = () => {
 
     const total7DayLoad = last7Days.reduce((acc, d) => acc + d.load, 0);
 
-    // 3. Robust Scientific Calculation of CTL, ATL, and TSB
-    // Intervals.icu often doesn't return full history in wellness if the API range is limited.
-    // We calculate these based on the 365 days of activity history we fetched.
-    let ctl = 0;
-    let atl = 0;
-    
-    // Sort all dates in the last year
+    let ctl = 0, atl = 0;
     const sortedDates = Array.from(loadByDate.keys()).sort();
     if (sortedDates.length > 0) {
       const start = new Date(sortedDates[0]);
       const end = new Date();
-      
-      let runningCtl = 0;
-      let runningAtl = 0;
-      
-      // Calculate day-by-day to stabilize the moving averages
+      let runningCtl = 0, runningAtl = 0;
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         const ds = toLocalDateStr(d);
         const dailyLoad = loadByDate.get(ds) || 0;
-        
-        // Standard Banister/Coggan formulas
-        // CTL is 42-day EWMA, ATL is 7-day EWMA
         runningCtl = runningCtl + (dailyLoad - runningCtl) * (1 / 42);
         runningAtl = runningAtl + (dailyLoad - runningAtl) * (1 / 7);
       }
-      ctl = runningCtl;
-      atl = runningAtl;
+      ctl = runningCtl; atl = runningAtl;
     }
 
-    // Form (TSB) = Fitness - Fatigue
-    // Intervals.icu often uses TSB = CTL - ATL
     const form = ctl - atl;
-    
-    // Ramp Rate (ACWR) = Acute Load / Chronic Load
-    // Optimal zone is typically 0.8 - 1.3
     const rampRate = ctl > 0 ? (atl / ctl) : 0;
     
-    // --- 0-10 Readiness Score Implementation ---
-    // Science-based mapping of Form (TSB) and ACWR to a human-readable 10-point scale
-    let score = 5.0; // Baseline
-
-    // TSB Contribution (Primary Readiness Factor)
-    if (form > 25) score = 7.0; // Fresh, but potentially losing fitness (detraining)
-    else if (form >= 5) score = 9.5; // Fresh & Fit (Peak zone)
-    else if (form >= -10) score = 8.5; // Optimal training zone (Productive)
-    else if (form >= -30) score = 5.5; // Building fatigue (Training hard)
-    else score = 2.0; // Overreaching / Burnout risk
-
-    // ACWR Adjustment (Injury Risk Factor)
-    // Sweet spot is 0.8 - 1.3. Higher risk above 1.5.
-    if (rampRate > 1.5) score -= 3.0; // High risk of injury
-    else if (rampRate > 1.3) score -= 1.0; // Monitoring needed
-    else if (rampRate >= 0.8) score += 0.5; // Perfectly balanced progression
-    else if (rampRate > 0 && rampRate < 0.5) score -= 1.0; // Too little stimulus
+    let score = 5.0;
+    if (form > 25) score = 7.0; 
+    else if (form >= 5) score = 9.5; 
+    else if (form >= -10) score = 8.5; 
+    else if (form >= -30) score = 5.5; 
+    else score = 2.0; 
 
     const readinessScore = Math.min(10, Math.max(1, Math.round(score)));
-
-    let statusLabel = 'Maintaining';
-    let statusColor = 'text-cyan-400';
-    let statusBg = 'bg-cyan-500/10';
+    let statusLabel = 'Maintaining', statusColor = 'text-cyan-400', statusBg = 'bg-cyan-500/10';
 
     if (form > 5) { statusLabel = 'Fresh'; statusColor = 'text-sky-400'; statusBg = 'bg-sky-500/10'; }
     else if (form >= -10) { statusLabel = 'Optimal'; statusColor = 'text-emerald-400'; statusBg = 'bg-emerald-500/10'; }
@@ -263,9 +242,18 @@ const App: React.FC = () => {
       last7Days, total7DayLoad, statusLabel, statusColor, statusBg, 
       readinessScore, form, rampRate, ctl, atl 
     };
-  }, [activities, wellnessData, suggestion]);
+  }, [activities]);
 
   const currentWorkout: WorkoutOption | null = suggestion ? (showAlternative ? suggestion.alternative : suggestion.primary) : null;
+
+  // Added handleSaveGoal to update goal state and trigger resuggestion
+  const handleSaveGoal = (goal: string) => {
+    setUserGoal(goal);
+    localStorage.setItem('wattson_goal', goal);
+    setShowGoalEditor(false);
+    // Clear existing suggestion to ensure it regenerates for the new goal
+    setSuggestion(null);
+  };
 
   const handleSendMessage = async (text: string) => {
     if (!text.trim()) return;
@@ -280,12 +268,14 @@ const App: React.FC = () => {
     } finally { setIsChatLoading(false); }
   };
 
-  const handleSaveGoal = (goal: string) => {
-    setUserGoal(goal);
-    localStorage.setItem('wattson_goal', goal);
-    setShowGoalEditor(false);
-    setSuggestion(null);
-    localStorage.removeItem('wattson_daily_cache');
+  const handleClearCache = () => {
+    localStorage.clear();
+    if ('serviceWorker' in navigator) {
+      caches.keys().then(names => {
+        for (let name of names) caches.delete(name);
+      });
+    }
+    window.location.reload();
   };
 
   if (loading) return (
@@ -296,7 +286,7 @@ const App: React.FC = () => {
     </div>
   );
 
-  if (!creds) return (
+  if (!creds || syncError) return (
     <div className="phone-container flex flex-col p-6 min-h-[100dvh] py-12">
       <div className="gradient-bg"></div>
       <div className="glass-panel p-8 rounded-[2.5rem] shadow-2xl mb-6 text-center">
@@ -304,11 +294,21 @@ const App: React.FC = () => {
           <CyclistIcon size={48} className="text-cyan-400" />
         </div>
         <h1 className="text-3xl font-black text-white mb-2 tracking-tighter uppercase italic">WaTTson</h1>
-        <p className="text-slate-400 text-sm mb-8 italic">AI-Driven Performance Optimization</p>
+        {syncError ? (
+          <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl mb-6 text-left">
+            <div className="flex items-center gap-2 text-red-400 mb-1">
+              <AlertTriangle size={16} />
+              <span className="text-xs font-bold uppercase">Sync Error</span>
+            </div>
+            <p className="text-red-200 text-xs leading-relaxed">{syncError}</p>
+          </div>
+        ) : (
+          <p className="text-slate-400 text-sm mb-8 italic">AI-Driven Performance Optimization</p>
+        )}
         <div className="space-y-4">
           <input type="password" value={formKey} onChange={(e) => setFormKey(e.target.value)} placeholder="Intervals.icu API Key" className="w-full bg-slate-900/60 border border-slate-700/50 rounded-2xl px-5 py-4 text-white text-sm" />
           <button onClick={() => loadData({ apiKey: formKey, athleteId: '0' }, true)} disabled={!formKey} className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg active:scale-95 transition-all">Connect</button>
-          <button onClick={() => { setCreds({apiKey: 'demo', athleteId: 'demo'}); setActivities(getMockActivities()); setWellnessData(getMockWellness()); }} className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.2em] mt-4">Try Demo</button>
+          <button onClick={() => { setCreds({apiKey: 'demo', athleteId: 'demo'}); setActivities(getMockActivities()); setWellnessData(getMockWellness()); setSyncError(null); }} className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.2em] mt-4">Try Demo</button>
         </div>
       </div>
     </div>
@@ -346,10 +346,7 @@ const App: React.FC = () => {
                   <span className="text-[11px] font-bold text-cyan-400 uppercase tracking-widest">Training Suggestion</span>
                 </div>
                 {suggestion && (
-                  <button 
-                    onClick={() => setShowAlternative(!showAlternative)}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-white/5 rounded-full border border-white/10 text-[10px] font-bold text-slate-400 hover:text-white transition-all active:scale-95"
-                  >
+                  <button onClick={() => setShowAlternative(!showAlternative)} className="flex items-center gap-1.5 px-3 py-1 bg-white/5 rounded-full border border-white/10 text-[10px] font-bold text-slate-400 hover:text-white transition-all active:scale-95">
                     <Repeat size={10} /> {showAlternative ? 'Indoor Intervals' : 'Outdoor Option'}
                   </button>
                 )}
@@ -364,26 +361,19 @@ const App: React.FC = () => {
                 <div className="space-y-4 animate-in fade-in duration-500">
                   <div>
                     <div className="flex items-center gap-2 mb-1.5">
-                      {currentWorkout.type === 'intervals' ? (
-                        <div className="flex items-center gap-1 text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/20">
-                          <Layers size={10} /> Structured
-                        </div>
+                      {currentWorkout.type?.toLowerCase().includes('interval') ? (
+                        <div className="flex items-center gap-1 text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/20"><Layers size={10} /> Structured</div>
                       ) : (
-                        <div className="flex items-center gap-1 text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/20">
-                          <Compass size={10} /> Outdoor
-                        </div>
+                        <div className="flex items-center gap-1 text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/20"><Compass size={10} /> Outdoor</div>
                       )}
                     </div>
                     <h2 className="text-xl font-bold text-white leading-tight">{currentWorkout.title}</h2>
                   </div>
-                  
                   <p className={`text-slate-300 text-sm leading-relaxed whitespace-pre-wrap ${isExpanded ? '' : 'line-clamp-3'}`}>{currentWorkout.description}</p>
-                  
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-white/10 px-3 py-1.5 rounded-full"><Clock size={12} /> {currentWorkout.duration_minutes}m</div>
                     <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-full border border-amber-500/10"><Zap size={12} fill="currentColor" /> {currentWorkout.intensity}</div>
                   </div>
-
                   <button onClick={() => setIsExpanded(!isExpanded)} className="w-full text-[10px] font-bold uppercase tracking-widest text-slate-500 pt-2 flex items-center justify-center gap-1 hover:text-cyan-400 transition-colors">
                     {isExpanded ? 'Hide Context' : 'Coach Reasoning'} <ChevronRight size={10} className={isExpanded ? '-rotate-90' : 'rotate-90'} />
                   </button>
@@ -406,10 +396,7 @@ const App: React.FC = () => {
                     <span className="text-[10px] font-bold text-slate-400 uppercase">{loadStats.total7DayLoad} TSS / wk</span>
                   </div>
                 </div>
-                <button 
-                  onClick={() => setShowReadinessInfo(true)}
-                  className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center ${loadStats.statusBg} border border-white/10 active:scale-95 transition-all shadow-lg hover:brightness-110`}
-                >
+                <button onClick={() => setShowReadinessInfo(true)} className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center ${loadStats.statusBg} border border-white/10 active:scale-95 transition-all shadow-lg hover:brightness-110`}>
                   <span className={`text-base font-black ${loadStats.statusColor}`}>{loadStats.readinessScore}</span>
                   <span className="text-[7px] font-bold text-slate-500 uppercase tracking-tighter">Score</span>
                 </button>
@@ -435,21 +422,15 @@ const App: React.FC = () => {
           <div className="space-y-4">
              <div className="flex items-center justify-between px-1 mb-2">
                 <h1 className="text-2xl font-bold text-white tracking-tight">Rides</h1>
-                <button 
-                  onClick={() => setShowWeeklyBriefing(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-cyan-500/10 border border-cyan-500/20 rounded-xl text-cyan-400 text-xs font-bold uppercase tracking-widest active:scale-95 transition-all shadow-lg shadow-cyan-500/5"
-                >
+                <button onClick={() => setShowWeeklyBriefing(true)} className="flex items-center gap-2 px-4 py-2 bg-cyan-500/10 border border-cyan-500/20 rounded-xl text-cyan-400 text-xs font-bold uppercase tracking-widest active:scale-95 transition-all shadow-lg shadow-cyan-500/5">
                   <Calendar size={14} /> 7-Day Outlook
                 </button>
              </div>
-             
              <div className="space-y-3">
                {activities.sort((a,b) => b.start_date_local.localeCompare(a.start_date_local)).slice(0, 25).map(a => (
                  <ActivityCard key={a.id} activity={a} onClick={setSelectedActivity} />
                ))}
-               {activities.length === 0 && (
-                 <div className="py-20 text-center opacity-40 italic text-sm">No rides recorded yet.</div>
-               )}
+               {activities.length === 0 && <div className="py-20 text-center opacity-40 italic text-sm">No rides recorded yet.</div>}
              </div>
           </div>
         )}
@@ -475,9 +456,7 @@ const App: React.FC = () => {
                ))}
                {isChatLoading && (
                  <div className="flex gap-3 animate-pulse">
-                   <div className="w-8 h-8 rounded-full bg-cyan-500/10 flex items-center justify-center text-cyan-400 ring-1 ring-cyan-500/30">
-                     <Bot size={14} />
-                   </div>
+                   <div className="w-8 h-8 rounded-full bg-cyan-500/10 flex items-center justify-center text-cyan-400 ring-1 ring-cyan-500/30"><Bot size={14} /></div>
                    <div className="bg-slate-900/50 p-4 rounded-2xl rounded-tl-sm border border-white/5 w-16">
                      <div className="flex gap-1">
                         <div className="w-1.5 h-1.5 bg-slate-600 rounded-full animate-bounce"></div>
@@ -501,65 +480,48 @@ const App: React.FC = () => {
         {activeTab === 'settings' && (
           <div className="space-y-4">
              <h1 className="text-2xl font-bold text-white mb-4 tracking-tight px-1">Athlete Profile</h1>
-             
              <div onClick={() => setShowGoalEditor(true)} className="glass-panel p-6 rounded-[2.5rem] border-white/5 space-y-4 cursor-pointer hover:bg-white/5 transition-colors group">
                 <div className="flex items-center justify-between">
                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Training Goal</p>
-                  <div className="w-8 h-8 rounded-full bg-cyan-500/10 flex items-center justify-center group-hover:bg-cyan-500/20 transition-all">
-                    <Target size={14} className="text-cyan-400" />
-                  </div>
+                  <div className="w-8 h-8 rounded-full bg-cyan-500/10 flex items-center justify-center group-hover:bg-cyan-500/20 transition-all"><Target size={14} className="text-cyan-400" /></div>
                 </div>
                 <div className="bg-slate-950/40 p-5 rounded-2xl border border-white/5 group-hover:border-cyan-500/20 transition-colors">
                   <p className="text-sm font-bold text-white leading-relaxed">{userGoal}</p>
                 </div>
                 <p className="text-[10px] text-cyan-500 font-bold uppercase tracking-wider text-center pt-2">Tap to edit objective</p>
              </div>
-
              <div className="glass-panel p-6 rounded-[2.5rem] border-white/5 space-y-6">
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Configuration</p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">System</p>
                 <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center text-slate-400 border border-white/5 shadow-inner">
-                    <User size={24} />
-                  </div>
+                  <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center text-slate-400 border border-white/5 shadow-inner"><User size={24} /></div>
                   <div>
                     <p className="text-sm font-bold text-white">Athlete ID: {creds?.athleteId}</p>
                     <p className="text-[10px] text-slate-500 uppercase tracking-widest">Connected to Intervals.icu</p>
                   </div>
                 </div>
+                <button onClick={handleClearCache} className="w-full p-4 text-sm font-bold text-slate-400 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/5 flex items-center justify-center gap-2 transition-colors"><RotateCcw size={16} /> Clear Cache & Refresh</button>
                 <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="w-full p-4 text-sm font-bold text-red-400 bg-red-500/5 hover:bg-red-500/10 rounded-2xl border border-red-500/10 flex items-center justify-center gap-2 transition-colors"><LogOut size={16} /> Disconnect Account</button>
              </div>
           </div>
         )}
       </div>
 
-      {/* Goal Editor Modal */}
       {showGoalEditor && (
         <div className="fixed inset-0 z-[100] bg-slate-950/90 backdrop-blur-xl flex flex-col p-6 animate-in fade-in slide-in-from-bottom duration-300 h-[100dvh] max-w-[450px] mx-auto">
           <div className="flex items-center justify-between mb-8" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
             <h2 className="text-2xl font-bold text-white tracking-tight">Define Your Focus</h2>
             <button onClick={() => setShowGoalEditor(false)} className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-slate-400"><X size={20} /></button>
           </div>
-
           <div className="space-y-6 flex-1 overflow-y-auto custom-scrollbar pr-1">
             <div className="space-y-3">
               <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Current Ambition</label>
-              <textarea 
-                value={userGoal} 
-                onChange={(e) => setUserGoal(e.target.value)}
-                className="w-full bg-slate-900 border border-white/10 rounded-[2rem] p-6 text-sm text-white focus:outline-none focus:ring-1 focus:ring-cyan-500/50 min-h-[140px] shadow-inner"
-                placeholder="Ex: I want to finish my first 100-mile ride without cramping."
-              />
+              <textarea value={userGoal} onChange={(e) => setUserGoal(e.target.value)} className="w-full bg-slate-900 border border-white/10 rounded-[2rem] p-6 text-sm text-white focus:outline-none focus:ring-1 focus:ring-cyan-500/50 min-h-[140px] shadow-inner" placeholder="Ex: I want to finish my first 100-mile ride without cramping." />
             </div>
-
             <div className="space-y-4">
               <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Example Objectives</p>
               <div className="grid grid-cols-1 gap-2.5">
                 {GOAL_SUGGESTIONS.map((g, i) => (
-                  <button 
-                    key={i} 
-                    onClick={() => setUserGoal(g.text)}
-                    className="p-5 bg-white/5 border border-white/5 rounded-2xl text-left hover:border-cyan-500/40 transition-all active:scale-[0.98] group"
-                  >
+                  <button key={i} onClick={() => setUserGoal(g.text)} className="p-5 bg-white/5 border border-white/5 rounded-2xl text-left hover:border-cyan-500/40 transition-all active:scale-[0.98] group">
                     <p className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider mb-1 group-hover:text-cyan-300">{g.title}</p>
                     <p className="text-[13px] text-slate-400 leading-snug group-hover:text-slate-200">{g.text}</p>
                   </button>
@@ -567,102 +529,42 @@ const App: React.FC = () => {
               </div>
             </div>
           </div>
-
-          <button 
-            onClick={() => handleSaveGoal(userGoal)}
-            className="mt-6 w-full py-5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-bold rounded-[2rem] shadow-xl active:scale-95 transition-all flex items-center justify-center gap-2 mb-4"
-          >
+          <button onClick={() => handleSaveGoal(userGoal)} className="mt-6 w-full py-5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-bold rounded-[2rem] shadow-xl active:scale-95 transition-all flex items-center justify-center gap-2 mb-4">
             <Trophy size={18} /> Update Training Goal
           </button>
         </div>
       )}
 
-      {/* Readiness Explanation Modal */}
       {showReadinessInfo && (
         <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-xl flex items-center justify-center p-6 animate-in zoom-in duration-200">
           <div className="glass-panel w-full max-w-[340px] rounded-[3rem] p-8 relative border border-white/10 shadow-2xl">
             <button onClick={() => setShowReadinessInfo(false)} className="absolute top-6 right-6 text-slate-600 hover:text-white transition-colors"><X size={18} /></button>
-            
             <div className="flex flex-col items-center text-center space-y-4">
               <div className={`w-20 h-20 rounded-[2rem] flex items-center justify-center ${loadStats.statusBg} border border-white/10 mb-2 shadow-inner`}>
                 <span className={`text-4xl font-black ${loadStats.statusColor}`}>{loadStats.readinessScore}</span>
               </div>
               <h3 className="text-xl font-bold text-white tracking-tight">Scientific Readiness: {loadStats.readinessScore}/10</h3>
-              
-              <div className="bg-slate-950/60 p-4 rounded-2xl border border-white/5">
-                <p className="text-slate-400 text-[12px] leading-relaxed italic">
-                  "Manual analysis of CTL (Fitness), ATL (Fatigue), and ACWR Ramp Rates."
-                </p>
-              </div>
-              
+              <div className="bg-slate-950/60 p-4 rounded-2xl border border-white/5"><p className="text-slate-400 text-[12px] leading-relaxed italic">"Analysis of CTL, ATL, and Form trends."</p></div>
               <div className="w-full space-y-4 pt-2 text-left">
-                <div className="flex gap-3 items-start">
-                  <div className="mt-1"><ActivityIcon size={14} className="text-cyan-400" /></div>
-                  <div>
-                    <p className="text-xs font-bold text-slate-200">CTL (Fitness): {loadStats.ctl.toFixed(1)}</p>
-                    <p className="text-[11px] text-slate-500 leading-normal">Your chronic workload capacity based on 42-day historical load.</p>
-                  </div>
-                </div>
-                <div className="flex gap-3 items-start">
-                  <div className="mt-1"><Scale size={14} className="text-amber-500" /></div>
-                  <div>
-                    <p className="text-xs font-bold text-slate-200">Form: {loadStats.form.toFixed(1)} TSB</p>
-                    <p className="text-[11px] text-slate-500 leading-normal">Fitness minus Fatigue. Values +5 to +25 indicate peak recovery status.</p>
-                  </div>
-                </div>
-                <div className="flex gap-3 items-start">
-                  <div className="mt-1"><TrendingUp size={14} className="text-emerald-500" /></div>
-                  <div>
-                    <p className="text-xs font-bold text-slate-200">Ramp Rate: {loadStats.rampRate.toFixed(2)}</p>
-                    <p className="text-[11px] text-slate-500 leading-normal">Acute:Chronic ratio. The 'Sweet Spot' for progression is 0.8 - 1.3.</p>
-                  </div>
-                </div>
+                <div className="flex gap-3 items-start"><div className="mt-1"><ActivityIcon size={14} className="text-cyan-400" /></div><div><p className="text-xs font-bold text-slate-200">CTL (Fitness): {loadStats.ctl.toFixed(1)}</p><p className="text-[11px] text-slate-500 leading-normal">Capacity based on 42-day load.</p></div></div>
+                <div className="flex gap-3 items-start"><div className="mt-1"><Scale size={14} className="text-amber-500" /></div><div><p className="text-xs font-bold text-slate-200">Form: {loadStats.form.toFixed(1)} TSB</p><p className="text-[11px] text-slate-500 leading-normal">Fitness minus Fatigue.</p></div></div>
+                <div className="flex gap-3 items-start"><div className="mt-1"><TrendingUp size={14} className="text-emerald-500" /></div><div><p className="text-xs font-bold text-slate-200">Ramp Rate: {loadStats.rampRate.toFixed(2)}</p><p className="text-[11px] text-slate-500 leading-normal">Optimal sweet spot: 0.8 - 1.3.</p></div></div>
               </div>
-
-              <button 
-                onClick={() => setShowReadinessInfo(false)}
-                className="mt-6 w-full py-3 bg-white/10 rounded-full text-xs font-bold text-white hover:bg-white/20 transition-colors uppercase tracking-widest"
-              >
-                Got it, Coach
-              </button>
+              <button onClick={() => setShowReadinessInfo(false)} className="mt-6 w-full py-3 bg-white/10 rounded-full text-xs font-bold text-white hover:bg-white/20 transition-colors uppercase tracking-widest">Got it, Coach</button>
             </div>
           </div>
         </div>
       )}
 
       <nav className="fixed bottom-6 left-6 right-6 max-w-[402px] mx-auto h-16 nav-pill rounded-[1.5rem] flex items-center justify-around z-50">
-        <button onClick={() => setActiveTab('dashboard')} className={`flex-1 flex flex-col items-center gap-1 transition-all ${activeTab === 'dashboard' ? 'text-cyan-400 scale-110' : 'text-slate-500'}`}>
-          <LayoutDashboard size={20} />
-          <span className="text-[9px] font-bold">Home</span>
-        </button>
-        <button onClick={() => setActiveTab('rides')} className={`flex-1 flex flex-col items-center gap-1 transition-all ${activeTab === 'rides' ? 'text-cyan-400 scale-110' : 'text-slate-500'}`}>
-          <Bike size={20} />
-          <span className="text-[9px] font-bold">Rides</span>
-        </button>
-        <button onClick={() => setActiveTab('chat')} className={`flex-1 flex flex-col items-center gap-1 transition-all ${activeTab === 'chat' ? 'text-cyan-400 scale-110' : 'text-slate-500'}`}>
-          <MessageSquare size={20} />
-          <span className="text-[9px] font-bold">Coach</span>
-        </button>
-        <button onClick={() => setActiveTab('settings')} className={`flex-1 flex flex-col items-center gap-1 transition-all ${activeTab === 'settings' ? 'text-cyan-400 scale-110' : 'text-slate-500'}`}>
-          <User size={20} />
-          <span className="text-[9px] font-bold">Profile</span>
-        </button>
+        <button onClick={() => setActiveTab('dashboard')} className={`flex-1 flex flex-col items-center gap-1 transition-all ${activeTab === 'dashboard' ? 'text-cyan-400 scale-110' : 'text-slate-500'}`}><LayoutDashboard size={20} /><span className="text-[9px] font-bold">Home</span></button>
+        <button onClick={() => setActiveTab('rides')} className={`flex-1 flex flex-col items-center gap-1 transition-all ${activeTab === 'rides' ? 'text-cyan-400 scale-110' : 'text-slate-500'}`}><Bike size={20} /><span className="text-[9px] font-bold">Rides</span></button>
+        <button onClick={() => setActiveTab('chat')} className={`flex-1 flex flex-col items-center gap-1 transition-all ${activeTab === 'chat' ? 'text-cyan-400 scale-110' : 'text-slate-500'}`}><MessageSquare size={20} /><span className="text-[9px] font-bold">Coach</span></button>
+        <button onClick={() => setActiveTab('settings')} className={`flex-1 flex flex-col items-center gap-1 transition-all ${activeTab === 'settings' ? 'text-cyan-400 scale-110' : 'text-slate-500'}`}><User size={20} /><span className="text-[9px] font-bold">Profile</span></button>
       </nav>
 
-      {selectedActivity && creds && (
-        <CoachingModal activity={selectedActivity} creds={creds} onClose={() => setSelectedActivity(null)} userGoal={userGoal} />
-      )}
-
-      {showWeeklyBriefing && creds && (
-        <WeeklyBriefingModal 
-          activities={activities} 
-          wellness={wellnessData} 
-          creds={creds} 
-          userGoal={userGoal}
-          onClose={() => setShowWeeklyBriefing(false)} 
-          todaySuggestion={suggestion}
-        />
-      )}
+      {selectedActivity && creds && <CoachingModal activity={selectedActivity} creds={creds} onClose={() => setSelectedActivity(null)} userGoal={userGoal} />}
+      {showWeeklyBriefing && creds && <WeeklyBriefingModal activities={activities} wellness={wellnessData} creds={creds} userGoal={userGoal} onClose={() => setShowWeeklyBriefing(false)} todaySuggestion={suggestion} />}
     </div>
   );
 };
