@@ -15,6 +15,7 @@ const toLocalDateString = (date: Date) => {
 export const fetchActivities = async (creds: IntervalsCredentials): Promise<Activity[]> => {
   const { apiKey, athleteId } = creds;
   
+  if (apiKey === 'demo') return getMockActivities();
   if (!apiKey) throw new Error("API Key is missing.");
 
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
@@ -25,7 +26,7 @@ export const fetchActivities = async (creds: IntervalsCredentials): Promise<Acti
   };
 
   const now = new Date();
-  // Buffer by 1 day into the future to catch any "tomorrow" rides due to timezone differences
+  // Buffer by 2 days into the future to catch any "tomorrow" rides due to timezone differences
   const futureDate = new Date(now);
   futureDate.setDate(now.getDate() + 2); 
   
@@ -67,9 +68,9 @@ export const fetchActivities = async (creds: IntervalsCredentials): Promise<Acti
 };
 
 export const fetchWellness = async (creds: IntervalsCredentials): Promise<Wellness[]> => {
-  if (creds.apiKey === 'demo') return getMockWellness();
-
   const { apiKey, athleteId } = creds;
+  if (apiKey === 'demo') return getMockWellness();
+
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
   const headers = {
     'Authorization': `Basic ${auth}`,
@@ -132,16 +133,17 @@ export const getMockActivities = (): Activity[] => {
   for (let i = 30; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(now.getDate() - i);
+    // Add data for every other day to simulate a realistic training schedule
     if (i % 2 === 0) {
       mock.push({
         id: `mock-${i}`,
-        name: i === 0 ? "Recovery Spin" : "Threshold Session",
+        name: i === 0 ? "Recovery Spin" : i % 4 === 0 ? "Threshold Session" : "Endurance Ride",
         type: "VirtualRide",
         start_date_local: d.toISOString(),
-        distance: 25000,
-        moving_time: 3600,
-        total_elevation_gain: 200,
-        average_watts: 200,
+        distance: 25000 + Math.random() * 5000,
+        moving_time: 3600 + Math.random() * 600,
+        total_elevation_gain: 200 + Math.random() * 100,
+        average_watts: 180 + Math.random() * 50,
         icu_training_load: 60 + Math.random() * 40,
         source: 'ZWIFT'
       });
@@ -160,8 +162,8 @@ export const getMockWellness = (): Wellness[] => {
     data.push({
       id: `mock-w-${i}`,
       date: dateStr,
-      ctl: 45 + (30 - i) * 0.5,
-      atl: 40 + Math.random() * 20,
+      ctl: 45 + (30 - i) * 0.1,
+      atl: 40 + Math.random() * 10,
       tsb: 5 - Math.random() * 10,
       trainingLoad: 0
     });

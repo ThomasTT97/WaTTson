@@ -31,9 +31,16 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
         const todayStr = toLocalDateStr(new Date());
         const hasActivityToday = activities.some(a => a.start_date_local.startsWith(todayStr));
         
-        let startContext = "Start the 7-day plan from TODAY. The list MUST begin with today's day of the week.";
+        // Ensure consistency with the home screen suggestion for the first day
+        const todaySuggestionText = todaySuggestion 
+          ? `Today's primary suggested workout on the home screen is: "${todaySuggestion.primary.title}" (${todaySuggestion.primary.duration_minutes} min, ${todaySuggestion.primary.intensity} intensity). `
+          : "";
+          
+        // Always start from TODAY as requested.
+        let startContext = `Start the 7-day plan from TODAY. The list MUST begin with today's day of the week. ${todaySuggestionText} You MUST use this exact workout for Day 1 (Today) in the briefing. `;
+        
         if (hasActivityToday) {
-          startContext = "The athlete has already finished their workout for today. Start the 7-day plan from TOMORROW. The list MUST begin with tomorrow's day of the week.";
+          startContext += "Note: The athlete has already completed a session today, but still list Today as the first day of the briefing for context.";
         }
 
         const data = await getWeeklyBriefing(activities, wellness, userGoal, startContext);
@@ -45,7 +52,7 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
       }
     };
     fetchBriefing();
-  }, [activities, wellness, userGoal]);
+  }, [activities, wellness, userGoal, todaySuggestion]);
 
   const intensityColors = {
     'Hard': 'text-red-400 bg-red-500/20 border-red-500/30',

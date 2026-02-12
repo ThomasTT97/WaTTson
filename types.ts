@@ -57,9 +57,7 @@ export interface Wellness {
 
 export interface CoachingFeedback {
   summary: string;
-  highlights: string[];
-  recommendations: string;
-  metrics_analysis: string;
+  goal_contribution: string;
 }
 
 export interface WorkoutOption {

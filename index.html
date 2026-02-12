@@ -1,14 +1,13 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>WaTTson</title>
+    <title>WaTTson | Elite Performance Coach</title>
     
     <!-- PWA Settings -->
     <link rel="manifest" href="manifest.json">
-    <meta name="theme-color" content="#020617">
+    <meta name="theme-color" content="#0a0e17">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="WaTTson">
@@ -16,18 +15,27 @@
 
     <!-- Styles -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --surface: rgba(30, 41, 59, 0.5);
+            --accent: #22d3ee;
+            --accent-muted: rgba(34, 211, 238, 0.1);
+            --border: rgba(255, 255, 255, 0.08);
+        }
+
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #020617;
-            color: #f8fafc;
-            overflow-x: hidden;
+            background-color: var(--bg-primary);
+            color: #f1f5f9;
+            overflow: hidden;
             -webkit-tap-highlight-color: transparent;
-            overscroll-behavior-y: none;
+            overscroll-behavior: none;
+            letter-spacing: -0.01em;
         }
         
-        .gradient-bg {
+        .premium-bg {
             position: fixed;
             top: 0;
             left: 0;
@@ -35,77 +43,45 @@
             height: 100vh;
             z-index: -1;
             background: 
-                radial-gradient(circle at 0% 0%, rgba(6, 182, 212, 0.12), transparent 40%),
-                radial-gradient(circle at 100% 100%, rgba(59, 130, 246, 0.12), transparent 40%),
-                radial-gradient(circle at 50% 50%, rgba(15, 23, 42, 1), #020617);
+                radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.08), transparent 40%),
+                radial-gradient(circle at 100% 0%, rgba(99, 102, 241, 0.05), transparent 40%),
+                var(--bg-primary);
             pointer-events: none;
         }
 
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 3px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-        }
-
-        .glass-panel {
-            background: rgba(15, 23, 42, 0.6);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
-        }
-
-        .nav-pill {
-            background: rgba(15, 23, 42, 0.85);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.6);
+        .glass-card {
+            background: rgba(30, 41, 59, 0.3);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-top: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.4);
         }
 
         .phone-container {
             max-width: 450px;
             margin: 0 auto;
-            min-height: 100dvh;
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
             position: relative;
-            background: transparent;
         }
 
-        /* chromatic aberration/sporty logo look */
-        .logo-text {
-            font-weight: 900;
-            font-style: italic;
-            letter-spacing: -0.06em;
+        .text-header {
+            font-weight: 800;
+            letter-spacing: -0.04em;
             color: #fff;
-            text-shadow: 
-                -1.5px 0px 0px rgba(255, 0, 60, 0.7),
-                1.5px 0px 0px rgba(0, 255, 255, 0.7);
         }
 
-        @keyframes pulse-soft {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.8; transform: scale(0.98); }
-        }
-        .animate-pulse-soft {
-            animation: pulse-soft 3s infinite ease-in-out;
+        .custom-scrollbar::-webkit-scrollbar { width: 0px; }
+
+        @keyframes subtle-float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-4px); }
         }
 
-        #mobile-error-boundary {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: #020617;
-            z-index: 9999;
-            padding: 2rem;
-            color: #ef4444;
-            font-family: monospace;
-            font-size: 12px;
-            overflow: auto;
+        .float-animation {
+            animation: subtle-float 4s infinite ease-in-out;
         }
     </style>
 <script type="importmap">
@@ -124,30 +100,7 @@
 </script>
 </head>
 <body>
-    <div id="mobile-error-boundary">
-        <h1 style="font-size: 20px; margin-bottom: 1rem;">System Error</h1>
-        <div id="error-content"></div>
-        <button onclick="location.reload()" style="margin-top: 2rem; padding: 1rem; background: #334155; color: white; border: none; border-radius: 8px;">Retry App</button>
-    </div>
     <div id="root"></div>
     <script type="module" src="index.tsx"></script>
-    <script>
-        window.onerror = function(msg, url, line, col, error) {
-            const boundary = document.getElementById('mobile-error-boundary');
-            const content = document.getElementById('error-content');
-            if (boundary && content) {
-                boundary.style.display = 'block';
-                content.innerHTML = `<p>${msg}</p><p>at ${url}:${line}:${col}</p><pre>${error ? error.stack : ''}</pre>`;
-            }
-            return false;
-        };
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('service-worker.js')
-                    .then(registration => console.log('SW registered'))
-                    .catch(err => console.log('SW registration failed', err));
-            });
-        }
-    </script>
 </body>
 </html>
