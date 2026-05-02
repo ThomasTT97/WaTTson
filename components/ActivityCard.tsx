@@ -46,16 +46,11 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
             <Clock size={11} className="text-blue-400/60" />
             <span className="text-slate-400">{formatDuration(activity.moving_time)}</span>
           </div>
-          
-          <div className="flex items-center gap-1.5 text-[10px] font-bold">
-            <Zap size={11} className="text-amber-400/60" fill="currentColor" />
-            <span className="text-slate-400">{load} TSS</span>
-          </div>
 
-          {activity.average_watts && (
+          {(activity.average_watts || activity.icu_average_watts) && (
             <div className="flex items-center gap-1.5 text-[10px] font-bold">
               <ActivityIcon size={11} className="text-cyan-400/60" />
-              <span className="text-slate-400">{Math.round(activity.average_watts)}W avg</span>
+              <span className="text-slate-400">{Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0)}W avg</span>
             </div>
           )}
         </div>

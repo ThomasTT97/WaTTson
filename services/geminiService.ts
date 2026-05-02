@@ -1,17 +1,13 @@
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { Activity, ActivityInterval, CoachingFeedback, DailySuggestion, PlannedWorkout, ChatMessage, WeeklyBriefing, Wellness } from "../types";
 
-/**
- * Initializes the Gemini API client using the environment variable API_KEY.
- */
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 /**
  * Utility to safely parse JSON from model responses, handling potential markdown blocks.
  */
 const safeParseJSON = (text: string | undefined): any => {
   if (!text) throw new Error("Empty response from AI.");
-  let cleanText = text.replace(/```json\n?|```/g, "").trim();
+  const cleanText = text.replace(/```json\n?|```/g, "").trim();
   try {
     return JSON.parse(cleanText);
   } catch (e) {
@@ -43,6 +39,7 @@ export const getRideFeedback = async (
   plannedWorkout: PlannedWorkout | null,
   userGoal?: string
 ): Promise<CoachingFeedback> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const prompt = `You are WaTTson, an elite cycling coach. 
     Analyze this ride: "${activity.name}". 
     TSS: ${activity.icu_training_load || 0}. 
@@ -76,6 +73,7 @@ export const getRideFeedback = async (
  * Generates a daily workout suggestion based on recent history.
  */
 export const getDailySuggestion = async (recentActivities: Activity[], userGoal?: string): Promise<DailySuggestion> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
 
@@ -139,6 +137,7 @@ export const getWeeklyBriefing = async (
   userGoal?: string,
   startContext?: string
 ): Promise<WeeklyBriefing> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const latestWellness = wellness[wellness.length - 1];
   const stats = `CTL: ${latestWellness?.ctl || 0}, TSB: ${latestWellness?.tsb || 0}`;
 
@@ -147,7 +146,7 @@ export const getWeeklyBriefing = async (
     Return JSON with phase, focus, outlook_summary, and days[].`;
 
   const response: GenerateContentResponse = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-3-flash-preview',
     contents: prompt,
     config: {
       responseMimeType: 'application/json',
@@ -188,18 +187,26 @@ export const sendChatMessage = async (
   message: string,
   context: { goal: string; recentLoad: number; readiness: number }
 ): Promise<string> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const systemInstruction = `You are WaTTson, a direct and expert cycling coach. 
     Speak punchy and concise. NO long paragraphs. 
     Keep every reply under 2-3 sentences max. 
     Respond like a busy coach sending a quick WhatsApp/text. 
     Focus: ${context.goal}. Metrics: 7D Load ${context.recentLoad}, Readiness ${context.readiness}/10.`;
 
-  const historyContext = history.map(m => `${m.role === 'user' ? 'User' : 'WaTTson'}: ${m.text}`).join('\n');
-  const fullPrompt = `${historyContext}\nUser: ${message}`;
+  const contents = history.map(m => ({
+    role: m.role,
+    parts: [{ text: m.text }]
+  }));
+
+  contents.push({
+    role: 'user',
+    parts: [{ text: message }]
+  });
 
   const response: GenerateContentResponse = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: fullPrompt,
+    model: 'gemini-3-flash-preview',
+    contents,
     config: {
       systemInstruction,
       temperature: 0.8,

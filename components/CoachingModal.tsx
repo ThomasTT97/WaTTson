@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Activity, IntervalsCredentials, CoachingFeedback } from '../types';
 import { getRideFeedback } from '../services/geminiService';
 import { fetchActivityIntervals, fetchPlannedWorkout } from '../services/intervalsService';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Sparkles, 
   ArrowLeft, 
@@ -12,7 +13,8 @@ import {
   Flame,
   Target,
   Trophy,
-  Activity as ActivityIcon
+  Activity as ActivityIcon,
+  ChevronRight
 } from 'lucide-react';
 
 interface CoachingModalProps {
@@ -49,82 +51,185 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
   }, [activity, creds, userGoal]);
 
   const dateObj = new Date(activity.start_date_local);
+  const formatDuration = (totalSeconds: number) => {
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.round((totalSeconds % 3600) / 60);
+    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+  };
+
   const metrics = [
-    { label: 'TSS', value: Math.round(activity.icu_training_load || 0), icon: TrendingUp, color: 'text-amber-400', bg: 'bg-amber-500/5' },
-    { label: 'MINS', value: Math.round(activity.moving_time / 60), icon: Clock, color: 'text-blue-400', bg: 'bg-blue-500/5' },
-    { label: 'BPM', value: Math.round(activity.average_heartrate || 0), icon: Heart, color: 'text-rose-400', bg: 'bg-rose-500/5' },
-    { label: 'KCAL', value: activity.calories || Math.round((activity.icu_joules || 0) / 1000), icon: Flame, color: 'text-orange-400', bg: 'bg-orange-500/5' }
+    { label: 'Duration', value: formatDuration(activity.moving_time), icon: Clock, color: 'text-blue-400', bg: 'bg-blue-500/10' },
+    { 
+      label: 'Performance', 
+      value: `${Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0)}w ${Math.round(activity.average_heartrate || 0)}bpm`, 
+      icons: [Zap, Heart], 
+      color: 'text-cyan-400', 
+      bg: 'bg-cyan-500/10' 
+    },
+    { label: 'TSS', value: String(Math.round(activity.icu_training_load || 0)), icon: TrendingUp, color: 'text-amber-400', bg: 'bg-amber-500/10' },
+    { label: 'Calories', value: String(activity.calories || Math.round((activity.icu_joules || 0) / 1000)), icon: Flame, color: 'text-orange-400', bg: 'bg-orange-500/10' }
   ];
 
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    visible: { 
+      opacity: 1,
+      transition: { staggerChildren: 0.1, delayChildren: 0.2 }
+    }
+  } as const;
+
+  const itemVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: { 
+      opacity: 1, 
+      y: 0,
+      transition: { type: 'spring', damping: 25, stiffness: 300 }
+    }
+  } as const;
+
   return (
-    <div className="fixed inset-0 z-[200] flex flex-col bg-[#0a0e17] animate-in slide-in-from-bottom duration-400 h-[100dvh] max-w-[450px] mx-auto overflow-hidden">
+    <motion.div 
+      initial={{ y: '100%' }}
+      animate={{ y: 0 }}
+      exit={{ y: '100%' }}
+      transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+      className="fixed inset-0 z-[200] flex flex-col bg-[#070a11] h-[100dvh] max-w-[450px] mx-auto overflow-hidden shadow-2xl"
+      id="coaching-modal"
+    >
+      {/* Decorative Background Flare */}
+      <div className="absolute top-[-10%] left-[-10%] w-[120%] h-[40%] bg-cyan-500/5 blur-[120px] pointer-events-none" />
       
       {/* Header */}
       <div 
         className="relative z-20 flex items-center justify-between px-6 py-4"
         style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}
       >
-        <button onClick={onClose} className="w-10 h-10 rounded-full glass-card flex items-center justify-center text-slate-400">
+        <motion.button 
+          whileTap={{ scale: 0.9 }}
+          onClick={onClose} 
+          className="w-11 h-11 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+          id="back-button"
+        >
           <ArrowLeft size={20} />
-        </button>
+        </motion.button>
         <div className="text-center">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+          <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">{dateObj.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</p>
         </div>
-        <div className="w-10" />
+        <div className="w-11" />
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar pb-12 px-6">
-        <div className="mt-8 mb-10">
-          <h1 className="text-3xl text-header italic mb-6 leading-tight uppercase tracking-tight">{activity.name}</h1>
+      <div className="flex-1 overflow-y-auto custom-scrollbar pb-8 px-4 relative z-10">
+        <motion.div 
+          initial="hidden"
+          animate="visible"
+          variants={containerVariants}
+          className="mt-4 mb-6"
+        >
+          <motion.div variants={itemVariants}>
+            <h1 className="text-[1.75rem] font-bold text-white italic mb-1 leading-tight uppercase tracking-tighter">
+              {activity.name}
+            </h1>
+            <div className="flex items-center gap-2 mb-6">
+               <div className="h-0.5 w-6 bg-cyan-500 rounded-full" />
+               <p className="text-[9px] font-bold text-cyan-400 uppercase tracking-widest">{activity.type}</p>
+            </div>
+          </motion.div>
           
-          <div className="grid grid-cols-4 gap-2">
-            {metrics.map((m, i) => (
-              <div key={i} className="glass-card rounded-2xl p-3 flex flex-col items-center justify-center border-white/5">
-                <div className={`w-6 h-6 rounded-lg flex items-center justify-center mb-2 ${m.bg} ${m.color}`}>
-                  <m.icon size={12} fill={m.icon === Zap || m.icon === Heart || m.icon === Flame ? "currentColor" : "none"} />
+          <motion.div variants={itemVariants} className="grid grid-cols-4 gap-1.5 mb-6">
+            {metrics.map((m: any, i) => (
+              <div key={i} className="glass-card rounded-xl p-2.5 flex flex-col items-center justify-center border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors group text-center min-h-[85px]">
+                <div className={`h-6 rounded-lg flex items-center justify-center mb-2 px-1.5 ${m.bg} ${m.color} group-hover:scale-110 transition-transform`}>
+                  {m.icons ? (
+                    <div className="flex items-center gap-0.5">
+                      {m.icons.map((Icon: any, idx: number) => (
+                        <Icon key={idx} size={10} fill={Icon === Zap || Icon === Heart || Icon === Flame ? "currentColor" : "none"} />
+                      ))}
+                    </div>
+                  ) : (
+                    <m.icon size={11} fill={m.icon === Zap || m.icon === Heart || m.icon === Flame ? "currentColor" : "none"} />
+                  )}
                 </div>
-                <span className="text-sm font-bold text-white tracking-tighter leading-none italic">{m.value}</span>
-                <span className="text-[7px] font-bold text-slate-500 uppercase tracking-widest mt-1">{m.label}</span>
+                <span className="block text-[13px] font-bold text-white tracking-tighter leading-none italic mb-1">{m.value}</span>
+                <span className="block text-[7px] font-black text-slate-500 uppercase tracking-[0.05em]">
+                  {m.label === 'Performance' ? 'PWR/HR' : m.label === 'Duration' ? 'DUR' : m.label === 'Calories' ? 'KCAL' : m.label}
+                </span>
               </div>
             ))}
-          </div>
-        </div>
+          </motion.div>
 
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center opacity-40">
-            <div className="w-6 h-6 border-2 border-cyan-500/10 border-t-cyan-500 rounded-full animate-spin mb-4"></div>
-            <p className="text-[9px] font-bold uppercase tracking-widest">Generating Feedback...</p>
-          </div>
-        ) : error ? (
-          <div className="p-8 text-center glass-card rounded-[2rem] border-rose-500/20">
-             <p className="text-xs font-bold text-rose-400 uppercase tracking-widest">Analysis Failure</p>
-             <p className="text-[10px] text-slate-500 mt-2">{error}</p>
-          </div>
-        ) : feedback && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <div className="glass-card p-7 rounded-[2.5rem] relative overflow-hidden">
-               <div className="flex items-center gap-2 mb-4">
-                 <Sparkles size={12} className="text-cyan-400" />
-                 <h3 className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest">Coach Summary</h3>
-               </div>
-               <p className="text-sm text-slate-200 leading-relaxed italic">"{feedback.summary}"</p>
-            </div>
+          <AnimatePresence mode="wait">
+            {loading ? (
+              <motion.div 
+                key="loading"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="flex flex-col items-center justify-center py-10 text-center"
+              >
+                <div className="relative w-8 h-8 mb-4">
+                  <div className="absolute inset-0 border-2 border-cyan-500/10 rounded-full"></div>
+                  <div className="absolute inset-0 border-2 border-t-cyan-500 rounded-full animate-spin"></div>
+                </div>
+                <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">Analyzing</p>
+              </motion.div>
+            ) : error ? (
+              <motion.div 
+                key="error"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="p-6 text-center glass-card rounded-2xl border-rose-500/20 bg-rose-500/5"
+              >
+                <p className="text-[10px] font-bold text-rose-400 uppercase tracking-widest leading-none">Analysis Blocked</p>
+                <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">{error}</p>
+              </motion.div>
+            ) : feedback && (
+              <motion.div 
+                key="content"
+                variants={containerVariants}
+                className="space-y-4"
+              >
+                <motion.div 
+                  variants={itemVariants}
+                  className="glass-card p-5 rounded-3xl relative overflow-hidden bg-gradient-to-br from-white/[0.03] to-transparent border-white/10"
+                >
+                   <div className="flex items-center gap-2 mb-3">
+                     <div className="w-5 h-5 rounded-md bg-cyan-500/20 flex items-center justify-center">
+                       <Sparkles size={10} className="text-cyan-400" />
+                     </div>
+                     <h3 className="text-[9px] font-black text-cyan-400 uppercase tracking-[0.2em]">Coach's Insight</h3>
+                   </div>
+                   <p className="text-[0.95rem] text-white leading-relaxed italic font-medium tracking-tight">
+                     "{feedback.summary}"
+                   </p>
+                </motion.div>
 
-            <div className="glass-card p-7 rounded-[2.5rem]">
-               <div className="flex items-center gap-2 mb-4">
-                 <Target size={12} className="text-amber-400" />
-                 <h3 className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Goal Progress</h3>
-               </div>
-               <div className="bg-slate-950/40 p-6 rounded-3xl border border-white/5">
-                 <p className="text-sm text-slate-300 leading-relaxed">{feedback.goal_contribution}</p>
-                 <div className="mt-6 flex items-center gap-2 text-[9px] font-bold text-slate-500 uppercase tracking-widest border-t border-white/5 pt-4">
-                   <Trophy size={12} className="text-cyan-400" /> Alignment with {userGoal}
-                 </div>
-               </div>
-            </div>
-          </div>
-        )}
+                <motion.div 
+                  variants={itemVariants}
+                  className="glass-card p-5 rounded-3xl border-white/5 bg-white/[0.01]"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-5 h-5 rounded-md bg-amber-500/20 flex items-center justify-center">
+                      <Target size={10} className="text-amber-400" />
+                    </div>
+                    <h3 className="text-[9px] font-black text-amber-400 uppercase tracking-[0.2em]">Progression Path</h3>
+                  </div>
+                  
+                  <div className="bg-slate-950/60 p-4 rounded-2xl border border-white/5 relative overflow-hidden group">
+                    <p className="text-[12px] text-slate-300 leading-relaxed relative z-10">{feedback.goal_contribution}</p>
+                    
+                    <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between relative z-10">
+                      <div className="flex items-center gap-2 text-[8px] font-black text-slate-500 uppercase tracking-widest italic">
+                        <Trophy size={10} className="text-cyan-400" /> {userGoal || 'Peak Performance'}
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
       </div>
-    </div>
+
+    </motion.div>
   );
 };

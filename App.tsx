@@ -6,7 +6,7 @@ import {
   ChatMessage,
   Wellness
 } from './types';
-import { fetchActivities, fetchWellness } from './services/intervalsService';
+import { fetchActivities, fetchWellness, fetchAthleteId } from './services/intervalsService';
 import { getDailySuggestion, sendChatMessage } from './services/geminiService';
 import { ActivityCard } from './components/ActivityCard';
 import { CoachingModal } from './components/CoachingModal';
@@ -62,15 +62,16 @@ const CHAT_SUGGESTIONS: string[] = [
 
 const App: React.FC = () => {
   const [creds, setCreds] = useState<IntervalsCredentials | null>(() => {
-    const envKey = (process.env.INTERVALS_API_KEY as string) || '';
-    if (envKey && envKey.length > 5) return { apiKey: envKey, athleteId: '0' };
     try {
       const saved = localStorage.getItem('wattson_creds');
-      return saved ? JSON.parse(saved) : null;
-    } catch { return null; }
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    const envKey = (process.env.INTERVALS_API_KEY as string) || '';
+    if (envKey && envKey.length > 5) return { apiKey: envKey, athleteId: '0' };
+    return null;
   });
 
-  const [activities, setActivities] = useState<Activity[]>([]);
+  const [activities, setActivities] = useState<Activity[] | null>(null);
   const [wellnessData, setWellnessData] = useState<Wellness[]>([]);
   const [loading, setLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -100,23 +101,44 @@ const App: React.FC = () => {
   
   const [userGoal, setUserGoal] = useState<string>(() => localStorage.getItem('wattson_goal') || 'Improve cycling performance');
   const [showGoalEditor, setShowGoalEditor] = useState(false);
-  const [formKey, setFormKey] = useState('');
+  const [formKey, setFormKey] = useState(creds?.apiKey || '');
+  const [formId, setFormId] = useState(creds?.athleteId || '');
 
   const loadData = async (credentials: IntervalsCredentials, isInitial = false) => {
+    if (loading || isSyncing) return;
     if (isInitial) setLoading(true);
     else setIsSyncing(true);
     setSyncError(null);
     try {
+      let activeCreds = { ...credentials };
+      
+      // If athleteId is '0' or missing, try to fetch it
+      if (activeCreds.apiKey !== 'demo' && (!activeCreds.athleteId || activeCreds.athleteId === '0')) {
+        const realId = await fetchAthleteId(activeCreds.apiKey);
+        activeCreds.athleteId = realId;
+      }
+
       const [fetchedActivities, fetchedWellness] = await Promise.all([
-        fetchActivities(credentials),
-        fetchWellness(credentials)
+        fetchActivities(activeCreds),
+        fetchWellness(activeCreds)
       ]);
-      setActivities(fetchedActivities);
-      setWellnessData(fetchedWellness);
-      setCreds(credentials);
-      localStorage.setItem('wattson_creds', JSON.stringify(credentials));
+      
+      setActivities(fetchedActivities || []);
+      setWellnessData(fetchedWellness || []);
+      
+      const credsChanged = !creds || 
+                           activeCreds.apiKey !== creds.apiKey || 
+                           activeCreds.athleteId !== creds.athleteId;
+      
+      if (credsChanged) {
+        setCreds(activeCreds);
+        localStorage.setItem('wattson_creds', JSON.stringify(activeCreds));
+      }
     } catch (err: any) {
+      console.error("Sync error:", err);
       setSyncError(err.message || "Failed to connect to Intervals.icu");
+      // Ensure we don't stay in a null state if it fails, so we don't loop
+      if (activities === null) setActivities([]);
     } finally {
       setLoading(false);
       setIsSyncing(false);
@@ -124,12 +146,14 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    if (creds && activities.length === 0) loadData(creds, true);
-  }, [creds]);
+    if (creds && activities === null && !syncError && !loading) {
+      loadData(creds, true);
+    }
+  }, [creds, activities, syncError, loading]);
 
   useEffect(() => {
     const todayStr = toLocalDateStr(new Date());
-    const shouldFetch = activities.length > 0 && 
+    const shouldFetch = activities && activities.length > 0 && 
                         !loadingSuggestion && 
                         (!suggestion || suggestion.date !== todayStr);
 
@@ -137,7 +161,7 @@ const App: React.FC = () => {
       const fetchNewSuggestion = async () => {
         setLoadingSuggestion(true);
         try {
-          const data = await getDailySuggestion(activities, userGoal);
+          const data = await getDailySuggestion(activities!, userGoal);
           setSuggestion(data);
           localStorage.setItem('wattson_daily_cache', JSON.stringify(data));
         } catch (err) {
@@ -155,7 +179,9 @@ const App: React.FC = () => {
     const last7Days: { day: string; load: number }[] = [];
     const now = new Date();
     
-    activities.forEach(a => {
+    const safeActivities = activities || [];
+    
+    safeActivities.forEach(a => {
       const d = a.start_date_local.split('T')[0];
       loadByDate.set(d, (loadByDate.get(d) || 0) + (a.icu_training_load ?? a.icu_tss ?? 0));
     });
@@ -173,8 +199,8 @@ const App: React.FC = () => {
     const total7DayLoad = last7Days.reduce((acc, d) => acc + d.load, 0);
 
     let ctl = 0, atl = 0;
-    if (activities.length > 0) {
-      const start = new Date(activities[activities.length-1].start_date_local);
+    if (safeActivities.length > 0) {
+      const start = new Date(safeActivities[safeActivities.length-1].start_date_local);
       for (let d = new Date(start); d <= now; d.setDate(d.getDate() + 1)) {
         const ds = toLocalDateStr(d);
         const dailyLoad = loadByDate.get(ds) || 0;
@@ -211,7 +237,8 @@ const App: React.FC = () => {
   };
 
   const groupedActivities = useMemo(() => {
-    const sorted = [...activities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local));
+    const safeActivities = activities || [];
+    const sorted = [...safeActivities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local));
     const groups: Record<string, Activity[]> = {};
     sorted.forEach(a => {
       const d = new Date(a.start_date_local);
@@ -248,18 +275,48 @@ const App: React.FC = () => {
         <h1 className="text-xl text-header italic mb-1">WaTTson</h1>
         <p className="text-slate-500 text-[9px] font-bold uppercase tracking-widest mb-8">Performance Engine</p>
         <div className="space-y-3">
+          {syncError && (
+            <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[10px] text-rose-400 font-bold leading-tight">
+              {syncError}
+            </div>
+          )}
           <input 
             type="password" 
             placeholder="Intervals.icu API Key" 
             className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-cyan-500/50 transition-colors" 
             value={formKey}
-            onChange={(e) => setFormKey(e.target.value)}
+            onChange={(e) => {
+              setFormKey(e.target.value);
+              if (syncError) setSyncError(null);
+            }}
+          />
+          <input 
+            type="text" 
+            placeholder="Athlete ID (e.g. i12345)" 
+            className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-cyan-500/50 transition-colors" 
+            value={formId}
+            onChange={(e) => {
+              setFormId(e.target.value);
+              if (syncError) setSyncError(null);
+            }}
           />
           <button 
-            onClick={() => loadData({ apiKey: formKey, athleteId: '0' }, true)}
+            onClick={() => {
+              if (!formKey.trim()) {
+                setSyncError("Please enter your API Key.");
+                return;
+              }
+              loadData({ apiKey: formKey, athleteId: formId || '0' }, true);
+            }}
             className="w-full bg-cyan-500 text-slate-950 font-bold py-3.5 rounded-xl text-xs uppercase tracking-widest active:scale-95 transition-all shadow-xl"
           >
             Authenticate
+          </button>
+          <button 
+            onClick={() => loadData({ apiKey: 'demo', athleteId: '0' }, true)}
+            className="w-full bg-white/5 text-slate-400 font-bold py-3.5 rounded-xl text-[10px] uppercase tracking-widest active:scale-95 transition-all border border-white/5"
+          >
+            Explore Demo Mode
           </button>
         </div>
       </div>
@@ -583,7 +640,7 @@ const App: React.FC = () => {
       )}
 
       {selectedActivity && creds && <CoachingModal activity={selectedActivity} creds={creds} onClose={() => setSelectedActivity(null)} userGoal={userGoal} />}
-      {showWeeklyBriefing && creds && <WeeklyBriefingModal activities={activities} wellness={wellnessData} creds={creds} userGoal={userGoal} onClose={() => setShowWeeklyBriefing(false)} todaySuggestion={suggestion} />}
+      {showWeeklyBriefing && creds && <WeeklyBriefingModal activities={activities || []} wellness={wellnessData} creds={creds} userGoal={userGoal} onClose={() => setShowWeeklyBriefing(false)} todaySuggestion={suggestion} />}
     </div>
   );
 };

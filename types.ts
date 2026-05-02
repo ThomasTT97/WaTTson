@@ -9,6 +9,8 @@ export interface Activity {
   total_elevation_gain: number;
   average_watts?: number;
   weighted_average_watts?: number;
+  icu_average_watts?: number;
+  icu_weighted_average_watts?: number;
   average_heartrate?: number;
   max_watts?: number;
   training_load?: number;

@@ -12,6 +12,43 @@ const toLocalDateString = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
+export const fetchAthleteId = async (apiKey: string): Promise<string> => {
+  if (!apiKey) throw new Error("API Key is required.");
+  const auth = btoa(`API_KEY:${apiKey.trim()}`);
+  try {
+    const response = await fetch('https://intervals.icu/api/v1/whoami', {
+      headers: { 
+        'Authorization': `Basic ${auth}`,
+        'Accept': 'application/json'
+      },
+      cache: 'no-store'
+    });
+    
+    if (response.status === 404) {
+      throw new Error("Intervals.icu error: 404. If this persists, please enter your Athlete ID manually.");
+    }
+    
+    if (response.status === 401) {
+      throw new Error("Invalid API Key. Please check your Intervals.icu settings.");
+    }
+    
+    if (!response.ok) {
+      throw new Error(`Intervals.icu error: ${response.status}. Please try again later.`);
+    }
+    
+    const data = await response.json();
+    if (!data || !data.id) {
+      throw new Error("Could not retrieve athlete ID from Intervals.icu.");
+    }
+    return String(data.id);
+  } catch (error: any) {
+    if (error.name === 'TypeError' && error.message === 'Failed to fetch') {
+      throw new Error("Network error: Could not connect to Intervals.icu. Check your internet or CORS settings.");
+    }
+    throw error;
+  }
+};
+
 export const fetchActivities = async (creds: IntervalsCredentials): Promise<Activity[]> => {
   const { apiKey, athleteId } = creds;
   
@@ -38,7 +75,8 @@ export const fetchActivities = async (creds: IntervalsCredentials): Promise<Acti
   
   const fields = [
     'id', 'name', 'type', 'start_date_local', 'moving_time', 'elapsed_time',
-    'distance', 'total_elevation_gain', 'average_watts', 'weighted_average_watts', 'average_heartrate',
+    'distance', 'total_elevation_gain', 'average_watts', 'weighted_average_watts', 
+    'icu_average_watts', 'icu_weighted_average_watts', 'average_heartrate',
     'icu_training_load', 'icu_intensity', 'source', 'icu_tss', 'icu_joules', 'calories', 'icu_efficiency_factor'
   ].join(',');
 
@@ -144,6 +182,7 @@ export const getMockActivities = (): Activity[] => {
         moving_time: 3600 + Math.random() * 600,
         total_elevation_gain: 200 + Math.random() * 100,
         average_watts: 180 + Math.random() * 50,
+        weighted_average_watts: 210 + Math.random() * 50,
         icu_training_load: 60 + Math.random() * 40,
         source: 'ZWIFT'
       });
