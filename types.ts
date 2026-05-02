@@ -6,12 +6,15 @@ export interface Activity {
   start_date_local: string;
   distance: number;
   moving_time: number;
+  elapsed_time: number;
   total_elevation_gain: number;
   average_watts?: number;
   weighted_average_watts?: number;
   icu_average_watts?: number;
   icu_weighted_average_watts?: number;
   average_heartrate?: number;
+  max_heartrate?: number;
+  average_cadence?: number;
   max_watts?: number;
   training_load?: number;
   icu_tss?: number;
@@ -22,6 +25,18 @@ export interface Activity {
   icu_joules?: number;
   calories?: number;
   source?: string;
+  icu_hr_variability?: number;
+  icu_hrr?: number;
+  has_heartrate?: boolean;
+  has_power?: boolean;
+  average_temp?: number;
+  device_name?: string;
+  external_id?: string;
+  icu_pm_actual_load?: number;
+  icu_atl?: number;
+  icu_ctl?: number;
+  icu_tsb?: number;
+  analyzed?: boolean;
 }
 
 export interface ActivityInterval {

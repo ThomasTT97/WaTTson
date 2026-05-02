@@ -31,6 +31,23 @@ const safeParseJSON = (text: string | undefined): any => {
 };
 
 /**
+ * Caching utilities to optimize performance and reduce AI costs.
+ */
+const getCache = (key: string): any | null => {
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  return null;
+};
+
+const setCache = (key: string, data: any) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch {}
+};
+
+/**
  * Analyzes a specific cycling activity and provides coaching feedback.
  */
 export const getRideFeedback = async (
@@ -39,12 +56,18 @@ export const getRideFeedback = async (
   plannedWorkout: PlannedWorkout | null,
   userGoal?: string
 ): Promise<CoachingFeedback> => {
+  const cacheKey = `wattson_feedback_${activity.id}_${userGoal || 'default'}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const prompt = `You are WaTTson, an elite cycling coach. 
     Analyze this ride: "${activity.name}". 
-    TSS: ${activity.icu_training_load || 0}. 
+    TSS: ${activity.icu_training_load || activity.icu_tss || activity.training_load || 0}. 
     Intensity: ${activity.icu_intensity || 0}.
-    Duration: ${Math.round(activity.moving_time / 60)} mins.
+    Duration: ${Math.round((activity.moving_time || activity.elapsed_time || 0) / 60)} mins.
+    Power: ${Math.round(activity.average_watts || activity.icu_average_watts || 0)}W.
+    HR: ${Math.round(activity.average_heartrate || 0)}bpm.
     User Goal: ${userGoal || 'Overall fitness improvement'}.
     
     Return JSON with:
@@ -66,16 +89,22 @@ export const getRideFeedback = async (
       }
     }
   });
-  return safeParseJSON(response.text);
+  const result = safeParseJSON(response.text);
+  setCache(cacheKey, result);
+  return result;
 };
 
 /**
  * Generates a daily workout suggestion based on recent history.
  */
 export const getDailySuggestion = async (recentActivities: Activity[], userGoal?: string): Promise<DailySuggestion> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
+  const cacheKey = `wattson_suggestion_${todayStr}_${userGoal || 'default'}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
   const history = recentActivities
     .sort((a, b) => b.start_date_local.localeCompare(a.start_date_local))
@@ -125,7 +154,9 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
     }
   });
   const parsed = safeParseJSON(response.text);
-  return { ...parsed, date: todayStr };
+  const result = { ...parsed, date: todayStr };
+  setCache(cacheKey, result);
+  return result;
 };
 
 /**
@@ -137,6 +168,14 @@ export const getWeeklyBriefing = async (
   userGoal?: string,
   startContext?: string
 ): Promise<WeeklyBriefing> => {
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  // Hash the activities/wellness to detect changes? 
+  // For simplicity, cache per day + goal. If data changes significantly, the user can sync.
+  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const latestWellness = wellness[wellness.length - 1];
   const stats = `CTL: ${latestWellness?.ctl || 0}, TSB: ${latestWellness?.tsb || 0}`;
@@ -176,7 +215,9 @@ export const getWeeklyBriefing = async (
       }
     }
   });
-  return safeParseJSON(response.text);
+  const result = safeParseJSON(response.text);
+  setCache(cacheKey, result);
+  return result;
 };
 
 /**

@@ -357,6 +357,32 @@ const App: React.FC = () => {
 
         {activeTab === 'dashboard' && (
           <div className="flex-1 flex flex-col space-y-3 animate-in fade-in duration-500 pb-4 overflow-hidden">
+            {/* Performance Status - Simplified 1-Screen Card - MOVED TO TOP */}
+            <div className="glass-card p-4 rounded-[1.8rem] flex flex-col flex-shrink-0">
+              <div className="flex justify-between items-center mb-3">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full animate-pulse ${stats.statusColor.replace('text-', 'bg-')}`}></div>
+                  <h3 className="text-[11px] font-bold text-white uppercase tracking-tight">Physiology: <span className={stats.statusColor}>{stats.statusLabel}</span></h3>
+                </div>
+                <button 
+                  onClick={() => setShowWeeklyBriefing(true)} 
+                  className="text-[10px] font-black text-slate-950 uppercase tracking-[0.14em] flex items-center gap-2 bg-cyan-400 px-4 py-2 rounded-full hover:bg-cyan-300 hover:shadow-[0_0_15px_rgba(34,211,238,0.3)] active:scale-95 transition-all"
+                >
+                   Weekly Plan <Calendar size={12} strokeWidth={2.5} />
+                </button>
+              </div>
+              
+              <div className="bg-slate-950/40 p-3 rounded-2xl border border-white/5">
+                <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest text-slate-600 mb-2">
+                  <span>Recovery State</span>
+                  <span className={stats.form < 0 ? 'text-amber-500' : 'text-emerald-500'}>{stats.recoveryLabel}</span>
+                </div>
+                <div className="w-full h-1 bg-slate-900 rounded-full overflow-hidden">
+                  <div className={`h-full transition-all duration-1000 ${stats.form < 0 ? 'bg-amber-500' : 'bg-cyan-500'}`} style={{ width: `${stats.recoveryProgress}%` }} />
+                </div>
+              </div>
+            </div>
+
             {/* suggestion card - Optimized for 1-screen fit */}
             <div className="glass-card rounded-[1.8rem] p-4 flex flex-col relative overflow-hidden flex-shrink-0">
               <div className="flex items-center justify-between mb-2.5 relative z-10">
@@ -432,29 +458,6 @@ const App: React.FC = () => {
                   {(stats.last7Days as { day: string; load: number }[]).map((d, i) => (
                     <div key={i} className="flex-1 bg-slate-800 rounded-sm" style={{ height: `${Math.max(15, (d.load / 150) * 100)}%` }} />
                   ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Performance Status - Simplified 1-Screen Card */}
-            <div className="glass-card p-4 rounded-[1.8rem] flex flex-col flex-shrink-0">
-              <div className="flex justify-between items-center mb-3">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full animate-pulse ${stats.statusColor.replace('text-', 'bg-')}`}></div>
-                  <h3 className="text-[11px] font-bold text-white uppercase tracking-tight">Physiology: <span className={stats.statusColor}>{stats.statusLabel}</span></h3>
-                </div>
-                <button onClick={() => setShowWeeklyBriefing(true)} className="text-[9px] font-bold text-cyan-400 uppercase tracking-widest flex items-center gap-1.5 bg-cyan-500/5 px-3 py-1.5 rounded-full border border-cyan-500/10 active:scale-95 transition-all">
-                   Full Plan <Calendar size={11} />
-                </button>
-              </div>
-              
-              <div className="bg-slate-950/40 p-3 rounded-2xl border border-white/5">
-                <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest text-slate-600 mb-2">
-                  <span>Recovery State</span>
-                  <span className={stats.form < 0 ? 'text-amber-500' : 'text-emerald-500'}>{stats.recoveryLabel}</span>
-                </div>
-                <div className="w-full h-1 bg-slate-900 rounded-full overflow-hidden">
-                  <div className={`h-full transition-all duration-1000 ${stats.form < 0 ? 'bg-amber-500' : 'bg-cyan-500'}`} style={{ width: `${stats.recoveryProgress}%` }} />
                 </div>
               </div>
             </div>

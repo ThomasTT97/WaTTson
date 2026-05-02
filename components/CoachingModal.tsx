@@ -58,7 +58,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
   };
 
   const metrics = [
-    { label: 'Duration', value: formatDuration(activity.moving_time), icon: Clock, color: 'text-blue-400', bg: 'bg-blue-500/10' },
+    { label: 'Duration', value: formatDuration(activity.moving_time || activity.elapsed_time || 0), icon: Clock, color: 'text-blue-400', bg: 'bg-blue-500/10' },
     { 
       label: 'Performance', 
       value: `${Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0)}w ${Math.round(activity.average_heartrate || 0)}bpm`, 
@@ -66,8 +66,8 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
       color: 'text-cyan-400', 
       bg: 'bg-cyan-500/10' 
     },
-    { label: 'TSS', value: String(Math.round(activity.icu_training_load || 0)), icon: TrendingUp, color: 'text-amber-400', bg: 'bg-amber-500/10' },
-    { label: 'Calories', value: String(activity.calories || Math.round((activity.icu_joules || 0) / 1000)), icon: Flame, color: 'text-orange-400', bg: 'bg-orange-500/10' }
+    { label: 'Distance', value: `${activity.distance ? (Math.round(activity.distance / 100) / 10) : 0}km`, icon: TrendingUp, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+    { label: 'TSS', value: String(Math.round(activity.icu_training_load || activity.icu_tss || activity.training_load || 0)), icon: Target, color: 'text-amber-400', bg: 'bg-amber-500/10' }
   ];
 
   const containerVariants = {
@@ -118,26 +118,29 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
         <div className="w-11" />
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar pb-8 px-4 relative z-10">
+      <div 
+        className="flex-1 overflow-y-auto custom-scrollbar px-4 relative z-10"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 3rem)' }}
+      >
         <motion.div 
           initial="hidden"
           animate="visible"
           variants={containerVariants}
-          className="mt-4 mb-6"
+          className="mt-6 mb-10"
         >
           <motion.div variants={itemVariants}>
-            <h1 className="text-[1.75rem] font-bold text-white italic mb-1 leading-tight uppercase tracking-tighter">
+            <h1 className="text-[1.85rem] font-bold text-white italic mb-1 leading-tight uppercase tracking-tighter">
               {activity.name}
             </h1>
-            <div className="flex items-center gap-2 mb-6">
-               <div className="h-0.5 w-6 bg-cyan-500 rounded-full" />
-               <p className="text-[9px] font-bold text-cyan-400 uppercase tracking-widest">{activity.type}</p>
+            <div className="flex items-center gap-2 mb-8">
+               <div className="h-0.5 w-8 bg-cyan-500 rounded-full" />
+               <p className="text-[10px] font-bold text-cyan-400 uppercase tracking-[0.2em]">{activity.type}</p>
             </div>
           </motion.div>
           
-          <motion.div variants={itemVariants} className="grid grid-cols-4 gap-1.5 mb-6">
+          <motion.div variants={itemVariants} className="grid grid-cols-4 gap-2 mb-8">
             {metrics.map((m: any, i) => (
-              <div key={i} className="glass-card rounded-xl p-2.5 flex flex-col items-center justify-center border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors group text-center min-h-[85px]">
+              <div key={i} className="glass-card rounded-xl p-3 flex flex-col items-center justify-center border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors group text-center min-h-[90px]">
                 <div className={`h-6 rounded-lg flex items-center justify-center mb-2 px-1.5 ${m.bg} ${m.color} group-hover:scale-110 transition-transform`}>
                   {m.icons ? (
                     <div className="flex items-center gap-0.5">
@@ -149,7 +152,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                     <m.icon size={11} fill={m.icon === Zap || m.icon === Heart || m.icon === Flame ? "currentColor" : "none"} />
                   )}
                 </div>
-                <span className="block text-[13px] font-bold text-white tracking-tighter leading-none italic mb-1">{m.value}</span>
+                <span className="block text-[14px] font-bold text-white tracking-tighter leading-none italic mb-1">{m.value}</span>
                 <span className="block text-[7px] font-black text-slate-500 uppercase tracking-[0.05em]">
                   {m.label === 'Performance' ? 'PWR/HR' : m.label === 'Duration' ? 'DUR' : m.label === 'Calories' ? 'KCAL' : m.label}
                 </span>
@@ -190,36 +193,36 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
               >
                 <motion.div 
                   variants={itemVariants}
-                  className="glass-card p-5 rounded-3xl relative overflow-hidden bg-gradient-to-br from-white/[0.03] to-transparent border-white/10"
+                  className="glass-card p-6 rounded-[2rem] relative overflow-hidden bg-gradient-to-br from-white/[0.03] to-transparent border-white/10"
                 >
-                   <div className="flex items-center gap-2 mb-3">
-                     <div className="w-5 h-5 rounded-md bg-cyan-500/20 flex items-center justify-center">
-                       <Sparkles size={10} className="text-cyan-400" />
+                   <div className="flex items-center gap-2 mb-4">
+                     <div className="w-6 h-6 rounded-lg bg-cyan-500/20 flex items-center justify-center">
+                       <Sparkles size={11} className="text-cyan-400" />
                      </div>
-                     <h3 className="text-[9px] font-black text-cyan-400 uppercase tracking-[0.2em]">Coach's Insight</h3>
+                     <h3 className="text-[10px] font-black text-cyan-400 uppercase tracking-[0.2em]">Coach's Insight</h3>
                    </div>
-                   <p className="text-[0.95rem] text-white leading-relaxed italic font-medium tracking-tight">
+                   <p className="text-[1.05rem] text-white leading-relaxed italic font-medium tracking-tight">
                      "{feedback.summary}"
                    </p>
                 </motion.div>
-
+ 
                 <motion.div 
                   variants={itemVariants}
-                  className="glass-card p-5 rounded-3xl border-white/5 bg-white/[0.01]"
+                  className="glass-card p-6 rounded-[2rem] border-white/5 bg-white/[0.01]"
                 >
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-5 h-5 rounded-md bg-amber-500/20 flex items-center justify-center">
-                      <Target size={10} className="text-amber-400" />
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-6 h-6 rounded-lg bg-amber-500/20 flex items-center justify-center">
+                      <Target size={11} className="text-amber-400" />
                     </div>
-                    <h3 className="text-[9px] font-black text-amber-400 uppercase tracking-[0.2em]">Progression Path</h3>
+                    <h3 className="text-[10px] font-black text-amber-400 uppercase tracking-[0.2em]">Progression Path</h3>
                   </div>
                   
-                  <div className="bg-slate-950/60 p-4 rounded-2xl border border-white/5 relative overflow-hidden group">
-                    <p className="text-[12px] text-slate-300 leading-relaxed relative z-10">{feedback.goal_contribution}</p>
+                  <div className="bg-slate-950/60 p-5 rounded-[1.5rem] border border-white/5 relative overflow-hidden group">
+                    <p className="text-[13px] text-slate-300 leading-relaxed relative z-10">{feedback.goal_contribution}</p>
                     
-                    <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between relative z-10">
-                      <div className="flex items-center gap-2 text-[8px] font-black text-slate-500 uppercase tracking-widest italic">
-                        <Trophy size={10} className="text-cyan-400" /> {userGoal || 'Peak Performance'}
+                    <div className="mt-6 pt-5 border-t border-white/5 flex items-center justify-between relative z-10">
+                      <div className="flex items-center gap-2 text-[9px] font-black text-slate-500 uppercase tracking-widest italic">
+                        <Trophy size={11} className="text-cyan-400" /> {userGoal || 'Peak Performance'}
                       </div>
                     </div>
                   </div>
@@ -230,6 +233,8 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
         </motion.div>
       </div>
 
+      {/* Bottom Glow */}
+      <div className="absolute bottom-[-5%] left-[-10%] w-[120%] h-[20%] bg-indigo-500/5 blur-[80px] pointer-events-none" />
     </motion.div>
   );
 };

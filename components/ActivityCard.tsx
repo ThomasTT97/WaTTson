@@ -1,6 +1,6 @@
 import React, { memo } from 'react';
 import { Activity } from '../types';
-import { Zap, Clock, ChevronRight, Activity as ActivityIcon } from 'lucide-react';
+import { Zap, Clock, ChevronRight, Activity as ActivityIcon, Heart, TrendingUp } from 'lucide-react';
 
 interface ActivityCardProps {
   activity: Activity;
@@ -41,18 +41,30 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
           )}
         </div>
         
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
           <div className="flex items-center gap-1.5 text-[10px] font-bold">
             <Clock size={11} className="text-blue-400/60" />
             <span className="text-slate-400">{formatDuration(activity.moving_time)}</span>
           </div>
 
-          {(activity.average_watts || activity.icu_average_watts) && (
+          {activity.distance > 0 && (
             <div className="flex items-center gap-1.5 text-[10px] font-bold">
-              <ActivityIcon size={11} className="text-cyan-400/60" />
-              <span className="text-slate-400">{Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0)}W avg</span>
+              <TrendingUp size={11} className="text-emerald-400/60" />
+              <span className="text-slate-400">{Math.round(activity.distance / 100) / 10}km</span>
             </div>
           )}
+
+          {(activity.average_watts || activity.icu_average_watts) ? (
+            <div className="flex items-center gap-1.5 text-[10px] font-bold">
+              <Zap size={11} className="text-cyan-400/60" />
+              <span className="text-slate-400">{Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0)}W</span>
+            </div>
+          ) : activity.average_heartrate ? (
+            <div className="flex items-center gap-1.5 text-[10px] font-bold">
+              <Heart size={11} className="text-rose-400/60" />
+              <span className="text-slate-400">{Math.round(activity.average_heartrate)}bpm</span>
+            </div>
+          ) : null}
         </div>
       </div>
 

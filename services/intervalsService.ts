@@ -76,11 +76,15 @@ export const fetchActivities = async (creds: IntervalsCredentials): Promise<Acti
   const fields = [
     'id', 'name', 'type', 'start_date_local', 'moving_time', 'elapsed_time',
     'distance', 'total_elevation_gain', 'average_watts', 'weighted_average_watts', 
-    'icu_average_watts', 'icu_weighted_average_watts', 'average_heartrate',
-    'icu_training_load', 'icu_intensity', 'source', 'icu_tss', 'icu_joules', 'calories', 'icu_efficiency_factor'
+    'icu_average_watts', 'icu_weighted_average_watts', 'average_heartrate', 'max_heartrate',
+    'average_cadence', 'max_watts', 'icu_training_load', 'icu_intensity', 'source', 
+    'icu_tss', 'icu_joules', 'calories', 'icu_efficiency_factor', 'icu_variability_index',
+    'icu_hr_variability', 'icu_hrr', 'has_heartrate', 'has_power', 'average_temp',
+    'device_name', 'external_id', 'icu_pm_actual_load', 'icu_atl', 'icu_ctl', 'icu_tsb',
+    'analyzed', 'icu_power_hr_z2_ef', 'icu_power_hr_z2', 'icu_power_hr_z2_hr'
   ].join(',');
 
-  const activitiesUrl = `https://intervals.icu/api/v1/athlete/${athleteId}/activities?oldest=${oldest}&newest=${newest}&fields=${fields}`;
+  const activitiesUrl = `https://intervals.icu/api/v1/athlete/${athleteId}/activities?oldest=${oldest}&newest=${newest}&fields=${fields}&_t=${Date.now()}`;
 
   try {
     const response = await fetch(activitiesUrl, {
@@ -180,6 +184,7 @@ export const getMockActivities = (): Activity[] => {
         start_date_local: d.toISOString(),
         distance: 25000 + Math.random() * 5000,
         moving_time: 3600 + Math.random() * 600,
+        elapsed_time: 3800 + Math.random() * 600,
         total_elevation_gain: 200 + Math.random() * 100,
         average_watts: 180 + Math.random() * 50,
         weighted_average_watts: 210 + Math.random() * 50,
