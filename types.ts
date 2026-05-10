@@ -105,6 +105,11 @@ export interface WeeklyBriefing {
     duration_target: number;
     intensity: 'Easy' | 'Medium' | 'Hard' | 'Rest';
     why: string;
+    workout_steps?: {
+      duration: number; // minutes
+      target_watts?: number;
+      label: string;
+    }[];
   }[];
 }
 

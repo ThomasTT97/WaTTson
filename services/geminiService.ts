@@ -65,10 +65,10 @@ export const getRideFeedback = async (
     Analyze this ride: "${activity.name}". 
     TSS: ${activity.icu_training_load || activity.icu_tss || activity.training_load || 0}. 
     Intensity: ${activity.icu_intensity || 0}.
-    Duration: ${Math.round((activity.moving_time || activity.elapsed_time || 0) / 60)} mins.
-    Power: ${Math.round(activity.average_watts || activity.icu_average_watts || 0)}W.
-    HR: ${Math.round(activity.average_heartrate || 0)}bpm.
-    User Goal: ${userGoal || 'Overall fitness improvement'}.
+    Duration: ${Math.round((activity.moving_time || activity.elapsed_time || 0) / 60)}m.
+    Power: ${Math.round(activity.average_watts || activity.icu_average_watts || 0)}W avg, ${Math.round(activity.weighted_average_watts || activity.icu_weighted_average_watts || 0)}W np.
+    HR: ${Math.round(activity.average_heartrate || 0)}bpm avg.
+    Goal: ${userGoal || 'Fitness'}.
     
     Return JSON with:
     summary: A 1-sentence punchy coaching summary.
@@ -97,10 +97,12 @@ export const getRideFeedback = async (
 /**
  * Generates a daily workout suggestion based on recent history.
  */
-export const getDailySuggestion = async (recentActivities: Activity[], userGoal?: string): Promise<DailySuggestion> => {
-  const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-  const cacheKey = `wattson_suggestion_${todayStr}_${userGoal || 'default'}`;
+export const getDailySuggestion = async (recentActivities: Activity[], userGoal?: string, forTomorrow: boolean = false): Promise<DailySuggestion> => {
+  const targetDate = new Date();
+  if (forTomorrow) targetDate.setDate(targetDate.getDate() + 1);
+  
+  const targetStr = targetDate.toISOString().split('T')[0];
+  const cacheKey = `wattson_suggestion_${targetStr}_${userGoal || 'default'}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
@@ -108,12 +110,11 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
 
   const history = recentActivities
     .sort((a, b) => b.start_date_local.localeCompare(a.start_date_local))
-    .slice(0, 10)
-    .map(a => `${a.start_date_local.split('T')[0]}: ${a.icu_training_load || 0} TSS`)
+    .slice(0, 7)
+    .map(a => `${a.start_date_local.split('T')[0]}: ${a.icu_training_load || a.icu_tss || 0} TSS (${a.type})`)
     .join(', ');
 
-  const prompt = `Coach perspective: Based on 10-day history (${history}) and goal "${userGoal}", suggest today's workout for ${todayStr}.
-    Respond ONLY in JSON.`;
+  const prompt = `Coach: Suggest workout for ${targetStr}. History (7d): ${history}. Goal: "${userGoal}". JSON please.`;
 
   const response: GenerateContentResponse = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
@@ -154,7 +155,7 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
     }
   });
   const parsed = safeParseJSON(response.text);
-  const result = { ...parsed, date: todayStr };
+  const result = { ...parsed, date: targetStr };
   setCache(cacheKey, result);
   return result;
 };
@@ -166,7 +167,8 @@ export const getWeeklyBriefing = async (
   recentActivities: Activity[], 
   wellness: Wellness[], 
   userGoal?: string,
-  startContext?: string
+  startContext?: string,
+  ftp?: number
 ): Promise<WeeklyBriefing> => {
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
@@ -178,15 +180,17 @@ export const getWeeklyBriefing = async (
 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const latestWellness = wellness[wellness.length - 1];
-  const stats = `CTL: ${latestWellness?.ctl || 0}, TSB: ${latestWellness?.tsb || 0}`;
+  const stats = `CTL: ${latestWellness?.ctl || 0}, TSB: ${latestWellness?.tsb || 0}, ATL: ${latestWellness?.atl || 0}`;
 
-  const prompt = `Generate a 7-day outlook. Goal: ${userGoal}. Current: ${stats}. 
-    ${startContext || ''}
-    Return JSON with phase, focus, outlook_summary, and days[].`;
+  const prompt = `Plan 7-day outlook. Goal: ${userGoal}. Stats: ${stats}. ${startContext || ''}. 
+    For each non-Rest day, suggest structural steps in "workout_steps".
+    Steps should include duration (mins), target_watts (W), and label.
+    Use ${ftp ? `athlete FTP: ${ftp}W` : 'sensible intensity levels'} for watts.
+    Return JSON with phase, focus, outlook_summary, days[].`;
 
   const response: GenerateContentResponse = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: prompt,
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
       responseMimeType: 'application/json',
       responseSchema: {
@@ -204,8 +208,19 @@ export const getWeeklyBriefing = async (
                 focus: { type: Type.STRING },
                 load_target: { type: Type.NUMBER },
                 duration_target: { type: Type.NUMBER },
-                intensity: { type: Type.STRING },
-                why: { type: Type.STRING }
+                intensity: { type: Type.STRING, enum: ['Easy', 'Medium', 'Hard', 'Rest'] },
+                why: { type: Type.STRING },
+                workout_steps: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      duration: { type: Type.NUMBER },
+                      target_watts: { type: Type.NUMBER },
+                      label: { type: Type.STRING }
+                    }
+                  }
+                }
               },
               required: ['day', 'focus', 'load_target', 'duration_target', 'intensity', 'why']
             }
@@ -229,11 +244,9 @@ export const sendChatMessage = async (
   context: { goal: string; recentLoad: number; readiness: number }
 ): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const systemInstruction = `You are WaTTson, a direct and expert cycling coach. 
-    Speak punchy and concise. NO long paragraphs. 
-    Keep every reply under 2-3 sentences max. 
-    Respond like a busy coach sending a quick WhatsApp/text. 
-    Focus: ${context.goal}. Metrics: 7D Load ${context.recentLoad}, Readiness ${context.readiness}/10.`;
+  const systemInstruction = `You are WaTTson, a direct cycling coach. 
+    Concise text-style replies (1-2 sentences). 
+    Goal: ${context.goal}. Load: ${context.recentLoad}, Readiness: ${context.readiness}.`;
 
   const contents = history.map(m => ({
     role: m.role,

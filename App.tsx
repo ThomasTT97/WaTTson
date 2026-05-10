@@ -6,8 +6,8 @@ import {
   ChatMessage,
   Wellness
 } from './types';
-import { fetchActivities, fetchWellness, fetchAthleteId } from './services/intervalsService';
-import { getDailySuggestion, sendChatMessage } from './services/geminiService';
+import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile } from './services/intervalsService';
+import { getDailySuggestion, sendChatMessage, getWeeklyBriefing } from './services/geminiService';
 import { ActivityCard } from './components/ActivityCard';
 import { CoachingModal } from './components/CoachingModal';
 import { WeeklyBriefingModal } from './components/WeeklyBriefingModal';
@@ -28,7 +28,16 @@ import {
   LogOut,
   RotateCcw,
   Calendar,
-  Settings
+  Settings,
+  Shield,
+  Database,
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
+  Activity as ActivityIcon,
+  History,
+  MoreVertical,
+  Check
 } from 'lucide-react';
 
 const CyclistIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -71,10 +80,34 @@ const App: React.FC = () => {
     return null;
   });
 
-  const [activities, setActivities] = useState<Activity[] | null>(null);
-  const [wellnessData, setWellnessData] = useState<Wellness[]>([]);
+  const [activities, setActivities] = useState<Activity[] | null>(() => {
+    try {
+      const saved = localStorage.getItem('wattson_activities_cache');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return null;
+  });
+  
+  const hasRideToday = useMemo(() => {
+    if (!activities) return false;
+    const todayStr = toLocalDateStr(new Date());
+    return activities.some(a => a.start_date_local.startsWith(todayStr));
+  }, [activities]);
+
+  const [wellnessData, setWellnessData] = useState<Wellness[]>(() => {
+    try {
+      const saved = localStorage.getItem('wattson_wellness_cache');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+  const [ftp, setFtp] = useState<number | null>(() => {
+    const saved = localStorage.getItem('wattson_ftp');
+    return saved ? parseInt(saved, 10) : null;
+  });
   const [loading, setLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isDeepSyncing, setIsDeepSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const [showWeeklyBriefing, setShowWeeklyBriefing] = useState(false);
@@ -93,10 +126,23 @@ const App: React.FC = () => {
   const [showAlternative, setShowAlternative] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'rides' | 'chat' | 'settings'>('dashboard');
+  const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'methodology'>('main');
   const [isWorkoutExpanded, setIsWorkoutExpanded] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const saved = localStorage.getItem('wattson_chat_history');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('wattson_chat_history', JSON.stringify(messages));
+  }, [messages]);
+
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isChatMenuOpen, setIsChatMenuOpen] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   
   const [userGoal, setUserGoal] = useState<string>(() => localStorage.getItem('wattson_goal') || 'Improve cycling performance');
@@ -118,13 +164,21 @@ const App: React.FC = () => {
         activeCreds.athleteId = realId;
       }
 
-      const [fetchedActivities, fetchedWellness] = await Promise.all([
+      const [fetchedActivities, fetchedWellness, profile] = await Promise.all([
         fetchActivities(activeCreds),
-        fetchWellness(activeCreds)
+        fetchWellness(activeCreds),
+        activeCreds.apiKey === 'demo' ? Promise.resolve({ id: '0', icu_ftp: 250 }) : fetchAthleteProfile(activeCreds)
       ]);
       
       setActivities(fetchedActivities || []);
       setWellnessData(fetchedWellness || []);
+      if (profile?.icu_ftp) {
+        setFtp(profile.icu_ftp);
+        localStorage.setItem('wattson_ftp', profile.icu_ftp.toString());
+      }
+      
+      localStorage.setItem('wattson_activities_cache', JSON.stringify(fetchedActivities || []));
+      localStorage.setItem('wattson_wellness_cache', JSON.stringify(fetchedWellness || []));
       
       const credsChanged = !creds || 
                            activeCreds.apiKey !== creds.apiKey || 
@@ -145,23 +199,67 @@ const App: React.FC = () => {
     }
   };
 
+  const handleDeepSync = async (days: number) => {
+    if (!creds || loading || isSyncing || isDeepSyncing) return;
+    setIsDeepSyncing(true);
+    setIsChatMenuOpen(false);
+    setSyncError(null);
+    try {
+      const [fetchedActivities, fetchedWellness] = await Promise.all([
+        fetchActivities(creds, days),
+        fetchWellness(creds, days)
+      ]);
+      
+      setActivities(fetchedActivities || []);
+      setWellnessData(fetchedWellness || []);
+      
+      localStorage.setItem('wattson_activities_cache', JSON.stringify(fetchedActivities || []));
+      localStorage.setItem('wattson_wellness_cache', JSON.stringify(fetchedWellness || []));
+
+      // Trigger coach acknowledgment
+      if (fetchedActivities && fetchedActivities.length > 0) {
+        const sorted = [...fetchedActivities].sort((a,b) => a.start_date_local.localeCompare(b.start_date_local));
+        const oldestRide = sorted[0];
+        const oldestDateStr = new Date(oldestRide.start_date_local).toLocaleDateString();
+        
+        const introMsg = `I've successfully expanded my deep-memory search. My access now extends back to ${oldestDateStr}.\n\nI can see your ride "${oldestRide.name}" from that day—you covered ${Math.round((oldestRide.distance || 0) / 1000)}km with a TSS of ${oldestRide.icu_training_load || oldestRide.icu_tss || 0}. I'll use this full history for our future analysis.`;
+        
+        setMessages(prev => [...prev, { role: 'model', text: introMsg }]);
+      }
+    } catch (err: any) {
+      console.error("Deep sync error:", err);
+      setSyncError(err.message || "Failed to fetch deep history");
+    } finally {
+      setIsDeepSyncing(false);
+    }
+  };
+
+  const hasInitiallySynced = useRef(false);
   useEffect(() => {
-    if (creds && activities === null && !syncError && !loading) {
-      loadData(creds, true);
+    if (creds && !hasInitiallySynced.current && !syncError && !loading) {
+      hasInitiallySynced.current = true;
+      loadData(creds, activities === null);
     }
   }, [creds, activities, syncError, loading]);
 
   useEffect(() => {
-    const todayStr = toLocalDateStr(new Date());
-    const shouldFetch = activities && activities.length > 0 && 
-                        !loadingSuggestion && 
-                        (!suggestion || suggestion.date !== todayStr);
+    if (!activities || activities.length === 0) return;
+    
+    const today = new Date();
+    const todayStr = toLocalDateStr(today);
+    const tomorrow = new Date();
+    tomorrow.setDate(today.getDate() + 1);
+    const tomorrowStr = toLocalDateStr(tomorrow);
+    
+    const targetStr = hasRideToday ? tomorrowStr : todayStr;
+    const shouldFetch = !loadingSuggestion && 
+                        (!suggestion || suggestion.date !== targetStr);
 
     if (shouldFetch) {
       const fetchNewSuggestion = async () => {
         setLoadingSuggestion(true);
         try {
-          const data = await getDailySuggestion(activities!, userGoal);
+          const data = await getDailySuggestion(activities!, userGoal, hasRideToday);
           setSuggestion(data);
           localStorage.setItem('wattson_daily_cache', JSON.stringify(data));
         } catch (err) {
@@ -172,7 +270,7 @@ const App: React.FC = () => {
       };
       fetchNewSuggestion();
     }
-  }, [activities, userGoal]);
+  }, [activities, userGoal, hasRideToday]);
 
   const stats = useMemo(() => {
     const loadByDate = new Map<string, number>();
@@ -257,7 +355,7 @@ const App: React.FC = () => {
 
   const currentWorkout = suggestion ? (showAlternative ? suggestion.alternative : suggestion.primary) : null;
 
-  if (loading) return (
+  if (loading && (!activities || activities.length === 0)) return (
     <div className="phone-container flex flex-col items-center justify-center p-8 bg-[#0a0e17]">
       <div className="premium-bg"></div>
       <div className="w-8 h-8 border-2 border-cyan-500/10 border-t-cyan-500 rounded-full animate-spin mb-4"></div>
@@ -386,9 +484,11 @@ const App: React.FC = () => {
             {/* suggestion card - Optimized for 1-screen fit */}
             <div className="glass-card rounded-[1.8rem] p-4 flex flex-col relative overflow-hidden flex-shrink-0">
               <div className="flex items-center justify-between mb-2.5 relative z-10">
-                <div className="flex items-center gap-1 px-2.5 py-1 bg-cyan-500/10 rounded-full border border-cyan-500/10">
-                  <Sparkles size={9} className="text-cyan-400" />
-                  <span className="text-[8px] font-bold text-cyan-400 uppercase tracking-widest">Today's Focus</span>
+                <div className="flex items-center gap-1.5 px-3 py-1 bg-cyan-500/10 rounded-full border border-cyan-500/20 shadow-[0_0_10px_rgba(34,211,238,0.1)]">
+                  <Sparkles size={10} className="text-cyan-400" />
+                  <span className="text-[9px] font-black text-white uppercase tracking-[0.15em]">
+                    {hasRideToday ? "TARGET: TOMORROW" : "TARGET: TODAY"}
+                  </span>
                 </div>
                 {suggestion && (
                   <button onClick={() => setShowAlternative(!showAlternative)} className="w-7 h-7 flex items-center justify-center rounded-full bg-white/5 border border-white/5 text-slate-400 hover:text-white transition-colors">
@@ -495,9 +595,77 @@ const App: React.FC = () => {
                <div className="w-8 h-8 rounded-full bg-cyan-500/10 flex items-center justify-center text-cyan-400 border border-cyan-500/20">
                  <Bot size={16} />
                </div>
-               <div>
-                  <h2 className="text-sm font-bold text-white tracking-tight leading-none uppercase italic">Coach WaTTson</h2>
-                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">Direct Line</span>
+               <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-bold text-white tracking-tight leading-none uppercase italic">Coach WaTTson</h2>
+                    {isDeepSyncing && <RotateCcw size={10} className="animate-spin text-cyan-400" />}
+                  </div>
+                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">
+                    {isDeepSyncing ? 'Accessing Historical Archive...' : 'Direct Line'}
+                  </span>
+               </div>
+               <div className="relative">
+                 <button 
+                   onClick={() => setIsChatMenuOpen(!isChatMenuOpen)}
+                   className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-slate-500 hover:text-white transition-colors border border-white/5"
+                 >
+                   <MoreVertical size={16} />
+                 </button>
+                 
+                 {isChatMenuOpen && (
+                   <div className="absolute right-0 mt-2 w-48 bg-slate-900 rounded-[1.2rem] border border-white/20 shadow-2xl z-[100] animate-in fade-in slide-in-from-top-2 duration-200 p-1.5">
+                     <button 
+                       onClick={() => { setSuggestion(null); loadData(creds!); setIsChatMenuOpen(false); }}
+                       className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left"
+                     >
+                       <RefreshCw size={14} className={isSyncing ? 'animate-spin text-cyan-400' : 'text-slate-400'} />
+                       <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Sync Recent</span>
+                     </button>
+                     
+                     <div className="h-px bg-white/5 my-1 mx-2" />
+                     <p className="px-3 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-widest">Historical Memory</p>
+                     
+                     <button 
+                       onClick={() => handleDeepSync(365)}
+                       className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-cyan-500/10 rounded-xl transition-colors text-left group"
+                     >
+                       <div className="flex items-center gap-3">
+                         <History size={14} className="text-slate-400 group-hover:text-cyan-400" />
+                         <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">1 Year</span>
+                       </div>
+                       {isDeepSyncing && <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" />}
+                     </button>
+                     
+                     <button 
+                       onClick={() => handleDeepSync(365 * 2)}
+                       className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-cyan-500/10 rounded-xl transition-colors text-left group"
+                     >
+                       <div className="flex items-center gap-3">
+                         <History size={14} className="text-slate-400 group-hover:text-cyan-400" />
+                         <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">2 Years</span>
+                       </div>
+                     </button>
+
+                     <button 
+                       onClick={() => handleDeepSync(365 * 5)}
+                       className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-cyan-500/10 rounded-xl transition-colors text-left group"
+                     >
+                       <div className="flex items-center gap-3">
+                         <History size={14} className="text-slate-400 group-hover:text-cyan-400" />
+                         <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">5 Years</span>
+                       </div>
+                     </button>
+                     
+                     <div className="h-px bg-white/5 my-1 mx-2" />
+                     <button 
+                       onClick={() => { if (confirm("Clear chat history?")) setMessages([]); setIsChatMenuOpen(false); }}
+                       className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-rose-500/10 rounded-xl transition-colors text-left group"
+                     >
+                       <RotateCcw size={14} className="text-slate-400 group-hover:text-rose-400" />
+                       <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest group-hover:text-rose-400">Reset Chat</span>
+                     </button>
+                   </div>
+                 )}
                </div>
              </div>
              
@@ -566,31 +734,168 @@ const App: React.FC = () => {
         )}
 
         {activeTab === 'settings' && (
-          <div className="space-y-5 animate-in slide-in-from-right-2 duration-400 pb-20 px-1 overflow-y-auto custom-scrollbar">
-             <h2 className="text-xl text-header italic uppercase tracking-tight pt-2">Pro DNA</h2>
-             <div className="glass-card p-6 rounded-[2rem] space-y-6">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-2xl bg-slate-900 flex items-center justify-center text-slate-500 border border-white/5 shadow-inner"><User size={24} /></div>
-                  <div>
-                    <p className="text-sm font-bold text-white tracking-tight">Athlete ID: {creds?.athleteId}</p>
-                    <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-widest mt-0.5">Systems Operational</p>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[9px] font-bold text-slate-600 uppercase tracking-[0.2em] ml-1">Current Ambition</label>
-                  <div onClick={() => setShowGoalEditor(true)} className="bg-slate-950/50 p-5 rounded-2xl border border-white/5 cursor-pointer hover:border-cyan-500/30 transition-all">
-                    <p className="text-[12px] text-slate-400 italic">"{userGoal}"</p>
-                  </div>
-                </div>
+          <div className="flex-1 flex flex-col space-y-5 animate-in slide-in-from-right-2 duration-400 pb-20 px-1 overflow-hidden">
+             <div className="flex justify-between items-center pt-2">
+               <h2 className="text-xl text-header italic uppercase tracking-tight">
+                 {settingsView === 'main' ? 'Pro DNA' : 
+                  settingsView === 'goal' ? 'Set Ambition' :
+                  settingsView === 'data' ? 'Data Vault' : 'Theory'}
+               </h2>
+               {settingsView !== 'main' && (
+                 <button 
+                   onClick={() => setSettingsView('main')}
+                   className="flex items-center gap-1 text-[10px] font-black text-slate-500 uppercase tracking-widest hover:text-white transition-colors"
+                 >
+                   <ChevronLeft size={14} /> Back
+                 </button>
+               )}
              </div>
-             
-             <div className="grid grid-cols-2 gap-3">
-               <button onClick={() => { setSuggestion(null); loadData(creds!); }} className="p-5 bg-white/5 rounded-[1.8rem] border border-white/5 text-[9px] font-black uppercase tracking-widest text-slate-500 flex flex-col items-center gap-3 active:scale-95 transition-all">
-                  <RotateCcw size={18} /> Sync Engine
-               </button>
-               <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="p-5 bg-rose-500/5 rounded-[1.8rem] border border-rose-500/10 text-[9px] font-black uppercase tracking-widest text-rose-500 flex flex-col items-center gap-3 active:scale-95 transition-all">
-                  <LogOut size={18} /> Logout
-               </button>
+
+             <div className="flex-1 overflow-y-auto custom-scrollbar space-y-5 pb-4">
+               {settingsView === 'main' && (
+                 <>
+                   <div className="glass-card p-6 rounded-[2rem] space-y-6">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-slate-900 flex items-center justify-center text-slate-500 border border-white/5 shadow-inner"><User size={24} /></div>
+                        <div>
+                          <p className="text-sm font-bold text-white tracking-tight">Athlete ID: {creds?.athleteId}</p>
+                          <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-widest mt-0.5">Systems Operational</p>
+                        </div>
+                      </div>
+                   </div>
+
+                   <div className="grid grid-cols-1 gap-3">
+                     <button 
+                       onClick={() => setSettingsView('goal')}
+                       className="glass-card p-5 rounded-[1.8rem] flex items-center justify-between group active:scale-[0.98] transition-all"
+                     >
+                       <div className="flex items-center gap-4">
+                         <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center text-cyan-400"><Target size={20} /></div>
+                         <div className="text-left">
+                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Training Goal</p>
+                           <p className="text-[10px] text-slate-500 font-bold italic truncate max-w-[180px]">"{userGoal}"</p>
+                         </div>
+                       </div>
+                       <ChevronRight size={16} className="text-slate-600 group-hover:text-cyan-400 transition-colors" />
+                     </button>
+
+                     <button 
+                       onClick={() => setSettingsView('data')}
+                       className="glass-card p-5 rounded-[1.8rem] flex items-center justify-between group active:scale-[0.98] transition-all"
+                     >
+                       <div className="flex items-center gap-4">
+                         <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400"><Database size={20} /></div>
+                         <div className="text-left">
+                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Data & Privacy</p>
+                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Connected Assets</p>
+                         </div>
+                       </div>
+                       <ChevronRight size={16} className="text-slate-600 group-hover:text-purple-400 transition-colors" />
+                     </button>
+
+                     <button 
+                       onClick={() => setSettingsView('methodology')}
+                       className="glass-card p-5 rounded-[1.8rem] flex items-center justify-between group active:scale-[0.98] transition-all"
+                     >
+                       <div className="flex items-center gap-4">
+                         <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400"><BookOpen size={20} /></div>
+                         <div className="text-left">
+                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Training Methodology</p>
+                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">The WaTTson Logic</p>
+                         </div>
+                       </div>
+                       <ChevronRight size={16} className="text-slate-600 group-hover:text-amber-400 transition-colors" />
+                     </button>
+                   </div>
+                   
+                   <div className="grid grid-cols-2 gap-3">
+                     <button onClick={() => { setSuggestion(null); loadData(creds!); }} className="p-5 bg-white/5 rounded-[1.8rem] border border-white/5 text-[9px] font-black uppercase tracking-widest text-slate-500 flex flex-col items-center gap-3 active:scale-95 transition-all">
+                        <RotateCcw size={18} /> Sync Engine
+                     </button>
+                     <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="p-5 bg-rose-500/5 rounded-[1.8rem] border border-rose-500/10 text-[9px] font-black uppercase tracking-widest text-rose-500 flex flex-col items-center gap-3 active:scale-95 transition-all">
+                        <LogOut size={18} /> Logout
+                     </button>
+                   </div>
+                 </>
+               )}
+
+               {settingsView === 'goal' && (
+                 <div className="glass-card p-6 rounded-[2rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="space-y-4">
+                      <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
+                        WaTTson adapts his coaching intensity, interval style, and recovery focus based on your current ambition.
+                      </p>
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-bold text-slate-600 uppercase tracking-[0.2em] ml-1">Current Ambition</label>
+                        <div onClick={() => { setShowGoalEditor(true); setSettingsView('main'); }} className="bg-slate-950/50 p-5 rounded-2xl border border-white/5 cursor-pointer hover:border-cyan-500/30 transition-all group">
+                          <p className="text-[13px] text-white italic group-hover:text-cyan-400 transition-colors">"{userGoal}"</p>
+                          <p className="text-[8px] text-slate-600 uppercase tracking-widest mt-3 font-bold">Tap to edit</p>
+                        </div>
+                      </div>
+                    </div>
+                 </div>
+               )}
+
+               {settingsView === 'data' && (
+                 <div className="glass-card p-6 rounded-[2rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-3 p-3 bg-slate-950/40 rounded-2xl border border-white/5">
+                        <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400"><ActivityIcon size={16} /></div>
+                        <div>
+                          <p className="text-[11px] font-bold text-white">Ride History</p>
+                          <p className="text-[9px] text-slate-500">Last 90 days of TSS & Intensity</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 p-3 bg-slate-950/40 rounded-2xl border border-white/5">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400"><Zap size={16} /></div>
+                        <div>
+                          <p className="text-[11px] font-bold text-white">Athlete Metrics</p>
+                          <p className="text-[9px] text-slate-500">FTP, Weight, and Training Zones</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 p-3 bg-slate-950/40 rounded-2xl border border-white/5">
+                        <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-400"><TrendingUp size={16} /></div>
+                        <div>
+                          <p className="text-[11px] font-bold text-white">Wellness Data</p>
+                          <p className="text-[9px] text-slate-500">HRV, Resting HR, Sleep, and TSB</p>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-relaxed pt-2">
+                        All data is pulled in real-time from Intervals.icu via your API key. No biometric data is stored permanently on our servers.
+                      </p>
+                    </div>
+                 </div>
+               )}
+
+               {settingsView === 'methodology' && (
+                 <div className="glass-card p-6 rounded-[2rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="space-y-5">
+                      <div className="relative">
+                        <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-amber-500/30"></div>
+                        <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">The Polarized Approach</h4>
+                        <p className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3">
+                          WaTTson prioritizes polarized training—keeping easy days truly easy to ensure you have the required "lithium" for high-intensity sessions.
+                        </p>
+                      </div>
+
+                      <div className="relative">
+                        <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-cyan-500/30"></div>
+                        <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">Fatigue Management</h4>
+                        <p className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3">
+                          By analyzing your TSB (Training Stress Balance) and HRV, the model detects "Red Days" before you feel them, automatically suggesting rest when recovery is stunted.
+                        </p>
+                      </div>
+
+                      <div className="relative">
+                        <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-purple-500/30"></div>
+                        <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">AI Context Window</h4>
+                        <p className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3">
+                          Unlike static plans, WaTTson looks at your last 7 days of actual workload. If you missed a ride, he adjusts. If you smashed a group ride, he adapts.
+                        </p>
+                      </div>
+                    </div>
+                 </div>
+               )}
              </div>
           </div>
         )}
@@ -643,7 +948,17 @@ const App: React.FC = () => {
       )}
 
       {selectedActivity && creds && <CoachingModal activity={selectedActivity} creds={creds} onClose={() => setSelectedActivity(null)} userGoal={userGoal} />}
-      {showWeeklyBriefing && creds && <WeeklyBriefingModal activities={activities || []} wellness={wellnessData} creds={creds} userGoal={userGoal} onClose={() => setShowWeeklyBriefing(false)} todaySuggestion={suggestion} />}
+      {showWeeklyBriefing && creds && (
+        <WeeklyBriefingModal 
+          activities={activities || []} 
+          wellness={wellnessData} 
+          creds={creds} 
+          userGoal={userGoal} 
+          onClose={() => setShowWeeklyBriefing(false)} 
+          todaySuggestion={suggestion}
+          ftp={ftp || undefined}
+        />
+      )}
     </div>
   );
 };

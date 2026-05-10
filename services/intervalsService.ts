@@ -49,7 +49,7 @@ export const fetchAthleteId = async (apiKey: string): Promise<string> => {
   }
 };
 
-export const fetchActivities = async (creds: IntervalsCredentials): Promise<Activity[]> => {
+export const fetchActivities = async (creds: IntervalsCredentials, daysBack: number = 90): Promise<Activity[]> => {
   const { apiKey, athleteId } = creds;
   
   if (apiKey === 'demo') return getMockActivities();
@@ -68,7 +68,7 @@ export const fetchActivities = async (creds: IntervalsCredentials): Promise<Acti
   futureDate.setDate(now.getDate() + 2); 
   
   const pastDate = new Date(now);
-  pastDate.setDate(now.getDate() - 365); 
+  pastDate.setDate(now.getDate() - daysBack); 
   
   const oldest = toLocalDateString(pastDate);
   const newest = toLocalDateString(futureDate);
@@ -109,7 +109,7 @@ export const fetchActivities = async (creds: IntervalsCredentials): Promise<Acti
   }
 };
 
-export const fetchWellness = async (creds: IntervalsCredentials): Promise<Wellness[]> => {
+export const fetchWellness = async (creds: IntervalsCredentials, daysBack: number = 90): Promise<Wellness[]> => {
   const { apiKey, athleteId } = creds;
   if (apiKey === 'demo') return getMockWellness();
 
@@ -125,7 +125,7 @@ export const fetchWellness = async (creds: IntervalsCredentials): Promise<Wellne
   const newest = toLocalDateString(futureDate);
   
   const past = new Date(now);
-  past.setDate(now.getDate() - 365); 
+  past.setDate(now.getDate() - daysBack); 
   const oldest = toLocalDateString(past);
 
   const url = `https://intervals.icu/api/v1/athlete/${athleteId}/wellness?oldest=${oldest}&newest=${newest}`;
@@ -167,6 +167,66 @@ export const fetchPlannedWorkout = async (dateStr: string, creds: IntervalsCrede
     if (!Array.isArray(events)) return null;
     return events.find((e: any) => e.category === 'WORKOUT') || null;
   } catch (error) { return null; }
+};
+
+export interface AthleteProfile {
+  id: string;
+  icu_ftp?: number;
+}
+
+export const fetchAthleteProfile = async (creds: IntervalsCredentials): Promise<AthleteProfile> => {
+  const { apiKey, athleteId } = creds;
+  const auth = btoa(`API_KEY:${apiKey.trim()}`);
+  const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
+  const url = `https://intervals.icu/api/v1/athlete/${athleteId}`;
+  try {
+    const response = await fetch(url, { method: 'GET', headers });
+    if (!response.ok) throw new Error("Could not fetch athlete profile");
+    return await response.json();
+  } catch (error) {
+    throw error;
+  }
+};
+
+export const uploadWorkout = async (
+  creds: IntervalsCredentials, 
+  workout: { name: string; description: string; date: string; type?: string; moving_time?: number; icu_training_load?: number; workout_text?: string }
+): Promise<any> => {
+  if (creds.apiKey === 'demo') return { success: true };
+  const { apiKey, athleteId } = creds;
+  const auth = btoa(`API_KEY:${apiKey.trim()}`);
+  const headers = { 
+    'Authorization': `Basic ${auth}`, 
+    'Content-Type': 'application/json',
+    'Accept': 'application/json' 
+  };
+  
+  const body = {
+    category: 'WORKOUT',
+    start_date_local: `${workout.date}T09:00:00`,
+    name: workout.name,
+    description: workout.description,
+    type: workout.type || 'Ride',
+    moving_time: workout.moving_time || 3600,
+    icu_training_load: workout.icu_training_load || 50,
+    workout: workout.workout_text
+  };
+
+  const url = `https://intervals.icu/api/v1/athlete/${athleteId}/events`;
+  try {
+    const response = await fetch(url, { 
+      method: 'POST', 
+      headers,
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.message || "Failed to upload workout");
+    }
+    return await response.json();
+  } catch (error) {
+    throw error;
+  }
 };
 
 export const getMockActivities = (): Activity[] => {
