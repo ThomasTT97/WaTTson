@@ -425,7 +425,7 @@ const App: React.FC = () => {
           <input 
             type="password" 
             placeholder="Intervals.icu API Key" 
-            className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-emerald-500/50 transition-colors" 
+            className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-base outline-none focus:border-emerald-500/50 transition-colors" 
             value={formKey}
             onChange={(e) => {
               setFormKey(e.target.value);
@@ -435,7 +435,7 @@ const App: React.FC = () => {
           <input 
             type="text" 
             placeholder="Athlete ID (e.g. i12345)" 
-            className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-emerald-500/50 transition-colors" 
+            className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-base outline-none focus:border-emerald-500/50 transition-colors" 
             value={formId}
             onChange={(e) => {
               setFormId(e.target.value);
@@ -771,7 +771,7 @@ const App: React.FC = () => {
                    }}
                    placeholder="Message waTTson..."
                    rows={1}
-                   className="w-full bg-slate-900/60 backdrop-blur-md border border-white/10 rounded-[1.5rem] pl-5 pr-12 py-3.5 text-sm text-white focus:outline-none focus:border-emerald-500/40 shadow-xl resize-none custom-scrollbar min-h-[48px] transition-colors"
+                   className="w-full bg-slate-900/60 backdrop-blur-md border border-white/10 rounded-[1.5rem] pl-5 pr-12 py-3.5 text-base text-white focus:outline-none focus:border-emerald-500/40 shadow-xl resize-none custom-scrollbar min-h-[48px] transition-colors"
                    style={{ height: 'auto' }}
                  />
                  <button 
@@ -787,8 +787,8 @@ const App: React.FC = () => {
         )}
 
         {activeTab === 'settings' && (
-          <div className="flex flex-col space-y-5 animate-in slide-in-from-right-2 duration-400">
-             <div className="flex justify-between items-center pt-2 px-1">
+          <div className="flex flex-col space-y-3 animate-in slide-in-from-right-2 duration-400">
+             <div className="flex justify-between items-center pt-1 px-1">
                <h2 className="text-xl text-header italic uppercase tracking-tight">
                  {settingsView === 'main' ? 'Pro DNA' : 
                   settingsView === 'goal' ? 'Set Ambition' :
@@ -804,10 +804,10 @@ const App: React.FC = () => {
                )}
              </div>
 
-             <div className="flex flex-col space-y-5 pb-4 px-1">
+             <div className="flex flex-col space-y-3 pb-2 px-1">
                {settingsView === 'main' && (
                  <>
-                   <div className="glass-card p-6 rounded-[2rem] space-y-6">
+                   <div className="glass-card p-4 rounded-[1.5rem] space-y-4">
                       <div className="flex items-center gap-4">
                         <div className="w-12 h-12 rounded-2xl bg-slate-900 flex items-center justify-center text-slate-500 border border-white/5 shadow-inner"><User size={24} /></div>
                         <div>
@@ -817,10 +817,10 @@ const App: React.FC = () => {
                       </div>
                    </div>
 
-                   <div className="grid grid-cols-1 gap-3">
+                   <div className="grid grid-cols-1 gap-2">
                      <button 
                        onClick={() => setSettingsView('goal')}
-                       className="glass-card p-5 rounded-[1.8rem] flex items-center justify-between group active:scale-[0.98] transition-all"
+                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all"
                      >
                        <div className="flex items-center gap-4">
                          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400"><Target size={20} /></div>
@@ -834,7 +834,7 @@ const App: React.FC = () => {
 
                      <button 
                        onClick={() => setSettingsView('data')}
-                       className="glass-card p-5 rounded-[1.8rem] flex items-center justify-between group active:scale-[0.98] transition-all"
+                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all"
                      >
                        <div className="flex items-center gap-4">
                          <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400"><Database size={20} /></div>
@@ -848,7 +848,7 @@ const App: React.FC = () => {
 
                      <button 
                        onClick={() => setSettingsView('methodology')}
-                       className="glass-card p-5 rounded-[1.8rem] flex items-center justify-between group active:scale-[0.98] transition-all"
+                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all"
                      >
                        <div className="flex items-center gap-4">
                          <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400"><User size={20} /></div>
@@ -861,19 +861,19 @@ const App: React.FC = () => {
                      </button>
                    </div>
                    
-                   <div className="grid grid-cols-2 gap-3">
-                     <button onClick={() => { setSuggestion(null); loadData(creds!); }} className="p-5 bg-white/5 rounded-[1.8rem] border border-white/5 text-[9px] font-black uppercase tracking-widest text-slate-500 flex flex-col items-center gap-3 active:scale-95 transition-all">
-                        <RotateCcw size={18} /> Sync Engine
+                   <div className="grid grid-cols-2 gap-2">
+                     <button onClick={() => { setSuggestion(null); loadData(creds!); }} className="p-4 bg-white/5 rounded-[1.3rem] border border-white/5 text-[9px] font-black uppercase tracking-widest text-slate-500 flex flex-col items-center gap-2 active:scale-95 transition-all">
+                        <RotateCcw size={16} /> Sync Engine
                      </button>
-                     <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="p-5 bg-rose-500/5 rounded-[1.8rem] border border-rose-500/10 text-[9px] font-black uppercase tracking-widest text-rose-500 flex flex-col items-center gap-3 active:scale-95 transition-all">
-                        <LogOut size={18} /> Logout
+                     <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="p-4 bg-rose-500/5 rounded-[1.3rem] border border-rose-500/10 text-[9px] font-black uppercase tracking-widest text-rose-500 flex flex-col items-center gap-2 active:scale-95 transition-all">
+                        <LogOut size={16} /> Logout
                      </button>
                    </div>
                  </>
                )}
 
                {settingsView === 'goal' && (
-                 <div className="glass-card p-6 rounded-[2rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                 <div className="glass-card p-4 rounded-[1.5rem] space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="space-y-4">
                       <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
                         waTTson adapts his coaching intensity, interval style, and recovery focus based on your current ambition.
@@ -890,7 +890,7 @@ const App: React.FC = () => {
                )}
 
                {settingsView === 'data' && (
-                 <div className="glass-card p-6 rounded-[2rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                 <div className="glass-card p-4 rounded-[1.5rem] space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="space-y-4">
                       <div className="flex items-start gap-4 p-4 bg-slate-950/40 rounded-2xl border border-white/5">
                         <div className="w-8 h-8 mt-1 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 shrink-0"><ActivityIcon size={16} /></div>
@@ -941,15 +941,15 @@ const App: React.FC = () => {
                )}
 
                {settingsView === 'methodology' && (
-                 <div className="glass-card p-6 rounded-[2rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                 <div className="glass-card p-4 rounded-[1.5rem] space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     {isLoadingProfile ? (
                       <div className="flex flex-col items-center justify-center py-6 text-center">
                         <div className="w-8 h-8 rounded-full border-t-2 border-emerald-500 animate-spin mb-4" />
                         <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Analyzing Data...</p>
                       </div>
                     ) : userProfile ? (
-                      <div className="space-y-6">
-                        <div className="text-center mb-6">
+                      <div className="space-y-4">
+                        <div className="text-center mb-4">
                           <h3 className="text-xl font-black text-emerald-400 italic uppercase tracking-tight">{userProfile.athlete_type}</h3>
                           <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Based on recent 30-day performance trends</p>
                         </div>
