@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<title>waTTson app icon - deep section wheels no overlap</title>
+
+<!-- iOS squircle background -->
+<rect x="0" y="0" width="1024" height="1024" rx="230" fill="#0a0a0a"/>
+
+<!-- REAR WHEEL — left -->
+<!-- outer white ring -->
+<circle cx="340" cy="450" r="218" fill="none" stroke="#ffffff" stroke-width="9"/>
+<!-- green deep section rim -->
+<circle cx="340" cy="450" r="198" fill="none" stroke="#00e676" stroke-width="34"/>
+<!-- inner black fill to mask spokes area only inside this wheel -->
+<circle cx="340" cy="450" r="140" fill="#0f0f0f"/>
+<!-- spokes rear -->
+<line x1="340" y1="310" x2="340" y2="590" stroke="#2a2a2a" stroke-width="3.5"/>
+<line x1="200" y1="450" x2="480" y2="450" stroke="#2a2a2a" stroke-width="3.5"/>
+<line x1="241" y1="351" x2="439" y2="549" stroke="#2a2a2a" stroke-width="3.5"/>
+<line x1="439" y1="351" x2="241" y2="549" stroke="#2a2a2a" stroke-width="3.5"/>
+<line x1="207" y1="390" x2="473" y2="510" stroke="#2a2a2a" stroke-width="3.5"/>
+<line x1="207" y1="510" x2="473" y2="390" stroke="#2a2a2a" stroke-width="3.5"/>
+<!-- rear hub -->
+<circle cx="340" cy="450" r="22" fill="#00e676"/>
+<circle cx="340" cy="450" r="10" fill="#0a0a0a"/>
+
+<!-- FRONT WHEEL — right, positioned so its inner black circle does not reach the left wheel's green rim -->
+<!-- The two wheels touch at x=340+218=558 on the right edge of rear, front wheel left edge at 684-218=466 -->
+<!-- Gap between: we place front wheel at cx=700 so leftmost point is 700-218=482, well clear of rear green at 340+198-17=521 -->
+<!-- outer white ring -->
+<circle cx="694" cy="450" r="218" fill="none" stroke="#ffffff" stroke-width="9"/>
+<!-- green deep section rim -->
+<circle cx="694" cy="450" r="198" fill="none" stroke="#00e676" stroke-width="34"/>
+<!-- inner black — leftmost point is 694-140=554, rear wheel green outer edge is 340+181=521, no overlap -->
+<circle cx="694" cy="450" r="140" fill="#0f0f0f"/>
+<!-- spokes front -->
+<line x1="694" y1="310" x2="694" y2="590" stroke="#2a2a2a" stroke-width="3.5"/>
+<line x1="554" y1="450" x2="834" y2="450" stroke="#2a2a2a" stroke-width="3.5"/>
+<line x1="595" y1="351" x2="793" y2="549" stroke="#2a2a2a" stroke-width="3.5"/>
+<line x1="793" y1="351" x2="595" y2="549" stroke="#2a2a2a" stroke-width="3.5"/>
+<line x1="561" y1="390" x2="827" y2="510" stroke="#2a2a2a" stroke-width="3.5"/>
+<line x1="561" y1="510" x2="827" y2="390" stroke="#2a2a2a" stroke-width="3.5"/>
+<!-- front hub -->
+<circle cx="694" cy="450" r="22" fill="#00e676"/>
+<circle cx="694" cy="450" r="10" fill="#0a0a0a"/>
+
+<!-- WORDMARK -->
+<text x="512" y="890" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-size="110" font-weight="900">
+  <tspan fill="#ffffff">wa</tspan><tspan fill="#00e676">TT</tspan><tspan fill="#ffffff">son</tspan>
+</text>
+
+</svg>

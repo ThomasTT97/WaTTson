@@ -61,7 +61,7 @@ export const getRideFeedback = async (
   if (cached) return cached;
 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const prompt = `You are WaTTson, an elite cycling coach. 
+  const prompt = `You are waTTson, an elite cycling coach. 
     Analyze this ride: "${activity.name}". 
     TSS: ${activity.icu_training_load || activity.icu_tss || activity.training_load || 0}. 
     Intensity: ${activity.icu_intensity || 0}.
@@ -183,6 +183,7 @@ export const getWeeklyBriefing = async (
   const stats = `CTL: ${latestWellness?.ctl || 0}, TSB: ${latestWellness?.tsb || 0}, ATL: ${latestWellness?.atl || 0}`;
 
   const prompt = `Plan 7-day outlook. Goal: ${userGoal}. Stats: ${stats}. ${startContext || ''}. 
+    Use actual day names (e.g., Monday, Tuesday...) for the "day" field in the response, starting from the first day of the plan.
     For each non-Rest day, suggest structural steps in "workout_steps".
     Steps should include duration (mins), target_watts (W), and label.
     Use ${ftp ? `athlete FTP: ${ftp}W` : 'sensible intensity levels'} for watts.
@@ -241,12 +242,38 @@ export const getWeeklyBriefing = async (
 export const sendChatMessage = async (
   history: ChatMessage[],
   message: string,
-  context: { goal: string; recentLoad: number; readiness: number }
+  context: { 
+    goal: string; 
+    recentLoad: number; 
+    readiness: number;
+    activities: Activity[];
+    wellness: Wellness[];
+  }
 ): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const systemInstruction = `You are WaTTson, a direct cycling coach. 
-    Concise text-style replies (1-2 sentences). 
-    Goal: ${context.goal}. Load: ${context.recentLoad}, Readiness: ${context.readiness}.`;
+  
+  // Format a data summary for the AI
+  const sortedActivities = [...context.activities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local));
+  const recentActivities = sortedActivities.slice(0, 5);
+  const oldestActivities = sortedActivities.length > 5 ? sortedActivities.slice(-3) : [];
+  
+  const historySummary = recentActivities.map(a => 
+    `${a.start_date_local.split('T')[0]}: ${a.name}, ${Math.round((a.distance || 0)/1000)}km, TSS ${a.icu_training_load || a.icu_tss || 0}`
+  ).join('\n');
+
+  const deepHistoryContext = oldestActivities.length > 0 
+    ? `\nYour historical data goes back to ${oldestActivities[0].start_date_local.split('T')[0]}. Oldest segments: ${oldestActivities.map(a => a.start_date_local.split('T')[0]).join(', ')}.`
+    : '';
+
+  const systemInstruction = `You are waTTson, a direct cycling coach. 
+    Concise text-style replies (1-3 sentences). 
+    User Goal: ${context.goal}. 
+    Current Load (7d): ${context.recentLoad}, Readiness: ${context.readiness}.
+    Recent History:
+    ${historySummary}
+    ${deepHistoryContext}
+    Total activities available: ${context.activities.length}.
+    Always answer accurately based on this data. If asked about the far past, you have access to ${context.activities.length} records.`;
 
   const contents = history.map(m => ({
     role: m.role,
@@ -267,4 +294,60 @@ export const sendChatMessage = async (
     }
   });
   return response.text || "Direct comms error.";
+};
+
+/**
+ * Generates an athlete profile analysis based on their history.
+ */
+export const analyzeUserProfile = async (
+  activities: Activity[],
+  userGoal: string
+): Promise<import('../types').UserProfileAnalysis> => {
+  const cacheKey = `wattson_user_profile_${userGoal}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  
+  const sortedActivities = [...activities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local));
+  const recentActivities = sortedActivities.slice(0, 30);
+  
+  const historySummary = recentActivities.map(a => 
+    `${a.start_date_local.split('T')[0]}: ${a.name}, Duration: ${Math.round((a.moving_time||0)/60)}m, TSS: ${a.icu_training_load || a.icu_tss || 0}, IF: ${a.icu_intensity||0}, Avg Power: ${a.average_watts}W`
+  ).join('\n');
+
+  const prompt = `You are waTTson, an elite cycling coach. Analyze this athlete's data and create a profile.
+    Goal: ${userGoal}
+    Recent 30 Rides:
+    ${historySummary}
+    
+    Return JSON with:
+    athlete_type: e.g. "Sprint Specialist", "Endurance Diesel", etc.
+    strengths: array of 2-3 strings describing what they are good at.
+    areas_for_improvement: array of 2-3 strings.
+    training_response: String explaining how this user reacts to past training methods (e.g. "You adapt well to high volume but struggle with back-to-back VO2max sessions").
+    recommended_focus: 1-sentence recommendation going forward.`;
+
+  const response: GenerateContentResponse = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: prompt,
+    config: { 
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          athlete_type: { type: Type.STRING },
+          strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
+          areas_for_improvement: { type: Type.ARRAY, items: { type: Type.STRING } },
+          training_response: { type: Type.STRING },
+          recommended_focus: { type: Type.STRING }
+        },
+        required: ['athlete_type', 'strengths', 'areas_for_improvement', 'training_response', 'recommended_focus']
+      }
+    }
+  });
+  
+  const result = safeParseJSON(response.text);
+  setCache(cacheKey, result);
+  return result;
 };

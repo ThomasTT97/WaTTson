@@ -4,10 +4,11 @@ import {
   IntervalsCredentials, 
   DailySuggestion,
   ChatMessage,
-  Wellness
+  Wellness,
+  UserProfileAnalysis
 } from './types';
 import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile } from './services/intervalsService';
-import { getDailySuggestion, sendChatMessage, getWeeklyBriefing } from './services/geminiService';
+import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile } from './services/geminiService';
 import { ActivityCard } from './components/ActivityCard';
 import { CoachingModal } from './components/CoachingModal';
 import { WeeklyBriefingModal } from './components/WeeklyBriefingModal';
@@ -127,7 +128,22 @@ const App: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'rides' | 'chat' | 'settings'>('dashboard');
   const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'methodology'>('main');
+  const [userProfile, setUserProfile] = useState<UserProfileAnalysis | null>(null);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [isWorkoutExpanded, setIsWorkoutExpanded] = useState(false);
+  const [reasoningPopup, setReasoningPopup] = useState<{title: string, content: string} | null>(null);
+  const [showReleaseNotes, setShowReleaseNotes] = useState(false);
+
+  const APP_VERSION = "1.1.0";
+
+  useEffect(() => {
+    const seenVersion = localStorage.getItem('wattson_seen_version');
+    if (seenVersion !== APP_VERSION) {
+      setShowReleaseNotes(true);
+      localStorage.setItem('wattson_seen_version', APP_VERSION);
+    }
+  }, []);
+
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     try {
       const saved = localStorage.getItem('wattson_chat_history');
@@ -272,6 +288,24 @@ const App: React.FC = () => {
     }
   }, [activities, userGoal, hasRideToday]);
 
+  useEffect(() => {
+    if (settingsView === 'methodology' && activities && activities.length > 0 && !userProfile && !isLoadingProfile) {
+      const fetchProfile = async () => {
+        setIsLoadingProfile(true);
+        try {
+          const profile = await analyzeUserProfile(activities, userGoal);
+          setUserProfile(profile);
+        } catch (err) {
+          console.error("Failed to fetch user profile", err);
+        } finally {
+          setIsLoadingProfile(false);
+        }
+      };
+      
+      fetchProfile();
+    }
+  }, [settingsView, activities, userGoal, userProfile, isLoadingProfile]);
+
   const stats = useMemo(() => {
     const loadByDate = new Map<string, number>();
     const last7Days: { day: string; load: number }[] = [];
@@ -310,7 +344,7 @@ const App: React.FC = () => {
     const form = ctl - atl;
     const readiness = Math.min(10, Math.max(1, Math.round(5 + (form / 10) + (ctl / 50))));
     
-    let statusLabel = 'Optimal', statusColor = 'text-cyan-400', statusBg = 'bg-cyan-500/10';
+    let statusLabel = 'Optimal', statusColor = 'text-emerald-400', statusBg = 'bg-emerald-500/10';
     if (form > 5) { statusLabel = 'Fresh'; statusColor = 'text-emerald-400'; statusBg = 'bg-emerald-500/10'; }
     else if (form < -25) { statusLabel = 'Fatigued'; statusColor = 'text-rose-400'; statusBg = 'bg-rose-500/10'; }
     else if (form < -10) { statusLabel = 'Productive'; statusColor = 'text-amber-400'; statusBg = 'bg-amber-500/10'; }
@@ -321,13 +355,24 @@ const App: React.FC = () => {
     return { last7Days, total7DayLoad, statusLabel, statusColor, statusBg, readiness, recoveryProgress, recoveryLabel, form };
   }, [activities]);
 
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
+
   const handleSendMessage = async (text: string) => {
     if (!text.trim() || isChatLoading) return;
     setMessages(prev => [...prev, { role: 'user', text }]);
     setChatInput('');
+    if (chatInputRef.current) {
+      chatInputRef.current.style.height = 'auto';
+    }
     setIsChatLoading(true);
     try {
-      const response = await sendChatMessage(messages, text, { goal: userGoal, recentLoad: stats.total7DayLoad, readiness: stats.readiness });
+      const response = await sendChatMessage(messages, text, { 
+        goal: userGoal, 
+        recentLoad: stats.total7DayLoad, 
+        readiness: stats.readiness,
+        activities: activities || [],
+        wellness: wellnessData || []
+      });
       setMessages(prev => [...prev, { role: 'model', text: response }]);
     } catch {
       setMessages(prev => [...prev, { role: 'model', text: "Engine response error." }]);
@@ -356,9 +401,9 @@ const App: React.FC = () => {
   const currentWorkout = suggestion ? (showAlternative ? suggestion.alternative : suggestion.primary) : null;
 
   if (loading && (!activities || activities.length === 0)) return (
-    <div className="phone-container flex flex-col items-center justify-center p-8 bg-[#0a0e17]">
+    <div className="phone-container flex flex-col items-center justify-center p-8 bg-transparent">
       <div className="premium-bg"></div>
-      <div className="w-8 h-8 border-2 border-cyan-500/10 border-t-cyan-500 rounded-full animate-spin mb-4"></div>
+      <div className="w-8 h-8 border-2 border-emerald-500/10 border-t-emerald-500 rounded-full animate-spin mb-4"></div>
       <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Syncing Engine...</p>
     </div>
   );
@@ -367,11 +412,10 @@ const App: React.FC = () => {
     <div className="phone-container p-8 justify-center">
       <div className="premium-bg"></div>
       <div className="glass-card p-8 rounded-[2rem] text-center">
-        <div className="w-12 h-12 bg-cyan-500/5 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/5 shadow-inner">
-          <CyclistIcon size={24} className="text-cyan-400" />
+        <div className="w-12 h-12 bg-emerald-500/5 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/5 shadow-inner">
+          <CyclistIcon size={24} className="text-emerald-400" />
         </div>
-        <h1 className="text-xl text-header italic mb-1">WaTTson</h1>
-        <p className="text-slate-500 text-[9px] font-bold uppercase tracking-widest mb-8">Performance Engine</p>
+        <h1 className="text-3xl font-black text-white italic mb-8 tracking-tight">wa<span className="text-emerald-400">TT</span>son</h1>
         <div className="space-y-3">
           {syncError && (
             <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[10px] text-rose-400 font-bold leading-tight">
@@ -381,7 +425,7 @@ const App: React.FC = () => {
           <input 
             type="password" 
             placeholder="Intervals.icu API Key" 
-            className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-cyan-500/50 transition-colors" 
+            className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-emerald-500/50 transition-colors" 
             value={formKey}
             onChange={(e) => {
               setFormKey(e.target.value);
@@ -391,7 +435,7 @@ const App: React.FC = () => {
           <input 
             type="text" 
             placeholder="Athlete ID (e.g. i12345)" 
-            className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-cyan-500/50 transition-colors" 
+            className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:border-emerald-500/50 transition-colors" 
             value={formId}
             onChange={(e) => {
               setFormId(e.target.value);
@@ -406,7 +450,7 @@ const App: React.FC = () => {
               }
               loadData({ apiKey: formKey, athleteId: formId || '0' }, true);
             }}
-            className="w-full bg-cyan-500 text-slate-950 font-bold py-3.5 rounded-xl text-xs uppercase tracking-widest active:scale-95 transition-all shadow-xl"
+            className="w-full bg-emerald-500 text-slate-950 font-bold py-3.5 rounded-xl text-xs uppercase tracking-widest active:scale-95 transition-all shadow-xl"
           >
             Authenticate
           </button>
@@ -422,39 +466,107 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="phone-container overflow-hidden bg-[#0a0e17]">
+    <div className="phone-container overflow-hidden bg-transparent flex flex-col">
       <div className="premium-bg"></div>
       
-      {/* Scrollable View Area */}
-      <div className={`flex-1 flex flex-col ${activeTab === 'chat' ? 'p-0' : 'pt-[env(safe-area-inset-top)] pb-20 px-4'}`}>
-        
-        {/* Compact Header */}
-        {activeTab !== 'chat' && (
-          <header className="flex items-center justify-between py-3 shrink-0">
+      {/* Global Top Bar */}
+      <header className="flex-none flex items-center justify-between py-4 px-4 bg-[#05070a] border-b border-white/5 z-30" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 1rem)' }}>
+        <div className="flex items-center gap-4">
+          <div className="w-9 h-9 rounded-xl glass-card flex flex-shrink-0 items-center justify-center shadow-inner relative overflow-hidden">
+             {activeTab === 'chat' && isDeepSyncing && <div className="absolute inset-0 bg-emerald-500/20 animate-pulse" />}
+             {activeTab === 'chat' ? <Bot size={18} className="text-emerald-400" /> : <CyclistIcon size={20} className="text-emerald-400" />}
+          </div>
+          <div className="flex flex-col justify-center">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl glass-card flex items-center justify-center shadow-inner">
-                <CyclistIcon size={18} className="text-cyan-400" />
-              </div>
-              <div>
-                <h2 className="text-base text-header italic leading-none">WaTTson</h2>
-                <button onClick={() => setShowGoalEditor(true)} className="flex items-center gap-1 opacity-60 hover:opacity-100 transition-opacity">
-                  <Target size={9} className="text-cyan-400" />
-                  <span className="text-[8px] font-bold uppercase tracking-tight truncate max-w-[120px]">{userGoal}</span>
-                </button>
-              </div>
+              <h2 className="text-2xl font-black text-white italic tracking-tight leading-none">wa<span className="text-emerald-400">TT</span>son</h2>
+              {activeTab === 'chat' && isDeepSyncing && <RotateCcw size={12} className="animate-spin text-emerald-400" />}
             </div>
+          </div>
+        </div>
+        
+        <div className="flex justify-end gap-2">
+          {activeTab === 'chat' ? (
+            <div className="relative">
+              <button 
+                onClick={() => setIsChatMenuOpen(!isChatMenuOpen)}
+                className="w-9 h-9 rounded-full glass-card flex items-center justify-center text-slate-400 hover:text-emerald-400 transition-colors"
+                title="Historical Sync Options"
+              >
+                <MoreVertical size={18} />
+              </button>
+              
+              {isChatMenuOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-slate-900 rounded-[1.2rem] border border-white/20 shadow-2xl z-[100] animate-in fade-in slide-in-from-top-2 duration-200 p-1.5 text-left">
+                  <button 
+                    onClick={() => { setSuggestion(null); loadData(creds!); setIsChatMenuOpen(false); }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left"
+                  >
+                    <RefreshCw size={14} className={isSyncing ? 'animate-spin text-emerald-400' : 'text-slate-400'} />
+                    <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Sync Recent</span>
+                  </button>
+                  
+                  <div className="h-px bg-white/5 my-1 mx-2" />
+                  <p className="px-3 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-widest">Historical Memory</p>
+                  
+                  <button 
+                    onClick={() => handleDeepSync(365)}
+                    className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-emerald-500/10 rounded-xl transition-colors text-left group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <History size={14} className="text-slate-400 group-hover:text-emerald-400" />
+                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">1 Year</span>
+                    </div>
+                    {isDeepSyncing && <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />}
+                  </button>
+                  
+                  <button 
+                    onClick={() => handleDeepSync(365 * 2)}
+                    className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-emerald-500/10 rounded-xl transition-colors text-left group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <History size={14} className="text-slate-400 group-hover:text-emerald-400" />
+                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">2 Years</span>
+                    </div>
+                  </button>
+
+                  <button 
+                    onClick={() => handleDeepSync(365 * 5)}
+                    className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-emerald-500/10 rounded-xl transition-colors text-left group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <History size={14} className="text-slate-400 group-hover:text-emerald-400" />
+                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">5 Years</span>
+                    </div>
+                  </button>
+                  
+                  <div className="h-px bg-white/5 my-1 mx-2" />
+                  <button 
+                    onClick={() => { setMessages([]); setIsChatMenuOpen(false); }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-rose-500/10 rounded-xl transition-colors text-left group"
+                  >
+                    <RotateCcw size={14} className="text-slate-400 group-hover:text-rose-400" />
+                    <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest group-hover:text-rose-400">Reset Chat</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
             <button 
               onClick={() => { setSuggestion(null); loadData(creds!); }}
               disabled={isSyncing}
-              className="w-8 h-8 rounded-full glass-card flex items-center justify-center text-slate-400 hover:text-cyan-400 active:rotate-180 transition-all duration-700"
+              className="w-9 h-9 rounded-full glass-card flex items-center justify-center text-slate-400 hover:text-emerald-400 active:rotate-180 transition-all duration-700"
             >
-              <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+              <RefreshCw size={16} className={isSyncing ? 'animate-spin text-emerald-400' : ''} />
             </button>
-          </header>
-        )}
+          )}
+        </div>
+      </header>
+
+      {/* Scrollable View Area */}
+      <div className={`flex-1 hide-scrollbar scroll-smooth flex flex-col relative ${activeTab === 'chat' ? 'p-0 overflow-hidden' : 'px-4 pb-6 pt-4 overflow-y-auto'}`}>
 
         {activeTab === 'dashboard' && (
-          <div className="flex-1 flex flex-col space-y-3 animate-in fade-in duration-500 pb-4 overflow-hidden">
+          <div className="flex flex-col space-y-3 animate-in fade-in duration-500 pb-2">
             {/* Performance Status - Simplified 1-Screen Card - MOVED TO TOP */}
             <div className="glass-card p-4 rounded-[1.8rem] flex flex-col flex-shrink-0">
               <div className="flex justify-between items-center mb-3">
@@ -464,7 +576,7 @@ const App: React.FC = () => {
                 </div>
                 <button 
                   onClick={() => setShowWeeklyBriefing(true)} 
-                  className="text-[10px] font-black text-slate-950 uppercase tracking-[0.14em] flex items-center gap-2 bg-cyan-400 px-4 py-2 rounded-full hover:bg-cyan-300 hover:shadow-[0_0_15px_rgba(34,211,238,0.3)] active:scale-95 transition-all"
+                  className="text-[10px] font-black text-slate-950 uppercase tracking-[0.14em] flex items-center gap-2 bg-emerald-400 px-4 py-2 rounded-full hover:bg-emerald-300 hover:shadow-[0_0_15px_rgba(34,211,238,0.3)] active:scale-95 transition-all"
                 >
                    Weekly Plan <Calendar size={12} strokeWidth={2.5} />
                 </button>
@@ -476,22 +588,25 @@ const App: React.FC = () => {
                   <span className={stats.form < 0 ? 'text-amber-500' : 'text-emerald-500'}>{stats.recoveryLabel}</span>
                 </div>
                 <div className="w-full h-1 bg-slate-900 rounded-full overflow-hidden">
-                  <div className={`h-full transition-all duration-1000 ${stats.form < 0 ? 'bg-amber-500' : 'bg-cyan-500'}`} style={{ width: `${stats.recoveryProgress}%` }} />
+                  <div className={`h-full transition-all duration-1000 ${stats.form < 0 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${stats.recoveryProgress}%` }} />
                 </div>
               </div>
             </div>
 
             {/* suggestion card - Optimized for 1-screen fit */}
-            <div className="glass-card rounded-[1.8rem] p-4 flex flex-col relative overflow-hidden flex-shrink-0">
+            <div 
+              onClick={() => suggestion && setReasoningPopup({ title: 'Coaching Rationale', content: suggestion.reasoning })} 
+              className="glass-card rounded-[1.8rem] p-4 flex flex-col relative overflow-hidden flex-shrink-0 cursor-pointer active:scale-[0.98] transition-transform"
+            >
               <div className="flex items-center justify-between mb-2.5 relative z-10">
-                <div className="flex items-center gap-1.5 px-3 py-1 bg-cyan-500/10 rounded-full border border-cyan-500/20 shadow-[0_0_10px_rgba(34,211,238,0.1)]">
-                  <Sparkles size={10} className="text-cyan-400" />
+                <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 rounded-full border border-emerald-500/20 shadow-[0_0_10px_rgba(34,211,238,0.1)]">
+                  <Sparkles size={10} className="text-emerald-400" />
                   <span className="text-[9px] font-black text-white uppercase tracking-[0.15em]">
                     {hasRideToday ? "TARGET: TOMORROW" : "TARGET: TODAY"}
                   </span>
                 </div>
                 {suggestion && (
-                  <button onClick={() => setShowAlternative(!showAlternative)} className="w-7 h-7 flex items-center justify-center rounded-full bg-white/5 border border-white/5 text-slate-400 hover:text-white transition-colors">
+                  <button onClick={(e) => { e.stopPropagation(); setShowAlternative(!showAlternative); }} className="w-7 h-7 flex items-center justify-center rounded-full bg-white/5 border border-white/5 text-slate-400 hover:text-white transition-colors">
                     <RotateCcw size={11} />
                   </button>
                 )}
@@ -499,14 +614,11 @@ const App: React.FC = () => {
 
               {loadingSuggestion ? (
                 <div className="flex flex-col items-center justify-center py-6 opacity-40">
-                  <div className="w-5 h-5 border border-cyan-500/10 border-t-cyan-500 rounded-full animate-spin"></div>
+                  <div className="w-5 h-5 border border-emerald-500/10 border-t-emerald-500 rounded-full animate-spin"></div>
                 </div>
               ) : currentWorkout ? (
                 <div className="flex flex-col relative z-10">
-                  <h3 className="text-xl text-header italic mb-1 leading-tight tracking-tight">{currentWorkout.title}</h3>
-                  <p className="text-slate-400 text-[11px] leading-snug mb-3">
-                    {currentWorkout.description}
-                  </p>
+                  <h3 className="text-xl text-header italic mb-3 leading-tight tracking-tight">{currentWorkout.title}</h3>
 
                   <div className="flex items-center justify-between">
                     <div className="flex gap-1.5">
@@ -517,14 +629,16 @@ const App: React.FC = () => {
                         <Zap size={12} fill="currentColor" /> {currentWorkout.intensity}
                       </div>
                     </div>
-                    <button onClick={() => setIsWorkoutExpanded(!isWorkoutExpanded)} className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-slate-500">
+                    <button onClick={(e) => { e.stopPropagation(); setIsWorkoutExpanded(!isWorkoutExpanded); }} className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-slate-500">
                       <ChevronDown size={16} className={`transition-transform duration-300 ${isWorkoutExpanded ? 'rotate-180' : ''}`} />
                     </button>
                   </div>
 
-                  {isWorkoutExpanded && suggestion && (
-                    <div className="mt-3 p-3 bg-slate-950/40 rounded-2xl border border-white/5 animate-in slide-in-from-bottom-2">
-                      <p className="text-[10px] text-slate-300 italic leading-relaxed">"{suggestion.reasoning}"</p>
+                  {isWorkoutExpanded && (
+                    <div className="mt-4 space-y-3 animate-in slide-in-from-bottom-2">
+                      <p className="text-slate-400 text-[11px] leading-relaxed">
+                        {currentWorkout.description}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -533,7 +647,10 @@ const App: React.FC = () => {
 
             {/* Main Stats Hub - Re-shaped for 1 screen */}
             <div className="grid grid-cols-2 gap-3 flex-shrink-0">
-              <div className="glass-card p-4 rounded-[1.8rem] flex flex-col justify-between">
+              <div 
+                onClick={() => suggestion && setReasoningPopup({ title: 'Readiness Analysis', content: suggestion.readiness_analysis })}
+                className="glass-card p-4 rounded-[1.8rem] flex flex-col justify-between cursor-pointer active:scale-[0.98] transition-transform"
+              >
                 <div>
                   <h4 className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-1.5">Readiness</h4>
                   <div className="flex items-baseline gap-1">
@@ -541,12 +658,12 @@ const App: React.FC = () => {
                     <span className="text-[10px] font-bold text-slate-600">/ 10</span>
                   </div>
                 </div>
-                <div className="h-1 w-full bg-slate-900 rounded-full overflow-hidden mt-3">
-                  <div className="h-full bg-cyan-500" style={{ width: `${stats.readiness * 10}%` }} />
-                </div>
               </div>
               
-              <div className="glass-card p-4 rounded-[1.8rem] flex flex-col justify-between">
+              <div 
+                onClick={() => setReasoningPopup({ title: '7D Load', content: `Over the past week you've accumulated ${stats.total7DayLoad} total TSS. Steady volume is key to building base endurance, while carefully managing acute fatigue (ATL).` })}
+                className="glass-card p-4 rounded-[1.8rem] flex flex-col justify-between cursor-pointer active:scale-[0.98] transition-transform"
+              >
                 <div>
                   <h4 className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-1.5">7D Load</h4>
                   <div className="flex items-baseline gap-1">
@@ -554,18 +671,16 @@ const App: React.FC = () => {
                     <span className="text-[10px] font-bold text-slate-600 uppercase">TSS</span>
                   </div>
                 </div>
-                <div className="h-6 w-full flex items-end gap-1 mt-2">
-                  {(stats.last7Days as { day: string; load: number }[]).map((d, i) => (
-                    <div key={i} className="flex-1 bg-slate-800 rounded-sm" style={{ height: `${Math.max(15, (d.load / 150) * 100)}%` }} />
-                  ))}
-                </div>
               </div>
             </div>
 
             {/* Recent Progress Glimpse - Bottom strip */}
-            <div className="mt-auto glass-card py-3 px-5 rounded-full border-white/5 flex items-center justify-between flex-shrink-0">
+            <div 
+              onClick={() => setReasoningPopup({ title: 'Training Status', content: `waTTson determines your status using chronic training load (fitness) and acute training load (fatigue). Currently your form (TSB) is ${Math.round(stats.form)}, classifying you as ${stats.statusLabel}.` })}
+              className="mt-auto glass-card py-3 px-5 rounded-full border-white/5 flex items-center justify-between flex-shrink-0 cursor-pointer active:scale-[0.98] transition-transform"
+            >
                <div className="flex items-center gap-2">
-                 <TrendingUp size={14} className="text-cyan-400" />
+                 <TrendingUp size={14} className="text-emerald-400" />
                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Training Status</span>
                </div>
                <span className="text-[9px] font-bold text-white uppercase tracking-widest">{stats.statusLabel}</span>
@@ -574,11 +689,11 @@ const App: React.FC = () => {
         )}
 
         {activeTab === 'rides' && (
-          <div className="flex-1 space-y-4 animate-in slide-in-from-right-2 duration-400 pb-10 overflow-y-auto custom-scrollbar">
-             <div className="space-y-6 pt-2">
+          <div className="space-y-4 animate-in slide-in-from-right-2 duration-400 pb-2">
+             <div className="space-y-4 pt-1">
                {Object.entries(groupedActivities).map(([month, monthRides]) => (
-                 <div key={month} className="space-y-3">
-                   <div className="flex items-center gap-3 px-1">
+                 <div key={month} className="space-y-1.5">
+                   <div className="flex items-center gap-3 px-1 mb-1">
                      <span className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">{month}</span>
                      <div className="flex-1 h-px bg-white/5" />
                    </div>
@@ -590,89 +705,11 @@ const App: React.FC = () => {
         )}
 
         {activeTab === 'chat' && (
-          <div className="flex flex-col h-full bg-[#070b14] animate-in fade-in duration-500">
-             <div className="flex items-center gap-3 px-5 py-4 border-b border-white/5 bg-[#0a0e17]/80 backdrop-blur-xl shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}>
-               <div className="w-8 h-8 rounded-full bg-cyan-500/10 flex items-center justify-center text-cyan-400 border border-cyan-500/20">
-                 <Bot size={16} />
-               </div>
-               <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-bold text-white tracking-tight leading-none uppercase italic">Coach WaTTson</h2>
-                    {isDeepSyncing && <RotateCcw size={10} className="animate-spin text-cyan-400" />}
-                  </div>
-                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">
-                    {isDeepSyncing ? 'Accessing Historical Archive...' : 'Direct Line'}
-                  </span>
-               </div>
-               <div className="relative">
-                 <button 
-                   onClick={() => setIsChatMenuOpen(!isChatMenuOpen)}
-                   className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-slate-500 hover:text-white transition-colors border border-white/5"
-                 >
-                   <MoreVertical size={16} />
-                 </button>
-                 
-                 {isChatMenuOpen && (
-                   <div className="absolute right-0 mt-2 w-48 bg-slate-900 rounded-[1.2rem] border border-white/20 shadow-2xl z-[100] animate-in fade-in slide-in-from-top-2 duration-200 p-1.5">
-                     <button 
-                       onClick={() => { setSuggestion(null); loadData(creds!); setIsChatMenuOpen(false); }}
-                       className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left"
-                     >
-                       <RefreshCw size={14} className={isSyncing ? 'animate-spin text-cyan-400' : 'text-slate-400'} />
-                       <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Sync Recent</span>
-                     </button>
-                     
-                     <div className="h-px bg-white/5 my-1 mx-2" />
-                     <p className="px-3 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-widest">Historical Memory</p>
-                     
-                     <button 
-                       onClick={() => handleDeepSync(365)}
-                       className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-cyan-500/10 rounded-xl transition-colors text-left group"
-                     >
-                       <div className="flex items-center gap-3">
-                         <History size={14} className="text-slate-400 group-hover:text-cyan-400" />
-                         <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">1 Year</span>
-                       </div>
-                       {isDeepSyncing && <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" />}
-                     </button>
-                     
-                     <button 
-                       onClick={() => handleDeepSync(365 * 2)}
-                       className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-cyan-500/10 rounded-xl transition-colors text-left group"
-                     >
-                       <div className="flex items-center gap-3">
-                         <History size={14} className="text-slate-400 group-hover:text-cyan-400" />
-                         <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">2 Years</span>
-                       </div>
-                     </button>
-
-                     <button 
-                       onClick={() => handleDeepSync(365 * 5)}
-                       className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-cyan-500/10 rounded-xl transition-colors text-left group"
-                     >
-                       <div className="flex items-center gap-3">
-                         <History size={14} className="text-slate-400 group-hover:text-cyan-400" />
-                         <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">5 Years</span>
-                       </div>
-                     </button>
-                     
-                     <div className="h-px bg-white/5 my-1 mx-2" />
-                     <button 
-                       onClick={() => { if (confirm("Clear chat history?")) setMessages([]); setIsChatMenuOpen(false); }}
-                       className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-rose-500/10 rounded-xl transition-colors text-left group"
-                     >
-                       <RotateCcw size={14} className="text-slate-400 group-hover:text-rose-400" />
-                       <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest group-hover:text-rose-400">Reset Chat</span>
-                     </button>
-                   </div>
-                 )}
-               </div>
-             </div>
-             
-             <div className="flex-1 overflow-y-auto space-y-3 px-4 py-4 custom-scrollbar">
+          <div className="flex-1 flex flex-col min-h-0 bg-transparent animate-in fade-in duration-500 overflow-hidden relative">
+             <div className="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-4 custom-scrollbar">
                {messages.length === 0 ? (
                  <div className="h-full flex flex-col items-center justify-center text-center px-6 pb-12">
-                    <p className="text-[11px] text-slate-500 leading-relaxed mb-6 max-w-[220px]">Coach WaTTson is ready. Ask for training context or recent load analysis.</p>
+                    <p className="text-[11px] text-slate-500 leading-relaxed mb-6 max-w-[220px]">Coach wa<span className="text-emerald-400">TT</span>son is ready. Ask for training context or recent load analysis.</p>
                     <div className="flex flex-wrap gap-2 justify-center">
                        {(CHAT_SUGGESTIONS as string[]).map((suggestionText) => (
                          <button 
@@ -691,8 +728,8 @@ const App: React.FC = () => {
                     <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-1 duration-200`}>
                         <div className={`max-w-[85%] px-4 py-3 rounded-[1.4rem] text-[14px] leading-relaxed shadow-sm ${
                           msg.role === 'user' 
-                          ? 'bg-cyan-500 text-slate-950 font-bold rounded-tr-sm' 
-                          : 'bg-[#151c2c] text-slate-100 rounded-tl-sm border border-white/5'
+                          ? 'bg-emerald-500 text-slate-950 font-bold rounded-tr-sm' 
+                          : 'glass-card text-slate-100 rounded-tl-sm'
                         }`}>
                           {msg.text}
                         </div>
@@ -700,10 +737,10 @@ const App: React.FC = () => {
                   ))}
                   {isChatLoading && (
                     <div className="flex justify-start">
-                        <div className="bg-[#151c2c] px-4 py-3 rounded-[1.4rem] flex gap-1.5 items-center">
-                          <div className="w-1.5 h-1.5 bg-cyan-400/50 rounded-full animate-bounce"></div>
-                          <div className="w-1.5 h-1.5 bg-cyan-400/50 rounded-full animate-bounce [animation-delay:0.2s]"></div>
-                          <div className="w-1.5 h-1.5 bg-cyan-400/50 rounded-full animate-bounce [animation-delay:0.4s]"></div>
+                        <div className="glass-card px-4 py-3 rounded-[1.4rem] flex gap-1.5 items-center">
+                          <div className="w-1.5 h-1.5 bg-emerald-400/50 rounded-full animate-bounce"></div>
+                          <div className="w-1.5 h-1.5 bg-emerald-400/50 rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                          <div className="w-1.5 h-1.5 bg-emerald-400/50 rounded-full animate-bounce [animation-delay:0.4s]"></div>
                         </div>
                     </div>
                   )}
@@ -712,19 +749,35 @@ const App: React.FC = () => {
                )}
              </div>
 
-             {/* Fixed Input Area with safe bottom padding for Chat */}
-             <div className="px-4 pb-[110px] pt-3 bg-gradient-to-t from-[#0a0e17] to-transparent shrink-0">
-               <form onSubmit={(e) => { e.preventDefault(); handleSendMessage(chatInput); }} className="relative max-w-[400px] mx-auto">
-                 <input 
+             <div className="sticky bottom-0 shrink-0 px-4 pb-4 pt-3 bg-transparent backdrop-blur-2xl border-t border-white/5 z-20">
+               <form 
+                 onSubmit={(e) => { e.preventDefault(); handleSendMessage(chatInput); }} 
+                 className="relative max-w-[400px] mx-auto"
+               >
+                 <textarea 
+                   ref={chatInputRef}
                    value={chatInput}
-                   onChange={(e) => setChatInput(e.target.value)}
-                   placeholder="Message WaTTson..."
-                   className="w-full bg-[#151c2c] border border-white/10 rounded-full px-5 py-3.5 text-sm text-white focus:outline-none focus:border-cyan-500/20 shadow-xl"
+                   onChange={(e) => {
+                     setChatInput(e.target.value);
+                     // Auto-expand
+                     e.target.style.height = 'inherit';
+                     e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+                   }}
+                   onKeyDown={(e) => {
+                     if (e.key === 'Enter' && !e.shiftKey) {
+                       e.preventDefault();
+                       handleSendMessage(chatInput);
+                     }
+                   }}
+                   placeholder="Message waTTson..."
+                   rows={1}
+                   className="w-full bg-slate-900/60 backdrop-blur-md border border-white/10 rounded-[1.5rem] pl-5 pr-12 py-3.5 text-sm text-white focus:outline-none focus:border-emerald-500/40 shadow-xl resize-none custom-scrollbar min-h-[48px] transition-colors"
+                   style={{ height: 'auto' }}
                  />
                  <button 
                    type="submit" 
                    disabled={!chatInput.trim() || isChatLoading}
-                   className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 bg-cyan-500 rounded-full flex items-center justify-center text-slate-950 disabled:opacity-30 active:scale-90 transition-all"
+                   className="absolute right-2.5 bottom-2 w-9 h-9 bg-emerald-500 rounded-full flex items-center justify-center text-slate-950 disabled:opacity-30 active:scale-90 transition-all shadow-lg"
                  >
                    <Send size={16} />
                  </button>
@@ -734,12 +787,12 @@ const App: React.FC = () => {
         )}
 
         {activeTab === 'settings' && (
-          <div className="flex-1 flex flex-col space-y-5 animate-in slide-in-from-right-2 duration-400 pb-20 px-1 overflow-hidden">
-             <div className="flex justify-between items-center pt-2">
+          <div className="flex flex-col space-y-5 animate-in slide-in-from-right-2 duration-400">
+             <div className="flex justify-between items-center pt-2 px-1">
                <h2 className="text-xl text-header italic uppercase tracking-tight">
                  {settingsView === 'main' ? 'Pro DNA' : 
                   settingsView === 'goal' ? 'Set Ambition' :
-                  settingsView === 'data' ? 'Data Vault' : 'Theory'}
+                  settingsView === 'data' ? 'Data Vault' : 'Athlete Profile'}
                </h2>
                {settingsView !== 'main' && (
                  <button 
@@ -751,7 +804,7 @@ const App: React.FC = () => {
                )}
              </div>
 
-             <div className="flex-1 overflow-y-auto custom-scrollbar space-y-5 pb-4">
+             <div className="flex flex-col space-y-5 pb-4 px-1">
                {settingsView === 'main' && (
                  <>
                    <div className="glass-card p-6 rounded-[2rem] space-y-6">
@@ -770,13 +823,13 @@ const App: React.FC = () => {
                        className="glass-card p-5 rounded-[1.8rem] flex items-center justify-between group active:scale-[0.98] transition-all"
                      >
                        <div className="flex items-center gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center text-cyan-400"><Target size={20} /></div>
+                         <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400"><Target size={20} /></div>
                          <div className="text-left">
                            <p className="text-[11px] font-black text-white uppercase tracking-widest">Training Goal</p>
                            <p className="text-[10px] text-slate-500 font-bold italic truncate max-w-[180px]">"{userGoal}"</p>
                          </div>
                        </div>
-                       <ChevronRight size={16} className="text-slate-600 group-hover:text-cyan-400 transition-colors" />
+                       <ChevronRight size={16} className="text-slate-600 group-hover:text-emerald-400 transition-colors" />
                      </button>
 
                      <button 
@@ -798,10 +851,10 @@ const App: React.FC = () => {
                        className="glass-card p-5 rounded-[1.8rem] flex items-center justify-between group active:scale-[0.98] transition-all"
                      >
                        <div className="flex items-center gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400"><BookOpen size={20} /></div>
+                         <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400"><User size={20} /></div>
                          <div className="text-left">
-                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Training Methodology</p>
-                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">The WaTTson Logic</p>
+                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Athlete Profile</p>
+                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">AI Assessment</p>
                          </div>
                        </div>
                        <ChevronRight size={16} className="text-slate-600 group-hover:text-amber-400 transition-colors" />
@@ -823,12 +876,12 @@ const App: React.FC = () => {
                  <div className="glass-card p-6 rounded-[2rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="space-y-4">
                       <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
-                        WaTTson adapts his coaching intensity, interval style, and recovery focus based on your current ambition.
+                        waTTson adapts his coaching intensity, interval style, and recovery focus based on your current ambition.
                       </p>
                       <div className="space-y-2">
                         <label className="text-[9px] font-bold text-slate-600 uppercase tracking-[0.2em] ml-1">Current Ambition</label>
-                        <div onClick={() => { setShowGoalEditor(true); setSettingsView('main'); }} className="bg-slate-950/50 p-5 rounded-2xl border border-white/5 cursor-pointer hover:border-cyan-500/30 transition-all group">
-                          <p className="text-[13px] text-white italic group-hover:text-cyan-400 transition-colors">"{userGoal}"</p>
+                        <div onClick={() => { setShowGoalEditor(true); setSettingsView('main'); }} className="bg-slate-950/50 p-5 rounded-2xl border border-white/5 cursor-pointer hover:border-emerald-500/30 transition-all group">
+                          <p className="text-[13px] text-white italic group-hover:text-emerald-400 transition-colors">"{userGoal}"</p>
                           <p className="text-[8px] text-slate-600 uppercase tracking-widest mt-3 font-bold">Tap to edit</p>
                         </div>
                       </div>
@@ -839,61 +892,109 @@ const App: React.FC = () => {
                {settingsView === 'data' && (
                  <div className="glass-card p-6 rounded-[2rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="space-y-4">
-                      <div className="flex items-center gap-3 p-3 bg-slate-950/40 rounded-2xl border border-white/5">
-                        <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400"><ActivityIcon size={16} /></div>
+                      <div className="flex items-start gap-4 p-4 bg-slate-950/40 rounded-2xl border border-white/5">
+                        <div className="w-8 h-8 mt-1 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 shrink-0"><ActivityIcon size={16} /></div>
                         <div>
-                          <p className="text-[11px] font-bold text-white">Ride History</p>
-                          <p className="text-[9px] text-slate-500">Last 90 days of TSS & Intensity</p>
+                          <p className="text-[12px] font-bold text-white mb-1">Ride History</p>
+                          <p className="text-[10px] text-slate-400 mb-2">waTTson synchronizes your last 90 days of interval activity to understand your power curve and endurance.</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">TSS</span>
+                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Intensity Factor</span>
+                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Duration</span>
+                          </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3 p-3 bg-slate-950/40 rounded-2xl border border-white/5">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400"><Zap size={16} /></div>
+
+                      <div className="flex items-start gap-4 p-4 bg-slate-950/40 rounded-2xl border border-white/5">
+                        <div className="w-8 h-8 mt-1 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0"><Zap size={16} /></div>
                         <div>
-                          <p className="text-[11px] font-bold text-white">Athlete Metrics</p>
-                          <p className="text-[9px] text-slate-500">FTP, Weight, and Training Zones</p>
+                          <p className="text-[12px] font-bold text-white mb-1">Athlete Metrics</p>
+                          <p className="text-[10px] text-slate-400 mb-2">Constantly updating to ensure your targets are based on your most recent actual test data, not static values.</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">FTP</span>
+                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Weight</span>
+                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Zones</span>
+                          </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3 p-3 bg-slate-950/40 rounded-2xl border border-white/5">
-                        <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-400"><TrendingUp size={16} /></div>
+
+                      <div className="flex items-start gap-4 p-4 bg-slate-950/40 rounded-2xl border border-white/5">
+                        <div className="w-8 h-8 mt-1 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-400 shrink-0"><TrendingUp size={16} /></div>
                         <div>
-                          <p className="text-[11px] font-bold text-white">Wellness Data</p>
-                          <p className="text-[9px] text-slate-500">HRV, Resting HR, Sleep, and TSB</p>
+                          <p className="text-[12px] font-bold text-white mb-1">Wellness & Recovery</p>
+                          <p className="text-[10px] text-slate-400 mb-2">The preceding 28 days of biometric health stats tell the engine if it's safe to push you to the limit.</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">HRV</span>
+                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Sleep</span>
+                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Form (TSB)</span>
+                          </div>
                         </div>
                       </div>
-                      <p className="text-[10px] text-slate-500 leading-relaxed pt-2">
-                        All data is pulled in real-time from Intervals.icu via your API key. No biometric data is stored permanently on our servers.
-                      </p>
+
+                      <div className="pt-2 px-1">
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                          All data is strictly pulled in read-only form from Intervals.icu via your API key. Data stays on your device and is not persisted.
+                        </p>
+                      </div>
                     </div>
                  </div>
                )}
 
                {settingsView === 'methodology' && (
                  <div className="glass-card p-6 rounded-[2rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    <div className="space-y-5">
-                      <div className="relative">
-                        <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-amber-500/30"></div>
-                        <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">The Polarized Approach</h4>
-                        <p className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3">
-                          WaTTson prioritizes polarized training—keeping easy days truly easy to ensure you have the required "lithium" for high-intensity sessions.
-                        </p>
+                    {isLoadingProfile ? (
+                      <div className="flex flex-col items-center justify-center py-6 text-center">
+                        <div className="w-8 h-8 rounded-full border-t-2 border-emerald-500 animate-spin mb-4" />
+                        <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Analyzing Data...</p>
                       </div>
+                    ) : userProfile ? (
+                      <div className="space-y-6">
+                        <div className="text-center mb-6">
+                          <h3 className="text-xl font-black text-emerald-400 italic uppercase tracking-tight">{userProfile.athlete_type}</h3>
+                          <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Based on recent 30-day performance trends</p>
+                        </div>
+                        
+                        <div className="relative">
+                          <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-emerald-500/30"></div>
+                          <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">Areas of Strength</h4>
+                          <ul className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3 list-none space-y-1">
+                            {userProfile.strengths.map((s, i) => (
+                              <li key={i}>• {s}</li>
+                            ))}
+                          </ul>
+                        </div>
 
-                      <div className="relative">
-                        <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-cyan-500/30"></div>
-                        <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">Fatigue Management</h4>
-                        <p className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3">
-                          By analyzing your TSB (Training Stress Balance) and HRV, the model detects "Red Days" before you feel them, automatically suggesting rest when recovery is stunted.
-                        </p>
-                      </div>
+                        <div className="relative">
+                          <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-rose-500/30"></div>
+                          <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">Limiters to Improve</h4>
+                          <ul className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3 list-none space-y-1">
+                            {userProfile.areas_for_improvement.map((a, i) => (
+                              <li key={i}>• {a}</li>
+                            ))}
+                          </ul>
+                        </div>
 
-                      <div className="relative">
-                        <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-purple-500/30"></div>
-                        <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">AI Context Window</h4>
-                        <p className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3">
-                          Unlike static plans, WaTTson looks at your last 7 days of actual workload. If you missed a ride, he adjusts. If you smashed a group ride, he adapts.
-                        </p>
+                        <div className="relative">
+                          <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-amber-500/30"></div>
+                          <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">Training Response</h4>
+                          <p className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3">
+                            {userProfile.training_response}
+                          </p>
+                        </div>
+                        
+                        <div className="relative">
+                          <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-purple-500/30"></div>
+                          <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">waTTson's Focus</h4>
+                          <p className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3">
+                            {userProfile.recommended_focus}
+                          </p>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="text-center py-4">
+                         <p className="text-[11px] text-slate-400">Not enough data to form an assessment yet.</p>
+                      </div>
+                    )}
                  </div>
                )}
              </div>
@@ -901,9 +1002,9 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {/* Optimized Bottom Navigation Bar - Minimal gap on iPhone 16e */}
-      <nav className="fixed bottom-0 left-0 right-0 z-[100] pt-3 bg-[#0a0e17]/90 backdrop-blur-2xl border-t border-white/5">
-        <div className="flex items-center justify-around px-4 pb-[max(20px,env(safe-area-inset-bottom))]">
+      {/* Static Standard Bottom Navigation Bar */}
+      <nav className="shrink-0 bg-[#05070a] border-t border-white/5 z-[100] pb-[env(safe-area-inset-bottom)]">
+        <div className="flex items-center justify-around px-2 py-2">
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Home' },
             { id: 'rides', icon: Bike, label: 'Logs' },
@@ -913,13 +1014,10 @@ const App: React.FC = () => {
             <button 
               key={item.id}
               onClick={() => setActiveTab(item.id as any)}
-              className={`flex flex-col items-center gap-1.5 transition-all duration-300 relative py-1 px-4 ${activeTab === item.id ? 'text-cyan-400 scale-105' : 'text-slate-600'}`}
+              className={`flex flex-col items-center gap-1 transition-colors duration-300 py-2 px-4 rounded-xl ${activeTab === item.id ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
             >
               <item.icon size={22} strokeWidth={activeTab === item.id ? 2.5 : 2} />
-              <span className="text-[9px] font-bold uppercase tracking-tight">{item.label}</span>
-              {activeTab === item.id && (
-                <div className="absolute -bottom-1 w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
-              )}
+              <span className="text-[9px] font-bold uppercase tracking-[0.05em]">{item.label}</span>
             </button>
           ))}
         </div>
@@ -935,15 +1033,53 @@ const App: React.FC = () => {
           <textarea 
             value={userGoal} 
             onChange={(e) => setUserGoal(e.target.value)} 
-            className="w-full bg-slate-900/50 border border-white/10 rounded-[2rem] p-6 text-lg font-bold text-white outline-none focus:border-cyan-500/30 flex-1 mb-8 italic"
+            className="w-full bg-slate-900/50 border border-white/10 rounded-[2rem] p-6 text-lg font-bold text-white outline-none focus:border-emerald-500/30 flex-1 mb-8 italic"
             placeholder="Ex: Improve hill climb efficiency..."
           />
           <button 
             onClick={() => { localStorage.setItem('wattson_goal', userGoal); setSuggestion(null); setShowGoalEditor(false); }}
-            className="w-full py-5 bg-cyan-500 text-slate-950 font-bold text-[10px] uppercase tracking-[0.2em] rounded-[1.8rem] shadow-2xl active:scale-95 transition-all"
+            className="w-full py-5 bg-emerald-500 text-slate-950 font-bold text-[10px] uppercase tracking-[0.2em] rounded-[1.8rem] shadow-2xl active:scale-95 transition-all"
           >
             Update Engine Target
           </button>
+        </div>
+      )}
+
+      {reasoningPopup && (
+        <div className="absolute inset-0 z-[220] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setReasoningPopup(null)}>
+          <div className="glass-card w-full max-w-[340px] rounded-[2rem] p-7 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <h3 className="text-[11px] font-black text-emerald-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <Sparkles size={14} /> {reasoningPopup.title}
+            </h3>
+            <p className="text-slate-300 text-[12px] leading-relaxed mb-6">"{reasoningPopup.content}"</p>
+            <button onClick={() => setReasoningPopup(null)} className="w-full py-4 bg-white/5 border border-white/10 rounded-[1.4rem] text-[10px] font-black uppercase tracking-[0.15em] hover:bg-white/10 hover:text-white text-slate-300 transition-colors active:scale-[0.98]">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showReleaseNotes && (
+        <div className="absolute inset-0 z-[220] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowReleaseNotes(false)}>
+          <div className="glass-card w-full max-w-[340px] rounded-[2rem] p-7 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-black text-white italic tracking-tight mb-2">wa<span className="text-emerald-400">TT</span>son Update</h3>
+            <p className="text-[10px] text-emerald-500/80 font-bold uppercase tracking-widest mb-5">Version {APP_VERSION}</p>
+            
+            <div className="space-y-4 mb-6">
+              <div>
+                <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Athlete Profile Engine</h4>
+                <p className="text-slate-400 text-[11px] leading-relaxed">waTTson now analyzes your last 30 days of training to build a custom athlete shape based on your history. Access this in Settings &gt; Athlete Profile.</p>
+              </div>
+              <div>
+                <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Interactive Rationale</h4>
+                <p className="text-slate-400 text-[11px] leading-relaxed">You can now tap on waTTson's recommendations on the home tab to dive deep into exactly why he suggested them based on your fatigue.</p>
+              </div>
+            </div>
+
+            <button onClick={() => setShowReleaseNotes(false)} className="w-full py-4 bg-emerald-500 text-slate-950 rounded-[1.4rem] text-[10px] font-black uppercase tracking-[0.15em] hover:bg-emerald-400 transition-colors active:scale-[0.98]">
+              Got it
+            </button>
+          </div>
         </div>
       )}
 

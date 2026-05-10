@@ -3,36 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>WaTTson | Elite Performance Coach</title>
+    <title>waTTson | Elite Performance Coach</title>
     
     <!-- PWA Settings -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#0a0e17">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="WaTTson">
-    <link rel="apple-touch-icon" href="https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f6b4.png">
+    <meta name="apple-mobile-web-app-title" content="waTTson">
+    <link rel="apple-touch-icon" href="logo.svg">
 
     <!-- Styles -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-primary: #0a0e17;
-            --surface: rgba(30, 41, 59, 0.5);
-            --accent: #22d3ee;
-            --accent-muted: rgba(34, 211, 238, 0.1);
-            --border: rgba(255, 255, 255, 0.08);
+            --bg-primary: #05070a;
+            --surface: rgba(20, 25, 35, 0.6);
+            --accent: #10b981;
+            --accent-muted: rgba(0, 229, 255, 0.1);
+            --border: rgba(255, 255, 255, 0.05);
         }
 
         body {
-            font-family: 'Inter', sans-serif;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
             background-color: var(--bg-primary);
-            color: #f1f5f9;
+            color: #f8fafc;
             overflow: hidden;
             -webkit-tap-highlight-color: transparent;
             overscroll-behavior: none;
-            letter-spacing: -0.01em;
+            letter-spacing: -0.015em;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
         
         .premium-bg {
@@ -43,19 +45,19 @@
             height: 100vh;
             z-index: -1;
             background: 
-                radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.08), transparent 40%),
-                radial-gradient(circle at 100% 0%, rgba(99, 102, 241, 0.05), transparent 40%),
+                radial-gradient(120% 100% at 50% 0%, rgba(0, 229, 255, 0.03) 0%, transparent 50%),
+                radial-gradient(100% 100% at 50% 100%, rgba(52, 211, 153, 0.03) 0%, transparent 50%),
                 var(--bg-primary);
             pointer-events: none;
         }
 
         .glass-card {
-            background: rgba(30, 41, 59, 0.3);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
+            background: var(--surface);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
             border: 1px solid var(--border);
-            border-top: 1px solid rgba(255, 255, 255, 0.12);
-            box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+            transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
         }
 
         .phone-container {

@@ -106,21 +106,21 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
 
   const getDayAbbr = (dayStr: string) => {
     const lower = dayStr.toLowerCase();
-    if (lower.includes('mon')) return 'MO';
-    if (lower.includes('tue')) return 'TU';
-    if (lower.includes('wed')) return 'WE';
-    if (lower.includes('thu')) return 'TH';
-    if (lower.includes('fri')) return 'FR';
-    if (lower.includes('sat')) return 'SA';
-    if (lower.includes('sun')) return 'SU';
-    return dayStr.slice(0, 2).toUpperCase();
+    if (lower.includes('mon')) return 'MON';
+    if (lower.includes('tue')) return 'TUE';
+    if (lower.includes('wed')) return 'WED';
+    if (lower.includes('thu')) return 'THU';
+    if (lower.includes('fri')) return 'FRI';
+    if (lower.includes('sat')) return 'SAT';
+    if (lower.includes('sun')) return 'SUN';
+    return dayStr.slice(0, 3).toUpperCase();
   };
 
   return (
-    <div className="fixed inset-0 z-[100] bg-slate-950 flex flex-col animate-in slide-in-from-bottom duration-300 h-[100dvh] max-w-[450px] mx-auto overflow-hidden">
+    <div className="fixed inset-0 z-[100] bg-[#05070a]/95 backdrop-blur-3xl flex flex-col animate-in slide-in-from-bottom duration-300 h-[100dvh] max-w-[450px] mx-auto overflow-hidden">
       {/* Header */}
       <div 
-        className="flex items-center justify-between px-6 py-4 border-b border-white/5"
+        className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-transparent"
         style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}
       >
         <div>
@@ -135,7 +135,7 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
       <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 flex flex-col">
         {loading ? (
           <div className="flex-1 flex flex-col items-center justify-center space-y-4">
-            <div className="w-10 h-10 border-2 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin"></div>
+            <div className="w-10 h-10 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
             <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest animate-pulse">Analyzing Trajectory...</p>
           </div>
         ) : briefing ? (
@@ -159,7 +159,7 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                   {/* Info Column */}
                   <div className="flex-1 min-w-0 flex flex-col justify-center">
                     <div className="flex items-baseline gap-2">
-                       <span className="text-[8px] font-black text-cyan-400 uppercase tracking-widest leading-none">
+                       <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest leading-none">
                          {idx === 0 ? (activities.some(a => a.start_date_local.startsWith(toLocalDateStr(new Date()))) ? "TOMORROW" : "TODAY") : (idx === 1 && !activities.some(a => a.start_date_local.startsWith(toLocalDateStr(new Date()))) ? "TOMORROW" : "")}
                        </span>
                     </div>
@@ -194,8 +194,8 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
 
             <div className="mt-auto pt-4 mb-2">
               <div className="p-4 bg-slate-900/40 rounded-2xl border border-white/5 flex gap-3 items-center">
-                <div className="w-8 h-8 rounded-full bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20">
-                   <Info size={14} className="text-cyan-500" />
+                <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+                   <Info size={14} className="text-emerald-500" />
                 </div>
                 <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
                   Plan is adaptive based on recorded stress. Tap any session for coach reasoning.
@@ -213,7 +213,7 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
       {/* Why Detail Popup */}
       {selectedDay && (
         <div className="fixed inset-0 z-[110] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-6 animate-in zoom-in-95 duration-200">
-          <div className="glass-panel w-full max-w-[340px] rounded-[3rem] p-10 border border-white/10 shadow-2xl relative">
+          <div className="glass-card w-full max-w-[340px] rounded-[3rem] p-10 relative">
             <button onClick={() => setSelectedDay(null)} className="absolute top-8 right-8 text-slate-500 hover:text-white transition-colors">
               <X size={20} />
             </button>
@@ -225,7 +225,7 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
               <h3 className="text-xl font-black text-white italic tracking-tight mb-1">
                 {briefing?.days.findIndex(d => d.day === selectedDay.day) === 0 ? (activities.some(a => a.start_date_local.startsWith(toLocalDateStr(new Date()))) ? "TOMORROW'S" : "TODAY'S") : selectedDay.day} FOCUS
               </h3>
-              <p className="text-[11px] font-black text-cyan-500 uppercase tracking-[0.2em] mb-6">{selectedDay.focus}</p>
+              <p className="text-[11px] font-black text-emerald-500 uppercase tracking-[0.2em] mb-6">{selectedDay.focus}</p>
               
               <div className="bg-slate-950/60 p-6 rounded-[2rem] border border-white/5 w-full text-left space-y-4 shadow-inner overflow-hidden">
                  <div className="flex items-center justify-between opacity-80 border-b border-white/5 pb-3">
@@ -242,11 +242,11 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                      {selectedDay.workout_steps.map((step, sIdx) => (
                        <div key={sIdx} className="flex items-center justify-between gap-3 text-[11px] font-bold">
                          <div className="flex items-center gap-2 text-slate-400">
-                           <div className="w-1.5 h-1.5 rounded-full bg-cyan-500/40" />
+                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
                            <span>{step.duration}m {step.label}</span>
                          </div>
                          {step.target_watts && (
-                           <span className="text-cyan-400/80">{step.target_watts}W</span>
+                           <span className="text-emerald-400/80">{step.target_watts}W</span>
                          )}
                        </div>
                      ))}
@@ -272,7 +272,7 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                       ? 'bg-emerald-500 text-white' 
                       : selectedDay.intensity === 'Rest'
                       ? 'bg-slate-900 text-slate-600 border border-white/5 opacity-50 cursor-not-allowed'
-                      : 'bg-cyan-400 text-slate-950 hover:bg-cyan-300 active:scale-95'
+                      : 'bg-emerald-400 text-slate-950 hover:bg-emerald-300 active:scale-95'
                   }`}
                 >
                   {syncingDay === selectedDay.day ? (

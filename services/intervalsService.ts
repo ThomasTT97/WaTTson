@@ -84,7 +84,7 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
     'analyzed', 'icu_power_hr_z2_ef', 'icu_power_hr_z2', 'icu_power_hr_z2_hr'
   ].join(',');
 
-  const activitiesUrl = `https://intervals.icu/api/v1/athlete/${athleteId}/activities?oldest=${oldest}&newest=${newest}&fields=${fields}&_t=${Date.now()}`;
+  const activitiesUrl = `https://intervals.icu/api/v1/athlete/${athleteId}/activities?oldest=${oldest}&newest=${newest}&_t=${Date.now()}`;
 
   try {
     const response = await fetch(activitiesUrl, {

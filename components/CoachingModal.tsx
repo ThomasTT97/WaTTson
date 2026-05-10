@@ -63,8 +63,8 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
       label: 'Performance', 
       value: `${Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0)}w ${Math.round(activity.average_heartrate || 0)}bpm`, 
       icons: [Zap, Heart], 
-      color: 'text-cyan-400', 
-      bg: 'bg-cyan-500/10' 
+      color: 'text-emerald-400', 
+      bg: 'bg-emerald-500/10' 
     },
     { label: 'Distance', value: `${activity.distance ? (Math.round(activity.distance / 100) / 10) : 0}km`, icon: TrendingUp, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
     { label: 'TSS', value: String(Math.round(activity.icu_training_load || activity.icu_tss || activity.training_load || 0)), icon: Target, color: 'text-amber-400', bg: 'bg-amber-500/10' }
@@ -93,11 +93,11 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
       animate={{ y: 0 }}
       exit={{ y: '100%' }}
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-      className="fixed inset-0 z-[200] flex flex-col bg-[#070a11] h-[100dvh] max-w-[450px] mx-auto overflow-hidden shadow-2xl"
+      className="fixed inset-0 z-[200] flex flex-col bg-[#05070a]/95 backdrop-blur-3xl h-[100dvh] max-w-[450px] mx-auto overflow-hidden shadow-2xl"
       id="coaching-modal"
     >
       {/* Decorative Background Flare */}
-      <div className="absolute top-[-10%] left-[-10%] w-[120%] h-[40%] bg-cyan-500/5 blur-[120px] pointer-events-none" />
+      <div className="absolute top-[-10%] left-[-10%] w-[120%] h-[40%] bg-emerald-500/5 blur-[120px] pointer-events-none" />
       
       {/* Header */}
       <div 
@@ -133,8 +133,8 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
               {activity.name}
             </h1>
             <div className="flex items-center gap-2 mb-8">
-               <div className="h-0.5 w-8 bg-cyan-500 rounded-full" />
-               <p className="text-[10px] font-bold text-cyan-400 uppercase tracking-[0.2em]">{activity.type}</p>
+               <div className="h-0.5 w-8 bg-emerald-500 rounded-full" />
+               <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-[0.2em]">{activity.type}</p>
             </div>
           </motion.div>
           
@@ -170,8 +170,8 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                 className="flex flex-col items-center justify-center py-10 text-center"
               >
                 <div className="relative w-8 h-8 mb-4">
-                  <div className="absolute inset-0 border-2 border-cyan-500/10 rounded-full"></div>
-                  <div className="absolute inset-0 border-2 border-t-cyan-500 rounded-full animate-spin"></div>
+                  <div className="absolute inset-0 border-2 border-emerald-500/10 rounded-full"></div>
+                  <div className="absolute inset-0 border-2 border-t-emerald-500 rounded-full animate-spin"></div>
                 </div>
                 <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">Analyzing</p>
               </motion.div>
@@ -196,10 +196,10 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                   className="glass-card p-6 rounded-[2rem] relative overflow-hidden bg-gradient-to-br from-white/[0.03] to-transparent border-white/10"
                 >
                    <div className="flex items-center gap-2 mb-4">
-                     <div className="w-6 h-6 rounded-lg bg-cyan-500/20 flex items-center justify-center">
-                       <Sparkles size={11} className="text-cyan-400" />
+                     <div className="w-6 h-6 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+                       <Sparkles size={11} className="text-emerald-400" />
                      </div>
-                     <h3 className="text-[10px] font-black text-cyan-400 uppercase tracking-[0.2em]">Coach's Insight</h3>
+                     <h3 className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.2em]">Coach's Insight</h3>
                    </div>
                    <p className="text-[1.05rem] text-white leading-relaxed italic font-medium tracking-tight">
                      "{feedback.summary}"
@@ -222,7 +222,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                     
                     <div className="mt-6 pt-5 border-t border-white/5 flex items-center justify-between relative z-10">
                       <div className="flex items-center gap-2 text-[9px] font-black text-slate-500 uppercase tracking-widest italic">
-                        <Trophy size={11} className="text-cyan-400" /> {userGoal || 'Peak Performance'}
+                        <Trophy size={11} className="text-emerald-400" /> {userGoal || 'Peak Performance'}
                       </div>
                     </div>
                   </div>

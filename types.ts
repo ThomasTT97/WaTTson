@@ -122,3 +122,11 @@ export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
 }
+
+export interface UserProfileAnalysis {
+  athlete_type: string;
+  strengths: string[];
+  areas_for_improvement: string[];
+  training_response: string;
+  recommended_focus: string;
+}
