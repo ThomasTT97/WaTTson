@@ -4,8 +4,8 @@
   "description": "AI-powered cycling coach and training analysis.",
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#020617",
-  "theme_color": "#020617",
+  "background_color": "#05070a",
+  "theme_color": "#05070a",
   "orientation": "portrait",
   "icons": [
     {
