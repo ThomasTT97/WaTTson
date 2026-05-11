@@ -401,7 +401,7 @@ const App: React.FC = () => {
   const currentWorkout = suggestion ? (showAlternative ? suggestion.alternative : suggestion.primary) : null;
 
   if (loading && (!activities || activities.length === 0)) return (
-    <div className="phone-container flex flex-col items-center justify-center p-8 bg-transparent">
+    <div className="flex flex-col items-center justify-center p-8 bg-transparent w-full h-full">
       <div className="premium-bg"></div>
       <div className="w-8 h-8 border-2 border-emerald-500/10 border-t-emerald-500 rounded-full animate-spin mb-4"></div>
       <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Syncing Engine...</p>
@@ -409,7 +409,7 @@ const App: React.FC = () => {
   );
 
   if (!creds || syncError) return (
-    <div className="phone-container p-8 justify-center">
+    <div className="flex flex-col p-8 justify-center w-full h-full">
       <div className="premium-bg"></div>
       <div className="glass-card p-8 rounded-[2rem] text-center">
         <div className="w-12 h-12 bg-emerald-500/5 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/5 shadow-inner">
@@ -466,7 +466,7 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="phone-container overflow-hidden bg-transparent flex flex-col">
+    <div className="fixed inset-0 flex flex-col overflow-hidden bg-transparent">
       <div className="premium-bg"></div>
       
       {/* Global Top Bar */}
@@ -1002,9 +1002,8 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {/* Static Standard Bottom Navigation Bar */}
-      <nav className="shrink-0 bg-[#05070a]/95 backdrop-blur-xl border-t border-white/5 z-[100] pb-[max(12px,env(safe-area-inset-bottom))]">
-        <div className="flex items-center justify-around px-4 py-2.5">
+      <nav className="shrink-0 bg-[#05070a] border-t border-white/5 z-[100] pb-[env(safe-area-inset-bottom)]">
+        <div className="flex items-center justify-around px-4 py-2">
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Home' },
             { id: 'rides', icon: Bike, label: 'Logs' },
@@ -1014,9 +1013,9 @@ const App: React.FC = () => {
             <button 
               key={item.id}
               onClick={() => setActiveTab(item.id as any)}
-              className={`flex flex-col items-center gap-1 transition-colors duration-300 py-2 px-4 rounded-xl ${activeTab === item.id ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
+              className={`flex flex-col items-center gap-1 transition-all duration-300 py-1.5 px-3 rounded-xl ${activeTab === item.id ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
             >
-              <item.icon size={22} strokeWidth={activeTab === item.id ? 2.5 : 2} />
+              <item.icon size={21} strokeWidth={activeTab === item.id ? 2.5 : 2} />
               <span className="text-[9px] font-bold uppercase tracking-[0.05em]">{item.label}</span>
             </button>
           ))}
