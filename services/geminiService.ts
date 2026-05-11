@@ -75,7 +75,7 @@ export const getRideFeedback = async (
     goal_contribution: A clear explanation of how this session contributes to ${userGoal}.`;
 
   const response: GenerateContentResponse = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash',
     contents: prompt,
     config: { 
       responseMimeType: 'application/json',
@@ -117,7 +117,7 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
   const prompt = `Coach: Suggest workout for ${targetStr}. History (7d): ${history}. Goal: "${userGoal}". JSON please. Ensure readiness_score is a number from 1 to 10.`;
 
   const response: GenerateContentResponse = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash',
     contents: prompt,
     config: {
       responseMimeType: "application/json",
@@ -190,7 +190,7 @@ export const getWeeklyBriefing = async (
     Return JSON with phase, focus, outlook_summary, days[].`;
 
   const response: GenerateContentResponse = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash',
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
       responseMimeType: 'application/json',
@@ -288,7 +288,7 @@ export const sendChatMessage = async (
   });
 
   const response: GenerateContentResponse = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash',
     contents,
     config: {
       systemInstruction,
@@ -331,7 +331,7 @@ export const analyzeUserProfile = async (
     recommended_focus: 1-sentence recommendation going forward.`;
 
   const response: GenerateContentResponse = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash',
     contents: prompt,
     config: { 
       responseMimeType: 'application/json',
