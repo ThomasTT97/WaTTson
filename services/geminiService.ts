@@ -114,7 +114,7 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
     .map(a => `${a.start_date_local.split('T')[0]}: ${a.icu_training_load || a.icu_tss || 0} TSS (${a.type})`)
     .join(', ');
 
-  const prompt = `Coach: Suggest workout for ${targetStr}. History (7d): ${history}. Goal: "${userGoal}". JSON please.`;
+  const prompt = `Coach: Suggest workout for ${targetStr}. History (7d): ${history}. Goal: "${userGoal}". JSON please. Ensure readiness_score is a number from 1 to 10.`;
 
   const response: GenerateContentResponse = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',

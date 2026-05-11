@@ -369,7 +369,7 @@ const App: React.FC = () => {
       const response = await sendChatMessage(messages, text, { 
         goal: userGoal, 
         recentLoad: stats.total7DayLoad, 
-        readiness: stats.readiness,
+        readiness: suggestion?.readiness_score ?? stats.readiness,
         activities: activities || [],
         wellness: wellnessData || []
       });
@@ -401,7 +401,7 @@ const App: React.FC = () => {
   const currentWorkout = suggestion ? (showAlternative ? suggestion.alternative : suggestion.primary) : null;
 
   if (loading && (!activities || activities.length === 0)) return (
-    <div className="flex flex-col items-center justify-center p-8 bg-transparent w-full h-full">
+    <div className="fixed inset-0 flex flex-col items-center justify-center p-8 bg-transparent">
       <div className="premium-bg"></div>
       <div className="w-8 h-8 border-2 border-emerald-500/10 border-t-emerald-500 rounded-full animate-spin mb-4"></div>
       <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Syncing Engine...</p>
@@ -409,9 +409,9 @@ const App: React.FC = () => {
   );
 
   if (!creds || syncError) return (
-    <div className="flex flex-col p-8 justify-center w-full h-full">
+    <div className="fixed inset-0 flex flex-col p-8 justify-center items-center">
       <div className="premium-bg"></div>
-      <div className="glass-card p-8 rounded-[2rem] text-center">
+      <div className="glass-card w-full max-w-sm p-8 rounded-[2rem] text-center">
         <div className="w-12 h-12 bg-emerald-500/5 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/5 shadow-inner">
           <CyclistIcon size={24} className="text-emerald-400" />
         </div>
@@ -470,7 +470,7 @@ const App: React.FC = () => {
       <div className="premium-bg"></div>
       
       {/* Global Top Bar */}
-      <header className="flex-none flex items-center justify-between py-4 px-4 bg-[#05070a] border-b border-white/5 z-30" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 1rem)' }}>
+      <header className="flex-none flex items-center justify-between pb-4 px-6 bg-transparent border-b border-white/5 z-30" style={{ paddingTop: 'max(env(safe-area-inset-top), 24px)' }}>
         <div className="flex items-center gap-4">
           <div className="w-9 h-9 rounded-xl glass-card flex flex-shrink-0 items-center justify-center shadow-inner relative overflow-hidden">
              {activeTab === 'chat' && isDeepSyncing && <div className="absolute inset-0 bg-emerald-500/20 animate-pulse" />}
@@ -651,13 +651,22 @@ const App: React.FC = () => {
                 onClick={() => suggestion && setReasoningPopup({ title: 'Readiness Analysis', content: suggestion.readiness_analysis })}
                 className="glass-card p-4 rounded-[1.8rem] flex flex-col justify-between cursor-pointer active:scale-[0.98] transition-transform"
               >
-                <div>
-                  <h4 className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-1.5">Readiness</h4>
-                  <div className="flex items-baseline gap-1">
-                    <span className={`text-3xl font-black italic tracking-tighter ${stats.statusColor}`}>{stats.readiness}</span>
-                    <span className="text-[10px] font-bold text-slate-600">/ 10</span>
-                  </div>
-                </div>
+                {(() => {
+                  const displayScore = suggestion 
+                    ? Math.round(suggestion.readiness_score > 10 ? suggestion.readiness_score / 10 : suggestion.readiness_score)
+                    : stats.readiness;
+                  const displayColor = displayScore >= 7 ? 'text-emerald-400' : displayScore >= 4 ? 'text-amber-400' : 'text-rose-400';
+                  
+                  return (
+                    <div>
+                      <h4 className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-1.5">Readiness</h4>
+                      <div className="flex items-baseline gap-1">
+                        <span className={`text-3xl font-black italic tracking-tighter ${suggestion ? displayColor : stats.statusColor}`}>{displayScore}</span>
+                        <span className="text-[10px] font-bold text-slate-600">/ 10</span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
               
               <div 
@@ -1002,7 +1011,7 @@ const App: React.FC = () => {
         )}
       </div>
 
-      <nav className="shrink-0 bg-[#05070a] border-t border-white/5 z-[100] pb-[env(safe-area-inset-bottom)]">
+      <nav className="shrink-0 glass-card bg-transparent border-t border-white/5 z-[100]" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 20px)' }}>
         <div className="flex items-center justify-around px-4 py-2">
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Home' },

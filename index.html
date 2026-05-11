@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>waTTson | Elite Performance Coach</title>
     
     <!-- PWA Settings -->
@@ -19,7 +19,20 @@
 
     <!-- Styles -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'system-ui', 'sans-serif'],
+              display: ['Space Grotesk', 'sans-serif'],
+              mono: ['JetBrains Mono', 'monospace'],
+            }
+          }
+        }
+      }
+    </script>
     <style>
         :root {
             --bg-primary: #05070a;
@@ -33,48 +46,35 @@
             box-sizing: border-box;
         }
 
-        html {
-            height: 100%;
-            height: -webkit-fill-available;
-            width: 100%;
-            overflow: hidden;
+        html, body {
             margin: 0;
             padding: 0;
+            overflow: hidden;
             background-color: var(--bg-primary);
             -webkit-text-size-adjust: 100%;
             overscroll-behavior: none;
+            width: 100vw;
+            height: 100vh;
         }
 
         body {
             font-family: 'Inter', system-ui, -apple-system, sans-serif;
-            background-color: var(--bg-primary);
             color: #f8fafc;
-            overflow: hidden;
             -webkit-tap-highlight-color: transparent;
-            overscroll-behavior: none;
             letter-spacing: -0.015em;
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
-            height: 100%;
-            height: 100dvh;
-            min-height: -webkit-fill-available;
-            width: 100%;
-            margin: 0;
-            padding: 0;
-            position: fixed;
-            inset: 0;
         }
 
         #root {
-            height: 100%;
-            width: 100%;
-            margin: 0;
-            padding: 0;
-            background-color: var(--bg-primary);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: transparent;
             display: flex;
             flex-direction: column;
-            position: fixed;
-            inset: 0;
             overflow: hidden;
         }
         
@@ -90,21 +90,24 @@
         }
 
         .glass-card {
-            background: var(--surface);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid var(--border);
-            box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+            background: rgba(18, 20, 24, 0.45);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
             transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
         }
 
         .text-header {
-            font-weight: 800;
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 700;
             letter-spacing: -0.04em;
             color: #fff;
         }
 
         .custom-scrollbar::-webkit-scrollbar { width: 0px; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
         @keyframes subtle-float {
             0%, 100% { transform: translateY(0); }
