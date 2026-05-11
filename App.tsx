@@ -752,7 +752,7 @@ const App: React.FC = () => {
              <div className="sticky bottom-0 shrink-0 px-4 pb-4 pt-3 bg-transparent backdrop-blur-2xl border-t border-white/5 z-20">
                <form 
                  onSubmit={(e) => { e.preventDefault(); handleSendMessage(chatInput); }} 
-                 className="relative max-w-[400px] mx-auto"
+                 className="relative max-w-full"
                >
                  <textarea 
                    ref={chatInputRef}
