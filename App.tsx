@@ -1003,8 +1003,8 @@ const App: React.FC = () => {
       </div>
 
       {/* Static Standard Bottom Navigation Bar */}
-      <nav className="shrink-0 bg-[#05070a] border-t border-white/5 z-[100] pb-[env(safe-area-inset-bottom)]">
-        <div className="flex items-center justify-around px-2 py-1.5">
+      <nav className="shrink-0 bg-[#05070a]/95 backdrop-blur-xl border-t border-white/5 z-[100] pb-[max(12px,env(safe-area-inset-bottom))]">
+        <div className="flex items-center justify-around px-4 py-2.5">
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Home' },
             { id: 'rides', icon: Bike, label: 'Logs' },
