@@ -255,25 +255,27 @@ export const sendChatMessage = async (
   // Format a data summary for the AI
   const sortedActivities = [...context.activities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local));
   const recentActivities = sortedActivities.slice(0, 5);
-  const oldestActivities = sortedActivities.length > 5 ? sortedActivities.slice(-3) : [];
   
   const historySummary = recentActivities.map(a => 
     `${a.start_date_local.split('T')[0]}: ${a.name}, ${Math.round((a.distance || 0)/1000)}km, TSS ${a.icu_training_load || a.icu_tss || 0}`
   ).join('\n');
 
-  const deepHistoryContext = oldestActivities.length > 0 
-    ? `\nYour historical data goes back to ${oldestActivities[0].start_date_local.split('T')[0]}. Oldest segments: ${oldestActivities.map(a => a.start_date_local.split('T')[0]).join(', ')}.`
-    : '';
+  // Compress full history for the LLM to access
+  const fullHistoryCompact = sortedActivities.map(a => 
+    `${a.start_date_local.split('T')[0]}|${a.type}|TSS:${a.icu_training_load || a.icu_tss || 0}|${Math.round((a.distance || 0)/1000)}km`
+  ).join(', ');
 
   const systemInstruction = `You are waTTson, a direct cycling coach. 
     Concise text-style replies (1-3 sentences). 
     User Goal: ${context.goal}. 
     Current Load (7d): ${context.recentLoad}, Readiness: ${context.readiness}.
-    Recent History:
+    Recent History (Full details):
     ${historySummary}
-    ${deepHistoryContext}
+    
+    Full Historical Data (Date|Type|TSS|Distance):
+    ${fullHistoryCompact}
     Total activities available: ${context.activities.length}.
-    Always answer accurately based on this data. If asked about the far past, you have access to ${context.activities.length} records.`;
+    Always answer accurately based on this full data set when the user asks about their past training, trends, or long-term history.`;
 
   const contents = history.map(m => ({
     role: m.role,

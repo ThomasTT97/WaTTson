@@ -470,7 +470,7 @@ const App: React.FC = () => {
       <div className="premium-bg"></div>
       
       {/* Global Top Bar */}
-      <header className="flex-none flex items-center justify-between pb-4 px-6 bg-transparent border-b border-white/5 z-30" style={{ paddingTop: 'max(env(safe-area-inset-top), 24px)' }}>
+      <header className="flex-none flex items-center justify-between pb-4 px-6 bg-transparent border-b border-white/5 z-30" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 16px)' }}>
         <div className="flex items-center gap-4">
           <div className="w-9 h-9 rounded-xl glass-card flex flex-shrink-0 items-center justify-center shadow-inner relative overflow-hidden">
              {activeTab === 'chat' && isDeepSyncing && <div className="absolute inset-0 bg-emerald-500/20 animate-pulse" />}
@@ -1011,8 +1011,8 @@ const App: React.FC = () => {
         )}
       </div>
 
-      <nav className="shrink-0 glass-card bg-transparent border-t border-white/5 z-[100]" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 20px)' }}>
-        <div className="flex items-center justify-around px-4 py-2">
+      <nav className="shrink-0 glass-card bg-transparent border-t border-white/5 z-[100]" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}>
+        <div className="flex items-center justify-around px-4 pt-3 pb-1">
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Home' },
             { id: 'rides', icon: Bike, label: 'Logs' },
