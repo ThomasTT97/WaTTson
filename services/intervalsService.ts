@@ -49,7 +49,7 @@ export const fetchAthleteId = async (apiKey: string): Promise<string> => {
   }
 };
 
-export const fetchActivities = async (creds: IntervalsCredentials, daysBack: number = 90): Promise<Activity[]> => {
+export const fetchActivities = async (creds: IntervalsCredentials, daysBack: number = 3650): Promise<Activity[]> => {
   const { apiKey, athleteId } = creds;
   
   if (apiKey === 'demo') return getMockActivities();
@@ -84,32 +84,64 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
     'analyzed', 'icu_power_hr_z2_ef', 'icu_power_hr_z2', 'icu_power_hr_z2_hr'
   ].join(',');
 
-  const activitiesUrl = `https://intervals.icu/api/v1/athlete/${athleteId}/activities?oldest=${oldest}&newest=${newest}&_t=${Date.now()}`;
+  const allActivities: Activity[] = [];
+  let currentNewest = new Date(now);
+  currentNewest.setDate(now.getDate() + 2);
+
+  const targetOldestDate = new Date(now);
+  targetOldestDate.setDate(now.getDate() - daysBack);
 
   try {
-    const response = await fetch(activitiesUrl, {
-      method: 'GET',
-      headers,
-      cache: 'no-store'
-    });
-    
-    if (!response.ok) {
-      if (response.status === 401) throw new Error("Authentication failed: Invalid API Key.");
-      if (response.status === 404) throw new Error(`Athlete ID ${athleteId} not found.`);
-      throw new Error(`Connection failed: ${response.status} ${response.statusText}`);
-    }
-    
-    const data = await response.json();
-    if (!Array.isArray(data)) throw new Error("Received invalid response format from Intervals.icu");
+    let remaining = true;
+    while (remaining) {
+      const chunkOldestDate = new Date(currentNewest);
+      chunkOldestDate.setDate(currentNewest.getDate() - 364); // 1 year chunks
 
-    return data;
+      const actualOldestDate = chunkOldestDate < targetOldestDate ? targetOldestDate : chunkOldestDate;
+      const oldestStr = toLocalDateString(actualOldestDate);
+      const newestStr = toLocalDateString(currentNewest);
+
+      const activitiesUrl = `https://intervals.icu/api/v1/athlete/${athleteId}/activities?oldest=${oldestStr}&newest=${newestStr}&cols=${fields}&size=2000&_t=${Date.now()}`;
+      
+      const response = await fetch(activitiesUrl, {
+        method: 'GET',
+        headers,
+        cache: 'no-store'
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data)) {
+          data.forEach(item => {
+            if (!allActivities.find(existing => existing.id === item.id)) {
+              allActivities.push(item);
+            }
+          });
+        }
+      } else {
+        if (response.status === 401) throw new Error("Authentication failed: Invalid API Key.");
+        if (response.status === 404) throw new Error(`Athlete ID ${athleteId} not found.`);
+        // Stop fetching on other errors
+        remaining = false;
+      }
+
+      currentNewest = new Date(actualOldestDate);
+      currentNewest.setDate(currentNewest.getDate() - 1);
+
+      if (actualOldestDate <= targetOldestDate) {
+        remaining = false;
+      }
+    }
+
+    return allActivities.sort((a, b) => b.start_date_local.localeCompare(a.start_date_local));
   } catch (error: any) {
     console.error('Activities Fetch Error:', error);
+    if (allActivities.length > 0) return allActivities;
     throw error;
   }
 };
 
-export const fetchWellness = async (creds: IntervalsCredentials, daysBack: number = 90): Promise<Wellness[]> => {
+export const fetchWellness = async (creds: IntervalsCredentials, daysBack: number = 3650): Promise<Wellness[]> => {
   const { apiKey, athleteId } = creds;
   if (apiKey === 'demo') return getMockWellness();
 
@@ -120,23 +152,57 @@ export const fetchWellness = async (creds: IntervalsCredentials, daysBack: numbe
   };
 
   const now = new Date();
-  const futureDate = new Date(now);
-  futureDate.setDate(now.getDate() + 2);
-  const newest = toLocalDateString(futureDate);
   
-  const past = new Date(now);
-  past.setDate(now.getDate() - daysBack); 
-  const oldest = toLocalDateString(past);
+  // Wellness API only returns 1 year at a time. We must fetch in chunks if daysBack > 365.
+  const allWellness: Wellness[] = [];
+  let currentNewest = new Date(now);
+  currentNewest.setDate(now.getDate() + 2); // Buffer forward
 
-  const url = `https://intervals.icu/api/v1/athlete/${athleteId}/wellness?oldest=${oldest}&newest=${newest}`;
+  const startPastDate = new Date(now);
+  startPastDate.setDate(now.getDate() - daysBack);
+  const targetOldestDate = startPastDate;
 
   try {
-    const response = await fetch(url, { method: 'GET', headers });
-    if (!response.ok) return [];
-    const data = await response.json();
-    return Array.isArray(data) ? data : [];
+    let remaining = true;
+    while (remaining) {
+      const chunkOldestDate = new Date(currentNewest);
+      chunkOldestDate.setDate(currentNewest.getDate() - 364); // Max 1 year
+
+      // Don't fetch further back than requested
+      const actualOldestDate = chunkOldestDate < targetOldestDate ? targetOldestDate : chunkOldestDate;
+      
+      const oldestStr = toLocalDateString(actualOldestDate);
+      const newestStr = toLocalDateString(currentNewest);
+      
+      const url = `https://intervals.icu/api/v1/athlete/${athleteId}/wellness?oldest=${oldestStr}&newest=${newestStr}`;
+      
+      const response = await fetch(url, { method: 'GET', headers });
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data)) {
+          // Merge and avoid duplicates if they overlap at the edges
+          data.forEach(item => {
+            if (!allWellness.find(existing => existing.id === item.id || existing.date === item.date)) {
+              allWellness.push(item);
+            }
+          });
+        }
+      }
+
+      // Move the window back
+      currentNewest = new Date(actualOldestDate);
+      currentNewest.setDate(currentNewest.getDate() - 1);
+      
+      if (actualOldestDate <= targetOldestDate) {
+        remaining = false;
+      }
+    }
+    
+    // Sort chronologically
+    return allWellness.sort((a, b) => a.date.localeCompare(b.date));
   } catch (error) {
-    return [];
+    console.error("Wellness Fetch Error:", error);
+    return allWellness;
   }
 };
 
@@ -232,14 +298,15 @@ export const uploadWorkout = async (
 export const getMockActivities = (): Activity[] => {
   const mock: Activity[] = [];
   const now = new Date();
-  for (let i = 30; i >= 0; i--) {
+  // Provide 10 years of mock history to demonstrate "full history" analysis
+  for (let i = 3650; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(now.getDate() - i);
     // Add data for every other day to simulate a realistic training schedule
     if (i % 2 === 0) {
       mock.push({
         id: `mock-${i}`,
-        name: i === 0 ? "Recovery Spin" : i % 4 === 0 ? "Threshold Session" : "Endurance Ride",
+        name: i === 0 ? "Recovery Spin" : i % 10 === 0 ? "Interval Session" : i % 4 === 0 ? "Threshold Session" : "Endurance Ride",
         type: "VirtualRide",
         start_date_local: d.toISOString(),
         distance: 25000 + Math.random() * 5000,
@@ -259,17 +326,18 @@ export const getMockActivities = (): Activity[] => {
 export const getMockWellness = (): Wellness[] => {
   const now = new Date();
   const data: Wellness[] = [];
-  for (let i = 30; i >= 0; i--) {
+  // Matching 10 years of wellness
+  for (let i = 3650; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(now.getDate() - i);
     const dateStr = toLocalDateString(d);
     data.push({
       id: `mock-w-${i}`,
       date: dateStr,
-      ctl: 45 + (30 - i) * 0.1,
-      atl: 40 + Math.random() * 10,
-      tsb: 5 - Math.random() * 10,
-      trainingLoad: 0
+      ctl: 45 + (180 - Math.min(i, 180)) * 0.2, // Simulate fitness build up
+      atl: 40 + Math.random() * 20,
+      tsb: 10 - Math.random() * 20,
+      trainingLoad: i % 2 === 0 ? 60 : 0
     });
   }
   return data;

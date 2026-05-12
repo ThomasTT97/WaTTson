@@ -128,5 +128,7 @@ export interface UserProfileAnalysis {
   strengths: string[];
   areas_for_improvement: string[];
   training_response: string;
+  effective_methods: string[];
+  ineffective_methods: string[];
   recommended_focus: string;
 }

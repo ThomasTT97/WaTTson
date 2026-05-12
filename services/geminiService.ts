@@ -275,9 +275,33 @@ export const sendChatMessage = async (
   ).join('\n');
 
   // Compress full history for the LLM to access
-  const fullHistoryCompact = sortedActivities.map(a => 
-    `${a.start_date_local.split('T')[0]}|${a.type}|TSS:${a.icu_training_load || a.icu_tss || 0}|${Math.round((a.distance || 0)/1000)}km`
-  ).join(', ');
+  // For histories > 300 items, we summarize older ones to stay concise while maintaining the "full history" awareness
+  let fullHistoryCompact = '';
+  if (sortedActivities.length > 300) {
+    const recentPool = sortedActivities.slice(0, 100);
+    const olderPool = sortedActivities.slice(100);
+    
+    const recentStr = recentPool.map(a => 
+      `${a.start_date_local.split('T')[0]}|TSS:${a.icu_training_load || a.icu_tss || 0}`
+    ).join(',');
+
+    // Summarize older data by month or year to keep it useful but compact
+    const summaries: Record<string, number> = {};
+    olderPool.forEach(a => {
+      const month = a.start_date_local.substring(0, 7); // YYYY-MM
+      summaries[month] = (summaries[month] || 0) + (a.icu_training_load || a.icu_tss || 0);
+    });
+
+    const summaryStr = Object.entries(summaries)
+      .map(([m, tss]) => `${m}:TSS ${Math.round(tss as number)}`)
+      .join(',');
+
+    fullHistoryCompact = `Recent: ${recentStr} | Older Summaries: ${summaryStr}`;
+  } else {
+    fullHistoryCompact = sortedActivities.map(a => 
+      `${a.start_date_local.split('T')[0]}|${a.type}|TSS:${a.icu_training_load || a.icu_tss || 0}|${Math.round((a.distance || 0)/1000)}km`
+    ).join(', ');
+  }
 
   const systemInstruction = `You are waTTson, a direct cycling coach. 
     Concise text-style replies (1-3 sentences). 
@@ -342,6 +366,8 @@ export const analyzeUserProfile = async (
     strengths: array of 2-3 strings describing what they are good at.
     areas_for_improvement: array of 2-3 strings.
     training_response: String explaining how this user reacts to past training methods (e.g. "You adapt well to high volume but struggle with back-to-back VO2max sessions").
+    effective_methods: array of 2 strings of methods that worked well (e.g. "Long Z2 rides", "Polarized training").
+    ineffective_methods: array of 2 strings of methods that caused stagnation or excessive fatigue.
     recommended_focus: 1-sentence recommendation going forward.`;
 
   const response: GenerateContentResponse = await ai.models.generateContent({
@@ -356,9 +382,11 @@ export const analyzeUserProfile = async (
           strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
           areas_for_improvement: { type: Type.ARRAY, items: { type: Type.STRING } },
           training_response: { type: Type.STRING },
+          effective_methods: { type: Type.ARRAY, items: { type: Type.STRING } },
+          ineffective_methods: { type: Type.ARRAY, items: { type: Type.STRING } },
           recommended_focus: { type: Type.STRING }
         },
-        required: ['athlete_type', 'strengths', 'areas_for_improvement', 'training_response', 'recommended_focus']
+        required: ['athlete_type', 'strengths', 'areas_for_improvement', 'training_response', 'effective_methods', 'ineffective_methods', 'recommended_focus']
       }
     }
   });

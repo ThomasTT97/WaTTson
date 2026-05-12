@@ -41,7 +41,8 @@ import {
   MoreVertical,
   Check,
   Menu,
-  X
+  X,
+  Info
 } from 'lucide-react';
 
 const CyclistIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -111,7 +112,6 @@ const App: React.FC = () => {
   });
   const [loading, setLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [isDeepSyncing, setIsDeepSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const [showWeeklyBriefing, setShowWeeklyBriefing] = useState(false);
@@ -155,6 +155,7 @@ const App: React.FC = () => {
     } catch {}
     return [];
   });
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
     localStorage.setItem('wattson_chat_history', JSON.stringify(messages));
@@ -162,7 +163,6 @@ const App: React.FC = () => {
 
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const [isChatMenuOpen, setIsChatMenuOpen] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   
   const [userGoal, setUserGoal] = useState<string>(() => localStorage.getItem('wattson_goal') || 'Improve cycling performance');
@@ -185,8 +185,8 @@ const App: React.FC = () => {
       }
 
       const [fetchedActivities, fetchedWellness, profile] = await Promise.all([
-        fetchActivities(activeCreds),
-        fetchWellness(activeCreds),
+        fetchActivities(activeCreds, 3650),
+        fetchWellness(activeCreds, 3650),
         activeCreds.apiKey === 'demo' ? Promise.resolve({ id: '0', icu_ftp: 250 }) : fetchAthleteProfile(activeCreds)
       ]);
       
@@ -208,6 +208,17 @@ const App: React.FC = () => {
         setCreds(activeCreds);
         localStorage.setItem('wattson_creds', JSON.stringify(activeCreds));
       }
+
+      // If initial load and we have history, greet the user
+      if (isInitial && fetchedActivities && fetchedActivities.length > 0 && messages.length === 0) {
+        const sorted = [...fetchedActivities].sort((a,b) => a.start_date_local.localeCompare(b.start_date_local));
+        const oldestRide = sorted[0];
+        const oldestDateStr = new Date(oldestRide.start_date_local).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+        
+        const introMsg = `Connection established. I've analyzed your full history of **${fetchedActivities.length} activities** extending back to **${oldestDateStr}**.\n\nI'm ready to provide coaching based on your long-term evolution. What's on your mind today?`;
+        
+        setMessages([{ role: 'model', text: introMsg }]);
+      }
     } catch (err: any) {
       console.error("Sync error:", err);
       setSyncError(err.message || "Failed to connect to Intervals.icu");
@@ -216,41 +227,6 @@ const App: React.FC = () => {
     } finally {
       setLoading(false);
       setIsSyncing(false);
-    }
-  };
-
-  const handleDeepSync = async (days: number) => {
-    if (!creds || loading || isSyncing || isDeepSyncing) return;
-    setIsDeepSyncing(true);
-    setIsChatMenuOpen(false);
-    setSyncError(null);
-    try {
-      const [fetchedActivities, fetchedWellness] = await Promise.all([
-        fetchActivities(creds, days),
-        fetchWellness(creds, days)
-      ]);
-      
-      setActivities(fetchedActivities || []);
-      setWellnessData(fetchedWellness || []);
-      
-      localStorage.setItem('wattson_activities_cache', JSON.stringify(fetchedActivities || []));
-      localStorage.setItem('wattson_wellness_cache', JSON.stringify(fetchedWellness || []));
-
-      // Trigger coach acknowledgment
-      if (fetchedActivities && fetchedActivities.length > 0) {
-        const sorted = [...fetchedActivities].sort((a,b) => a.start_date_local.localeCompare(b.start_date_local));
-        const oldestRide = sorted[0];
-        const oldestDateStr = new Date(oldestRide.start_date_local).toLocaleDateString();
-        
-        const introMsg = `I've successfully expanded my deep-memory search. My access now extends back to ${oldestDateStr}.\n\nI can see your ride "${oldestRide.name}" from that day—you covered ${Math.round((oldestRide.distance || 0) / 1000)}km with a TSS of ${oldestRide.icu_training_load || oldestRide.icu_tss || 0}. I'll use this full history for our future analysis.`;
-        
-        setMessages(prev => [...prev, { role: 'model', text: introMsg }]);
-      }
-    } catch (err: any) {
-      console.error("Deep sync error:", err);
-      setSyncError(err.message || "Failed to fetch deep history");
-    } finally {
-      setIsDeepSyncing(false);
     }
   };
 
@@ -419,7 +395,9 @@ const App: React.FC = () => {
         <div className="w-12 h-12 bg-emerald-500/5 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/5 shadow-inner">
           <CyclistIcon size={24} className="text-emerald-400" />
         </div>
-        <h1 className="text-3xl font-black text-white italic mb-8 tracking-tight">wa<span className="text-emerald-400">TT</span>son</h1>
+        <h1 className="text-3xl font-black text-white italic mb-8 tracking-tight">
+          wa<span className="text-emerald-400">TT</span>son
+        </h1>
         <div className="space-y-3">
           {syncError && (
             <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[10px] text-rose-400 font-bold leading-tight">
@@ -477,88 +455,46 @@ const App: React.FC = () => {
       <header className="flex-none flex items-center justify-between pb-4 px-6 bg-transparent border-b border-white/5 z-30" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 16px)' }}>
         <div className="flex items-center gap-4">
           <div className="w-9 h-9 rounded-xl glass-card flex flex-shrink-0 items-center justify-center shadow-inner relative overflow-hidden">
-             {activeTab === 'chat' && isDeepSyncing && <div className="absolute inset-0 bg-emerald-500/20 animate-pulse" />}
+             {isSyncing && <div className="absolute inset-0 bg-emerald-500/20 animate-pulse" />}
              {activeTab === 'chat' ? <Bot size={18} className="text-emerald-400" /> : <CyclistIcon size={20} className="text-emerald-400" />}
           </div>
           <div className="flex flex-col justify-center">
             <div className="flex items-center gap-2">
-              <h2 className="text-2xl font-black text-white italic tracking-tight leading-none">wa<span className="text-emerald-400">TT</span>son</h2>
-              {activeTab === 'chat' && isDeepSyncing && <RotateCcw size={12} className="animate-spin text-emerald-400" />}
+              <h2 className="text-2xl font-black text-white italic tracking-tight leading-none">
+                wa<span className="text-emerald-400">TT</span>son
+              </h2>
+              {isSyncing && <RotateCcw size={12} className="animate-spin text-emerald-400" />}
             </div>
           </div>
         </div>
         
         <div className="flex justify-end gap-3 items-center">
-          {activeTab === 'chat' ? (
-            <div className="relative">
-              <button 
-                onClick={() => setIsChatMenuOpen(!isChatMenuOpen)}
-                className="w-9 h-9 rounded-full glass-card flex items-center justify-center text-slate-400 hover:text-emerald-400 transition-colors"
-                title="Historical Sync Options"
-              >
-                <MoreVertical size={18} />
-              </button>
-              
-              {isChatMenuOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-slate-900 rounded-[1.2rem] border border-white/20 shadow-2xl z-[100] animate-in fade-in slide-in-from-top-2 duration-200 p-1.5 text-left">
-                  <button 
-                    onClick={() => { setSuggestion(null); loadData(creds!); setIsChatMenuOpen(false); }}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left"
-                  >
-                    <RefreshCw size={14} className={isSyncing ? 'animate-spin text-emerald-400' : 'text-slate-400'} />
-                    <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Sync Recent</span>
-                  </button>
-                  
-                  <div className="h-px bg-white/5 my-1 mx-2" />
-                  <p className="px-3 py-1.5 text-[8px] font-black text-slate-600 uppercase tracking-widest">Historical Memory</p>
-                  
-                  <button 
-                    onClick={() => handleDeepSync(365)}
-                    className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-emerald-500/10 rounded-xl transition-colors text-left group"
-                  >
-                    <div className="flex items-center gap-3">
-                      <History size={14} className="text-slate-400 group-hover:text-emerald-400" />
-                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">1 Year</span>
-                    </div>
-                    {isDeepSyncing && <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />}
-                  </button>
-                  
-                  <button 
-                    onClick={() => handleDeepSync(365 * 2)}
-                    className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-emerald-500/10 rounded-xl transition-colors text-left group"
-                  >
-                    <div className="flex items-center gap-3">
-                      <History size={14} className="text-slate-400 group-hover:text-emerald-400" />
-                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">2 Years</span>
-                    </div>
-                  </button>
- 
-                  <button 
-                    onClick={() => handleDeepSync(365 * 5)}
-                    className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-emerald-500/10 rounded-xl transition-colors text-left group"
-                  >
-                    <div className="flex items-center gap-3">
-                      <History size={14} className="text-slate-400 group-hover:text-emerald-400" />
-                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">5 Years</span>
-                    </div>
-                  </button>
-                  
-                  <div className="h-px bg-white/5 my-1 mx-2" />
-                  <button 
-                    onClick={() => { setMessages([]); setIsChatMenuOpen(false); }}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-rose-500/10 rounded-xl transition-colors text-left group"
-                  >
-                    <RotateCcw size={14} className="text-slate-400 group-hover:text-rose-400" />
-                    <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest group-hover:text-rose-400">Reset Chat</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
+          {activeTab === 'chat' && (
+            <button 
+              onClick={() => { 
+                if (confirmClear) {
+                  setMessages([]);
+                  setConfirmClear(false);
+                } else {
+                  setConfirmClear(true);
+                  setTimeout(() => setConfirmClear(false), 3000);
+                }
+              }}
+              className={`px-3 py-1.5 rounded-lg border text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 ${
+                confirmClear 
+                ? 'bg-rose-500 border-rose-600 text-white shadow-[0_0_10px_rgba(244,63,94,0.3)]' 
+                : 'bg-white/5 border-white/5 text-slate-500 hover:text-rose-400 hover:border-rose-500/20'
+              }`}
+            >
+              {confirmClear ? 'Confirm?' : 'Clear'}
+            </button>
+          )}
+
+          {activeTab !== 'chat' && (
             <button 
               onClick={() => { setSuggestion(null); loadData(creds!); }}
               disabled={isSyncing}
-              className="w-9 h-9 rounded-full glass-card flex items-center justify-center text-slate-400 hover:text-emerald-400 active:rotate-180 transition-all duration-700"
+              className="w-10 h-10 rounded-xl glass-card flex items-center justify-center text-emerald-400 border border-emerald-500/20 active:scale-95 transition-all shadow-[0_0_15px_rgba(34,211,238,0.15)]"
             >
               <RefreshCw size={16} className={isSyncing ? 'animate-spin text-emerald-400' : ''} />
             </button>
@@ -725,15 +661,14 @@ const App: React.FC = () => {
                   <MessageSquare size={18} />
                 </div>
                 <div className="text-left">
-                  <span className="block text-[8px] font-bold text-slate-600 uppercase tracking-widest">Ask AI</span>
-                  <span className="block text-[11px] font-black text-white uppercase tracking-tight">Coach</span>
+                  <span className="block text-[11px] font-black text-xl text-white italic uppercase tracking-tight leading-none">wa<span className="text-emerald-400">TT</span>son</span>
                 </div>
               </button>
             </div>
 
             {/* Recent Progress Glimpse - Bottom strip */}
             <div 
-              onClick={() => setReasoningPopup({ title: 'Training Status', content: `waTTson determines your status using chronic training load (fitness) and acute training load (fatigue). Currently your form (TSB) is ${Math.round(stats.form)}, classifying you as ${stats.statusLabel}.` })}
+              onClick={() => setReasoningPopup({ title: 'Training Status', content: `waTTson determines your status using chronic training load (fitness) and acute training load (fatigue).` })}
               className="mt-6 glass-card py-3 px-5 rounded-full border-white/5 flex items-center justify-between flex-shrink-0 cursor-pointer active:scale-[0.98] transition-transform"
             >
                <div className="flex items-center gap-2">
@@ -766,7 +701,9 @@ const App: React.FC = () => {
              <div className="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-4 custom-scrollbar">
                {messages.length === 0 ? (
                  <div className="h-full flex flex-col items-center justify-center text-center px-6 pb-12">
-                    <p className="text-[11px] text-slate-500 leading-relaxed mb-6 max-w-[220px]">Coach wa<span className="text-emerald-400">TT</span>son is ready. Ask for training context or recent load analysis.</p>
+                    <p className="text-[11px] text-slate-500 leading-relaxed mb-6 max-w-[220px]">
+                      wa<span className="text-emerald-400">TT</span>son is ready. I can analyze your training context or recent load history.
+                    </p>
                     <div className="flex flex-wrap gap-2 justify-center">
                        {(CHAT_SUGGESTIONS as string[]).map((suggestionText) => (
                          <button 
@@ -953,7 +890,7 @@ const App: React.FC = () => {
                         <div className="w-8 h-8 mt-1 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 shrink-0"><ActivityIcon size={16} /></div>
                         <div>
                           <p className="text-[12px] font-bold text-white mb-1">Ride History</p>
-                          <p className="text-[10px] text-slate-400 mb-2">waTTson synchronizes your last 90 days of interval activity to understand your power curve and endurance.</p>
+                          <p className="text-[10px] text-slate-400 mb-2">waTTson synchronizes your full training history of interval activity to understand your power curve and endurance.</p>
                           <div className="flex flex-wrap gap-1.5">
                             <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">TSS</span>
                             <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Intensity Factor</span>
@@ -1034,9 +971,36 @@ const App: React.FC = () => {
                         <div className="relative">
                           <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-amber-500/30"></div>
                           <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">Training Response</h4>
-                          <p className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3">
+                          <p className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3 mb-4">
                             {userProfile.training_response}
                           </p>
+                          
+                          <div className="grid grid-cols-2 gap-3 pl-3">
+                            <div>
+                               <p className="text-[8px] font-black text-emerald-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                                 <Check size={10} className="stroke-[3]" /> Effective
+                               </p>
+                               <ul className="text-[10px] text-slate-300 font-bold space-y-1">
+                                 {userProfile.effective_methods.map((m, i) => (
+                                   <li key={i} className="flex items-start gap-1.5">
+                                     <span className="text-emerald-500/50">•</span> {m}
+                                   </li>
+                                 ))}
+                               </ul>
+                            </div>
+                            <div>
+                               <p className="text-[8px] font-black text-rose-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                                 <X size={10} className="stroke-[3]" /> Ineffective
+                               </p>
+                               <ul className="text-[10px] text-slate-300 font-bold space-y-1">
+                                 {userProfile.ineffective_methods.map((m, i) => (
+                                   <li key={i} className="flex items-start gap-1.5">
+                                     <span className="text-rose-500/50">•</span> {m}
+                                   </li>
+                                 ))}
+                               </ul>
+                            </div>
+                          </div>
                         </div>
                         
                         <div className="relative">
@@ -1092,7 +1056,7 @@ const App: React.FC = () => {
                  {[
                    { id: 'dashboard', icon: LayoutDashboard, label: 'Control Center' },
                    { id: 'rides', icon: Bike, label: 'Training Logs' },
-                   { id: 'chat', icon: MessageSquare, label: 'Coach Chat' },
+                   { id: 'chat', icon: MessageSquare, label: 'waTTson' },
                    { id: 'settings', icon: Settings, label: 'Athlete DNA' }
                  ].map((item) => (
                    <button 
@@ -1178,13 +1142,15 @@ const App: React.FC = () => {
       {showReleaseNotes && (
         <div className="absolute inset-0 z-[220] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowReleaseNotes(false)}>
           <div className="glass-card w-full max-w-[340px] rounded-[2rem] p-7 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-black text-white italic tracking-tight mb-2">wa<span className="text-emerald-400">TT</span>son Update</h3>
+            <h3 className="text-lg font-black text-white italic tracking-tight mb-2">
+              wa<span className="text-emerald-400">TT</span>son Update
+            </h3>
             <p className="text-[10px] text-emerald-500/80 font-bold uppercase tracking-widest mb-5">Version {APP_VERSION}</p>
             
             <div className="space-y-4 mb-6">
               <div>
                 <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Athlete Profile Engine</h4>
-                <p className="text-slate-400 text-[11px] leading-relaxed">waTTson now analyzes your last 30 days of training to build a custom athlete shape based on your history. Access this in Settings &gt; Athlete Profile.</p>
+                <p className="text-slate-400 text-[11px] leading-relaxed">waTTson now analyzes your full history of training to build a custom athlete shape based on your history. Access this in Settings &gt; Athlete Profile.</p>
               </div>
               <div>
                 <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Interactive Rationale</h4>
