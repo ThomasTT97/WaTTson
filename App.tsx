@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Activity, 
   IntervalsCredentials, 
@@ -38,7 +39,9 @@ import {
   Activity as ActivityIcon,
   History,
   MoreVertical,
-  Check
+  Check,
+  Menu,
+  X
 } from 'lucide-react';
 
 const CyclistIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -127,6 +130,7 @@ const App: React.FC = () => {
   const [showAlternative, setShowAlternative] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'rides' | 'chat' | 'settings'>('dashboard');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'methodology'>('main');
   const [userProfile, setUserProfile] = useState<UserProfileAnalysis | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
@@ -484,7 +488,7 @@ const App: React.FC = () => {
           </div>
         </div>
         
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-3 items-center">
           {activeTab === 'chat' ? (
             <div className="relative">
               <button 
@@ -528,7 +532,7 @@ const App: React.FC = () => {
                       <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">2 Years</span>
                     </div>
                   </button>
-
+ 
                   <button 
                     onClick={() => handleDeepSync(365 * 5)}
                     className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-emerald-500/10 rounded-xl transition-colors text-left group"
@@ -559,6 +563,13 @@ const App: React.FC = () => {
               <RefreshCw size={16} className={isSyncing ? 'animate-spin text-emerald-400' : ''} />
             </button>
           )}
+
+          <button 
+            onClick={() => setIsSidebarOpen(true)}
+            className="w-10 h-10 rounded-xl glass-card flex items-center justify-center text-emerald-400 border border-emerald-500/20 active:scale-95 transition-all shadow-[0_0_15px_rgba(34,211,238,0.15)]"
+          >
+            <Menu size={22} />
+          </button>
         </div>
       </header>
 
@@ -681,6 +692,35 @@ const App: React.FC = () => {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Quick Navigation */}
+            <div className="grid grid-cols-2 gap-3 flex-shrink-0">
+              <button 
+                onClick={() => setActiveTab('rides')}
+                className="glass-card p-4 rounded-[1.8rem] flex items-center gap-3 active:scale-[0.98] transition-all hover:bg-white/5 border border-white/5 shadow-sm group"
+              >
+                <div className="w-9 h-9 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:bg-blue-500/20 transition-colors">
+                  <Bike size={18} />
+                </div>
+                <div className="text-left">
+                  <span className="block text-[8px] font-bold text-slate-600 uppercase tracking-widest">Analyze</span>
+                  <span className="block text-[11px] font-black text-white uppercase tracking-tight">Logs</span>
+                </div>
+              </button>
+              
+              <button 
+                onClick={() => setActiveTab('chat')}
+                className="glass-card p-4 rounded-[1.8rem] flex items-center gap-3 active:scale-[0.98] transition-all hover:bg-white/5 border border-white/5 shadow-sm group"
+              >
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500/20 transition-colors">
+                  <MessageSquare size={18} />
+                </div>
+                <div className="text-left">
+                  <span className="block text-[8px] font-bold text-slate-600 uppercase tracking-widest">Ask AI</span>
+                  <span className="block text-[11px] font-black text-white uppercase tracking-tight">Coach</span>
+                </div>
+              </button>
             </div>
 
             {/* Recent Progress Glimpse - Bottom strip */}
@@ -1011,25 +1051,85 @@ const App: React.FC = () => {
         )}
       </div>
 
-      <nav className="shrink-0 glass-card bg-transparent border-t border-white/5 z-[100]" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}>
-        <div className="flex items-center justify-around px-4 pt-3 pb-1">
-          {[
-            { id: 'dashboard', icon: LayoutDashboard, label: 'Home' },
-            { id: 'rides', icon: Bike, label: 'Logs' },
-            { id: 'chat', icon: MessageSquare, label: 'Chat' },
-            { id: 'settings', icon: Settings, label: 'Pro' }
-          ].map((item) => (
-            <button 
-              key={item.id}
-              onClick={() => setActiveTab(item.id as any)}
-              className={`flex flex-col items-center gap-1 transition-all duration-300 py-1.5 px-3 rounded-xl ${activeTab === item.id ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSidebarOpen(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-md z-[200]"
+            />
+            <motion.div 
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="fixed top-0 left-0 bottom-0 w-72 bg-slate-950 border-r border-white/10 z-[210] flex flex-col p-6 shadow-2xl"
             >
-              <item.icon size={21} strokeWidth={activeTab === item.id ? 2.5 : 2} />
-              <span className="text-[9px] font-bold uppercase tracking-[0.05em]">{item.label}</span>
-            </button>
-          ))}
-        </div>
-      </nav>
+              <div className="flex items-center justify-between mb-10 pt-4">
+                <div className="flex items-center gap-3">
+                   <div className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 shadow-inner">
+                     <CyclistIcon size={20} className="text-emerald-400" />
+                   </div>
+                   <h2 className="text-2xl font-black text-white italic tracking-tight">wa<span className="text-emerald-400">TT</span>son</h2>
+                </div>
+                <button onClick={() => setIsSidebarOpen(false)} className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <nav className="flex-1 space-y-2">
+                 {[
+                   { id: 'dashboard', icon: LayoutDashboard, label: 'Control Center' },
+                   { id: 'rides', icon: Bike, label: 'Training Logs' },
+                   { id: 'chat', icon: MessageSquare, label: 'Coach Chat' },
+                   { id: 'settings', icon: Settings, label: 'Athlete DNA' }
+                 ].map((item) => (
+                   <button 
+                     key={item.id}
+                     onClick={() => { setActiveTab(item.id as any); setIsSidebarOpen(false); }}
+                     className={`w-full flex items-center gap-4 px-4 py-4 rounded-2xl transition-all duration-300 ${activeTab === item.id ? 'bg-emerald-500 text-slate-950 font-bold shadow-[0_0_25px_rgba(16,185,129,0.2)]' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}
+                   >
+                     <item.icon size={22} strokeWidth={activeTab === item.id ? 2.5 : 2} />
+                     <span className="text-xs font-black uppercase tracking-[0.1em]">{item.label}</span>
+                   </button>
+                 ))}
+              </nav>
+
+              <div className="mt-auto space-y-4 pt-6 border-t border-white/5">
+                 <div className="flex items-center gap-3 px-2">
+                   <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center border border-white/5 shadow-inner">
+                     <User size={20} className="text-slate-500" />
+                   </div>
+                   <div className="flex-1 min-w-0">
+                     <p className="text-[10px] font-black text-white truncate uppercase tracking-widest">ID: {creds?.athleteId}</p>
+                     <p className="text-[8px] font-bold text-emerald-500 uppercase tracking-[0.2em]">Systems v{APP_VERSION}</p>
+                   </div>
+                 </div>
+                 
+                 <div className="grid grid-cols-2 gap-2">
+                   <button 
+                     onClick={() => { setSuggestion(null); loadData(creds!); setIsSidebarOpen(false); }}
+                     className="flex flex-col items-center justify-center gap-2 p-3 rounded-xl bg-white/5 border border-white/5 text-slate-400 hover:text-white transition-all"
+                   >
+                     <RefreshCw size={14} className={isSyncing ? 'animate-spin text-emerald-400' : ''} />
+                     <span className="text-[8px] font-bold uppercase tracking-widest">Full Sync</span>
+                   </button>
+                   <button 
+                     onClick={() => { localStorage.clear(); window.location.reload(); }}
+                     className="flex flex-col items-center justify-center gap-2 p-3 rounded-xl bg-rose-500/5 text-rose-500 hover:bg-rose-500/10 transition-colors border border-rose-500/10"
+                   >
+                     <LogOut size={14} />
+                     <span className="text-[8px] font-bold uppercase tracking-widest">Logout</span>
+                   </button>
+                 </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {showGoalEditor && (
         <div className="fixed inset-0 z-[210] bg-slate-950/98 backdrop-blur-3xl flex flex-col p-8 animate-in slide-in-from-bottom-4 duration-400">
