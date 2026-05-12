@@ -49,7 +49,7 @@ export const fetchAthleteId = async (apiKey: string): Promise<string> => {
   }
 };
 
-export const fetchActivities = async (creds: IntervalsCredentials, daysBack: number = 1095): Promise<Activity[]> => {
+export const fetchActivities = async (creds: IntervalsCredentials, daysBack: number = 3650): Promise<Activity[]> => {
   const { apiKey, athleteId } = creds;
   
   if (apiKey === 'demo') return getMockActivities();
@@ -150,7 +150,7 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
   }
 };
 
-export const fetchWellness = async (creds: IntervalsCredentials, daysBack: number = 1095): Promise<Wellness[]> => {
+export const fetchWellness = async (creds: IntervalsCredentials, daysBack: number = 3650): Promise<Wellness[]> => {
   const { apiKey, athleteId } = creds;
   if (apiKey === 'demo') return getMockWellness();
 
@@ -312,8 +312,8 @@ export const uploadWorkout = async (
 export const getMockActivities = (): Activity[] => {
   const mock: Activity[] = [];
   const now = new Date();
-  // Provide 3 years of mock history to demonstrate "full history" analysis
-  for (let i = 1095; i >= 0; i--) {
+  // Provide 10 years of mock history to demonstrate "full history" analysis
+  for (let i = 3650; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(now.getDate() - i);
     // Add data for every other day to simulate a realistic training schedule
@@ -340,8 +340,8 @@ export const getMockActivities = (): Activity[] => {
 export const getMockWellness = (): Wellness[] => {
   const now = new Date();
   const data: Wellness[] = [];
-  // Matching 3 years of wellness
-  for (let i = 1095; i >= 0; i--) {
+  // Matching 10 years of wellness
+  for (let i = 3650; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(now.getDate() - i);
     const dateStr = toLocalDateString(d);

@@ -144,7 +144,7 @@ const App: React.FC = () => {
     const seenVersion = localStorage.getItem('wattson_seen_version');
     if (seenVersion !== APP_VERSION) {
       setShowReleaseNotes(true);
-      localStorage.setItem('wattson_seen_version', APP_VERSION);
+      safeSetItem('wattson_seen_version', APP_VERSION);
     }
   }, []);
 
@@ -157,8 +157,22 @@ const App: React.FC = () => {
   });
   const [confirmClear, setConfirmClear] = useState(false);
 
+  const safeSetItem = (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      console.warn(`Storage limit reached for ${key}. Data not cached.`);
+      if (e instanceof Error && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
+        // Fallback: Clear old potentially large caches if critical
+        if (key === 'wattson_activities_cache' || key === 'wattson_wellness_cache') {
+          // We could try to clear chat history or just leave it
+        }
+      }
+    }
+  };
+
   useEffect(() => {
-    localStorage.setItem('wattson_chat_history', JSON.stringify(messages));
+    safeSetItem('wattson_chat_history', JSON.stringify(messages));
   }, [messages]);
 
   const [chatInput, setChatInput] = useState('');
@@ -185,8 +199,8 @@ const App: React.FC = () => {
       }
 
       const [fetchedActivities, fetchedWellness, profile] = await Promise.all([
-        fetchActivities(activeCreds, 1095),
-        fetchWellness(activeCreds, 1095),
+        fetchActivities(activeCreds, 3650),
+        fetchWellness(activeCreds, 3650),
         activeCreds.apiKey === 'demo' ? Promise.resolve({ id: '0', icu_ftp: 250 }) : fetchAthleteProfile(activeCreds)
       ]);
       
@@ -194,11 +208,16 @@ const App: React.FC = () => {
       setWellnessData(fetchedWellness || []);
       if (profile?.icu_ftp) {
         setFtp(profile.icu_ftp);
-        localStorage.setItem('wattson_ftp', profile.icu_ftp.toString());
+        safeSetItem('wattson_ftp', profile.icu_ftp.toString());
       }
       
-      localStorage.setItem('wattson_activities_cache', JSON.stringify(fetchedActivities || []));
-      localStorage.setItem('wattson_wellness_cache', JSON.stringify(fetchedWellness || []));
+      // Limit cache to avoid QuotaExceededError (5MB limit)
+      // Save only last 2 years of activities to disk while keeping full history in memory
+      const activitiesToCache = (fetchedActivities || []).slice(0, 500); 
+      const wellnessToCache = (fetchedWellness || []).slice(-730);
+
+      safeSetItem('wattson_activities_cache', JSON.stringify(activitiesToCache));
+      safeSetItem('wattson_wellness_cache', JSON.stringify(wellnessToCache));
       
       const credsChanged = !creds || 
                            activeCreds.apiKey !== creds.apiKey || 
@@ -206,7 +225,7 @@ const App: React.FC = () => {
       
       if (credsChanged) {
         setCreds(activeCreds);
-        localStorage.setItem('wattson_creds', JSON.stringify(activeCreds));
+        safeSetItem('wattson_creds', JSON.stringify(activeCreds));
       }
 
       // If initial load and we have history, greet the user
@@ -257,7 +276,7 @@ const App: React.FC = () => {
         try {
           const data = await getDailySuggestion(activities!, userGoal, hasRideToday);
           setSuggestion(data);
-          localStorage.setItem('wattson_daily_cache', JSON.stringify(data));
+          safeSetItem('wattson_daily_cache', JSON.stringify(data));
         } catch (err) {
           console.error("Suggestion failed:", err);
         } finally {
@@ -1117,7 +1136,7 @@ const App: React.FC = () => {
             placeholder="Ex: Improve hill climb efficiency..."
           />
           <button 
-            onClick={() => { localStorage.setItem('wattson_goal', userGoal); setSuggestion(null); setShowGoalEditor(false); }}
+            onClick={() => { safeSetItem('wattson_goal', userGoal); setSuggestion(null); setShowGoalEditor(false); }}
             className="w-full py-5 bg-emerald-500 text-slate-950 font-bold text-[10px] uppercase tracking-[0.2em] rounded-[1.8rem] shadow-2xl active:scale-95 transition-all"
           >
             Update Engine Target

@@ -48,6 +48,38 @@ const setCache = (key: string, data: any) => {
 };
 
 /**
+ * General helper to call Gemini with a fallback chain.
+ */
+const callGemini = async (params: any): Promise<GenerateContentResponse> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  
+  // Model fallback chain: 
+  // 1. gemini-3-flash-preview (Standard Flash)
+  // 2. gemini-3.1-flash-lite (Unlimited tokens/Last robust fallback)
+  const models = ['gemini-3-flash-preview', 'gemini-3.1-flash-lite'];
+  
+  let lastError: any = null;
+  for (const model of models) {
+    try {
+      return await ai.models.generateContent({
+        ...params,
+        model
+      });
+    } catch (error: any) {
+      console.warn(`Gemini model ${model} failed, trying fallback...`, error);
+      lastError = error;
+      // If it's a quota issue (429) or other retryable error, we continue to the next model
+      if (error?.message?.includes('429') || error?.message?.includes('quota')) {
+        continue;
+      }
+      // If it's a structural error that won't be fixed by changing models, we might want to stop, 
+      // but the requirement is "last and most robust fallback", so we continue.
+    }
+  }
+  throw lastError || new Error("All Gemini models failed.");
+};
+
+/**
  * Analyzes a specific cycling activity and provides coaching feedback.
  */
 export const getRideFeedback = async (
@@ -60,7 +92,6 @@ export const getRideFeedback = async (
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const prompt = `You are waTTson, an elite cycling coach. 
     Analyze this ride: "${activity.name}". 
     TSS: ${activity.icu_training_load || activity.icu_tss || activity.training_load || 0}. 
@@ -74,8 +105,7 @@ export const getRideFeedback = async (
     summary: A 1-sentence punchy coaching summary.
     goal_contribution: A clear explanation of how this session contributes to ${userGoal}.`;
 
-  const response: GenerateContentResponse = await ai.models.generateContent({
-    model: 'gemini-1.5-flash',
+  const response = await callGemini({
     contents: prompt,
     config: { 
       responseMimeType: 'application/json',
@@ -106,8 +136,6 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
   const history = recentActivities
     .sort((a, b) => b.start_date_local.localeCompare(a.start_date_local))
     .slice(0, 7)
@@ -116,8 +144,7 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
 
   const prompt = `Coach: Suggest workout for ${targetStr}. History (7d): ${history}. Goal: "${userGoal}". JSON please. Ensure readiness_score is a number from 1 to 10.`;
 
-  const response: GenerateContentResponse = await ai.models.generateContent({
-    model: 'gemini-1.5-flash',
+  const response = await callGemini({
     contents: prompt,
     config: {
       responseMimeType: "application/json",
@@ -179,7 +206,6 @@ export const getWeeklyBriefing = async (
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const latestWellness = wellness[wellness.length - 1];
   const stats = `CTL: ${latestWellness?.ctl || 0}, TSB: ${latestWellness?.tsb || 0}, ATL: ${latestWellness?.atl || 0}`;
 
@@ -203,8 +229,7 @@ export const getWeeklyBriefing = async (
     Use ${ftp ? `athlete FTP: ${ftp}W` : 'sensible intensity levels'} for watts.
     Return JSON with phase, focus, outlook_summary, days[].`;
 
-  const response: GenerateContentResponse = await ai.models.generateContent({
-    model: 'gemini-1.5-flash',
+  const response = await callGemini({
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
       responseMimeType: 'application/json',
@@ -264,8 +289,6 @@ export const sendChatMessage = async (
     wellness: Wellness[];
   }
 ): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  
   // Format a data summary for the AI
   const sortedActivities = [...context.activities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local));
   const recentActivities = sortedActivities.slice(0, 5);
@@ -325,8 +348,7 @@ export const sendChatMessage = async (
     parts: [{ text: message }]
   });
 
-  const response: GenerateContentResponse = await ai.models.generateContent({
-    model: 'gemini-1.5-flash',
+  const response = await callGemini({
     contents,
     config: {
       systemInstruction,
@@ -347,8 +369,6 @@ export const analyzeUserProfile = async (
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  
   const sortedActivities = [...activities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local));
   const recentActivities = sortedActivities.slice(0, 30);
   
@@ -370,8 +390,7 @@ export const analyzeUserProfile = async (
     ineffective_methods: array of 2 strings of methods that caused stagnation or excessive fatigue.
     recommended_focus: 1-sentence recommendation going forward.`;
 
-  const response: GenerateContentResponse = await ai.models.generateContent({
-    model: 'gemini-1.5-flash',
+  const response = await callGemini({
     contents: prompt,
     config: { 
       responseMimeType: 'application/json',
