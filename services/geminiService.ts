@@ -101,7 +101,7 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
   const targetDate = new Date();
   if (forTomorrow) targetDate.setDate(targetDate.getDate() + 1);
   
-  const targetStr = targetDate.toISOString().split('T')[0];
+  const targetStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
   const cacheKey = `wattson_suggestion_${targetStr}_${userGoal || 'default'}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
@@ -170,11 +170,12 @@ export const getWeeklyBriefing = async (
   startContext?: string,
   ftp?: number
 ): Promise<WeeklyBriefing> => {
-  const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-  // Hash the activities/wellness to detect changes? 
-  // For simplicity, cache per day + goal. If data changes significantly, the user can sync.
-  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}`;
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  
+  // Include startContext in cache key to ensure it rotates if the "already had a ride" status changes
+  const contextHash = startContext ? btoa(startContext).slice(0, 10) : 'no-ctx';
+  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${contextHash}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
@@ -182,8 +183,21 @@ export const getWeeklyBriefing = async (
   const latestWellness = wellness[wellness.length - 1];
   const stats = `CTL: ${latestWellness?.ctl || 0}, TSB: ${latestWellness?.tsb || 0}, ATL: ${latestWellness?.atl || 0}`;
 
+  // Generate the actual list of days to enforce order
+  const dayNames: string[] = [];
+  const tempDate = new Date();
+  // If startContext contains "Plan MUST start from TOMORROW", we shift the dayNames generator
+  const startsTomorrow = startContext?.includes("TOMORROW");
+  if (startsTomorrow) tempDate.setDate(tempDate.getDate() + 1);
+
+  for (let i = 0; i < 7; i++) {
+    dayNames.push(tempDate.toLocaleDateString('en-US', { weekday: 'long' }));
+    tempDate.setDate(tempDate.getDate() + 1);
+  }
+
   const prompt = `Plan 7-day outlook. Goal: ${userGoal}. Stats: ${stats}. ${startContext || ''}. 
-    Use actual day names (e.g., Monday, Tuesday...) for the "day" field in the response, starting from the first day of the plan.
+    CRITICAL: You MUST provide a plan for exactly these 7 days in this EXACT order: ${dayNames.join(', ')}.
+    The first day in the "days" array MUST be ${dayNames[0]}.
     For each non-Rest day, suggest structural steps in "workout_steps".
     Steps should include duration (mins), target_watts (W), and label.
     Use ${ftp ? `athlete FTP: ${ftp}W` : 'sensible intensity levels'} for watts.

@@ -93,7 +93,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
       animate={{ y: 0 }}
       exit={{ y: '100%' }}
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-      className="fixed inset-0 z-[200] flex flex-col bg-[#05070a]/95 backdrop-blur-3xl h-[100dvh] max-w-[450px] mx-auto overflow-hidden shadow-2xl"
+      className="fixed inset-0 z-[200] flex flex-col bg-[#05070a]/95 backdrop-blur-3xl max-w-[450px] mx-auto overflow-hidden shadow-2xl"
       id="coaching-modal"
     >
       {/* Decorative Background Flare */}

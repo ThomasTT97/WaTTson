@@ -32,9 +32,15 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
     const fetchBriefing = async () => {
       setLoading(true);
       try {
-        const todayStr = toLocalDateStr(new Date());
+        const now = new Date();
+        const todayStr = toLocalDateStr(now);
         const hasActivityToday = activities.some(a => a.start_date_local.startsWith(todayStr));
         
+        const todayName = now.toLocaleDateString('en-US', { weekday: 'long' });
+        const tomorrow = new Date();
+        tomorrow.setDate(now.getDate() + 1);
+        const tomorrowName = tomorrow.toLocaleDateString('en-US', { weekday: 'long' });
+
         // Ensure consistency with the home screen suggestion for the first day
         const todaySuggestionText = todaySuggestion 
           ? `The primary suggested workout is: "${todaySuggestion.primary.title}" (${todaySuggestion.primary.duration_minutes} min, ${todaySuggestion.primary.intensity} intensity). `
@@ -42,9 +48,9 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
           
         let startContext = "";
         if (hasActivityToday) {
-          startContext = `Plan MUST start from TOMORROW (Day 1 = Tomorrow), as the athlete already completed a workout today. ${todaySuggestionText} Use this workout for Tomorrow. `;
+          startContext = `Plan MUST start from TOMORROW, which is ${tomorrowName} (Day 1 = Tomorrow), as the athlete already completed a workout today. ${todaySuggestionText} Use this workout for ${tomorrowName}. `;
         } else {
-          startContext = `Plan MUST start from TODAY. ${todaySuggestionText} Use this workout for Today (Day 1). `;
+          startContext = `Plan MUST start from TODAY, which is ${todayName}. ${todaySuggestionText} Use this workout for ${todayName} (Day 1). `;
         }
 
         const data = await getWeeklyBriefing(activities, wellness, userGoal, startContext, ftp);
@@ -117,7 +123,7 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] bg-[#05070a]/95 backdrop-blur-3xl flex flex-col animate-in slide-in-from-bottom duration-300 h-[100dvh] max-w-[450px] mx-auto overflow-hidden">
+    <div className="fixed inset-0 z-[100] bg-[#05070a]/95 backdrop-blur-3xl flex flex-col animate-in slide-in-from-bottom duration-300 max-w-[450px] mx-auto overflow-hidden">
       {/* Header */}
       <div 
         className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-transparent"
@@ -192,7 +198,7 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
               ))}
             </div>
 
-            <div className="mt-auto pt-4 mb-2">
+            <div className="mt-auto pt-4" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
               <div className="p-4 bg-slate-900/40 rounded-2xl border border-white/5 flex gap-3 items-center">
                 <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
                    <Info size={14} className="text-emerald-500" />

@@ -574,7 +574,10 @@ const App: React.FC = () => {
       </header>
 
       {/* Scrollable View Area */}
-      <div className={`flex-1 hide-scrollbar scroll-smooth flex flex-col relative ${activeTab === 'chat' ? 'p-0 overflow-hidden' : 'px-4 pb-6 pt-4 overflow-y-auto'}`}>
+      <div 
+        className={`flex-1 hide-scrollbar scroll-smooth flex flex-col relative ${activeTab === 'chat' ? 'p-0 overflow-hidden' : 'px-4 pt-4 overflow-y-auto'}`}
+        style={activeTab !== 'chat' ? { paddingBottom: 'env(safe-area-inset-bottom, 16px)' } : {}}
+      >
 
         {activeTab === 'dashboard' && (
           <div className="flex flex-col space-y-3 animate-in fade-in duration-500 pb-2">
@@ -613,7 +616,12 @@ const App: React.FC = () => {
                 <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 rounded-full border border-emerald-500/20 shadow-[0_0_10px_rgba(34,211,238,0.1)]">
                   <Sparkles size={10} className="text-emerald-400" />
                   <span className="text-[9px] font-black text-white uppercase tracking-[0.15em]">
-                    {hasRideToday ? "TARGET: TOMORROW" : "TARGET: TODAY"}
+                    {(() => {
+                      const d = new Date();
+                      if (hasRideToday) d.setDate(d.getDate() + 1);
+                      const name = d.toLocaleDateString('en-US', { weekday: 'long' });
+                      return `TARGET: ${name.toUpperCase()} ${hasRideToday ? '(TOMORROW)' : '(TODAY)'}`;
+                    })()}
                   </span>
                 </div>
                 {suggestion && (
@@ -726,7 +734,7 @@ const App: React.FC = () => {
             {/* Recent Progress Glimpse - Bottom strip */}
             <div 
               onClick={() => setReasoningPopup({ title: 'Training Status', content: `waTTson determines your status using chronic training load (fitness) and acute training load (fatigue). Currently your form (TSB) is ${Math.round(stats.form)}, classifying you as ${stats.statusLabel}.` })}
-              className="mt-auto glass-card py-3 px-5 rounded-full border-white/5 flex items-center justify-between flex-shrink-0 cursor-pointer active:scale-[0.98] transition-transform"
+              className="mt-6 glass-card py-3 px-5 rounded-full border-white/5 flex items-center justify-between flex-shrink-0 cursor-pointer active:scale-[0.98] transition-transform"
             >
                <div className="flex items-center gap-2">
                  <TrendingUp size={14} className="text-emerald-400" />
@@ -798,7 +806,7 @@ const App: React.FC = () => {
                )}
              </div>
 
-             <div className="sticky bottom-0 shrink-0 px-4 pb-4 pt-3 bg-transparent backdrop-blur-2xl border-t border-white/5 z-20">
+             <div className="sticky bottom-0 shrink-0 px-4 pt-3 bg-slate-950/80 backdrop-blur-2xl border-t border-white/5 z-20" style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
                <form 
                  onSubmit={(e) => { e.preventDefault(); handleSendMessage(chatInput); }} 
                  className="relative max-w-full"
@@ -1098,7 +1106,7 @@ const App: React.FC = () => {
                  ))}
               </nav>
 
-              <div className="mt-auto space-y-4 pt-6 border-t border-white/5">
+              <div className="mt-auto space-y-4 pt-6 border-t border-white/5" style={{ paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
                  <div className="flex items-center gap-3 px-2">
                    <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center border border-white/5 shadow-inner">
                      <User size={20} className="text-slate-500" />
@@ -1132,7 +1140,7 @@ const App: React.FC = () => {
       </AnimatePresence>
 
       {showGoalEditor && (
-        <div className="fixed inset-0 z-[210] bg-slate-950/98 backdrop-blur-3xl flex flex-col p-8 animate-in slide-in-from-bottom-4 duration-400">
+        <div className="fixed inset-0 z-[210] bg-slate-950/98 backdrop-blur-3xl flex flex-col p-8 animate-in slide-in-from-bottom-4 duration-400" style={{ paddingBottom: 'max(32px, env(safe-area-inset-bottom))' }}>
           <div className="flex items-center justify-between mb-8 mt-2">
             <h2 className="text-2xl text-header italic uppercase leading-none">DNA Focus</h2>
             <button onClick={() => setShowGoalEditor(false)} className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-slate-500"><Settings size={20} /></button>
