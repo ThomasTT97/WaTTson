@@ -49,7 +49,7 @@ export const fetchAthleteId = async (apiKey: string): Promise<string> => {
   }
 };
 
-export const fetchActivities = async (creds: IntervalsCredentials, daysBack: number = 3650): Promise<Activity[]> => {
+export const fetchActivities = async (creds: IntervalsCredentials, daysBack: number = 1095): Promise<Activity[]> => {
   const { apiKey, athleteId } = creds;
   
   if (apiKey === 'demo') return getMockActivities();
@@ -121,8 +121,14 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
       } else {
         if (response.status === 401) throw new Error("Authentication failed: Invalid API Key.");
         if (response.status === 404) throw new Error(`Athlete ID ${athleteId} not found.`);
-        // Stop fetching on other errors
-        remaining = false;
+        if (response.status === 429) {
+           console.warn("Intervals.icu rate limit hit. Throttling...");
+           await new Promise(resolve => setTimeout(resolve, 2000));
+           // We'll skip this chunk and try to continue, or we could retry. 
+           // For now, let's just wait and continue.
+        } else {
+          remaining = false;
+        }
       }
 
       currentNewest = new Date(actualOldestDate);
@@ -131,6 +137,9 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
       if (actualOldestDate <= targetOldestDate) {
         remaining = false;
       }
+      
+      // Small pause to be kind to the API
+      if (remaining) await new Promise(resolve => setTimeout(resolve, 300));
     }
 
     return allActivities.sort((a, b) => b.start_date_local.localeCompare(a.start_date_local));
@@ -141,7 +150,7 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
   }
 };
 
-export const fetchWellness = async (creds: IntervalsCredentials, daysBack: number = 3650): Promise<Wellness[]> => {
+export const fetchWellness = async (creds: IntervalsCredentials, daysBack: number = 1095): Promise<Wellness[]> => {
   const { apiKey, athleteId } = creds;
   if (apiKey === 'demo') return getMockWellness();
 
@@ -187,6 +196,8 @@ export const fetchWellness = async (creds: IntervalsCredentials, daysBack: numbe
             }
           });
         }
+      } else if (response.status === 429) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
 
       // Move the window back
@@ -196,6 +207,9 @@ export const fetchWellness = async (creds: IntervalsCredentials, daysBack: numbe
       if (actualOldestDate <= targetOldestDate) {
         remaining = false;
       }
+
+      // Small pause to be kind to the API
+      if (remaining) await new Promise(resolve => setTimeout(resolve, 300));
     }
     
     // Sort chronologically
@@ -298,8 +312,8 @@ export const uploadWorkout = async (
 export const getMockActivities = (): Activity[] => {
   const mock: Activity[] = [];
   const now = new Date();
-  // Provide 10 years of mock history to demonstrate "full history" analysis
-  for (let i = 3650; i >= 0; i--) {
+  // Provide 3 years of mock history to demonstrate "full history" analysis
+  for (let i = 1095; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(now.getDate() - i);
     // Add data for every other day to simulate a realistic training schedule
@@ -326,8 +340,8 @@ export const getMockActivities = (): Activity[] => {
 export const getMockWellness = (): Wellness[] => {
   const now = new Date();
   const data: Wellness[] = [];
-  // Matching 10 years of wellness
-  for (let i = 3650; i >= 0; i--) {
+  // Matching 3 years of wellness
+  for (let i = 1095; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(now.getDate() - i);
     const dateStr = toLocalDateString(d);

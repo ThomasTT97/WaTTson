@@ -185,8 +185,8 @@ const App: React.FC = () => {
       }
 
       const [fetchedActivities, fetchedWellness, profile] = await Promise.all([
-        fetchActivities(activeCreds, 3650),
-        fetchWellness(activeCreds, 3650),
+        fetchActivities(activeCreds, 1095),
+        fetchWellness(activeCreds, 1095),
         activeCreds.apiKey === 'demo' ? Promise.resolve({ id: '0', icu_ftp: 250 }) : fetchAthleteProfile(activeCreds)
       ]);
       
