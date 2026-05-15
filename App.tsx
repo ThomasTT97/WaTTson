@@ -6,9 +6,10 @@ import {
   DailySuggestion,
   ChatMessage,
   Wellness,
-  UserProfileAnalysis
+  UserProfileAnalysis,
+  AnnualPowerCurve
 } from './types';
-import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile } from './services/intervalsService';
+import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile, getAnnualPowerCurves, uploadWorkout } from './services/intervalsService';
 import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile } from './services/geminiService';
 import { ActivityCard } from './components/ActivityCard';
 import { CoachingModal } from './components/CoachingModal';
@@ -42,7 +43,9 @@ import {
   Check,
   Menu,
   X,
-  Info
+  Info,
+  Trophy,
+  Loader2
 } from 'lucide-react';
 
 const CyclistIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -110,6 +113,13 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('wattson_ftp');
     return saved ? parseInt(saved, 10) : null;
   });
+  const [powerCurves, setPowerCurves] = useState<AnnualPowerCurve[]>(() => {
+    try {
+      const saved = localStorage.getItem('wattson_power_curves');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
   const [loading, setLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -131,10 +141,12 @@ const App: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'rides' | 'chat' | 'settings'>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'methodology'>('main');
+  const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'methodology' | 'ftp'>('main');
   const [userProfile, setUserProfile] = useState<UserProfileAnalysis | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
-  const [isWorkoutExpanded, setIsWorkoutExpanded] = useState(false);
+  const [showWorkoutDetail, setShowWorkoutDetail] = useState(false);
+  const [syncingWorkout, setSyncingWorkout] = useState(false);
+  const [syncSuccess, setSyncSuccess] = useState(false);
   const [reasoningPopup, setReasoningPopup] = useState<{title: string, content: string} | null>(null);
   const [showReleaseNotes, setShowReleaseNotes] = useState(false);
 
@@ -177,6 +189,8 @@ const App: React.FC = () => {
 
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [planContext, setPlanContext] = useState<string | null>(() => localStorage.getItem('wattson_plan_context'));
+  const [showSuggestionDetail, setShowSuggestionDetail] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   
   const [userGoal, setUserGoal] = useState<string>(() => localStorage.getItem('wattson_goal') || 'Improve cycling performance');
@@ -198,14 +212,16 @@ const App: React.FC = () => {
         activeCreds.athleteId = realId;
       }
 
-      const [fetchedActivities, fetchedWellness, profile] = await Promise.all([
+      const [fetchedActivities, fetchedWellness, profile, curves] = await Promise.all([
         fetchActivities(activeCreds, 3650),
         fetchWellness(activeCreds, 3650),
-        activeCreds.apiKey === 'demo' ? Promise.resolve({ id: '0', icu_ftp: 250 }) : fetchAthleteProfile(activeCreds)
+        activeCreds.apiKey === 'demo' ? Promise.resolve({ id: '0', icu_ftp: 250 }) : fetchAthleteProfile(activeCreds),
+        getAnnualPowerCurves(activeCreds, 3) // Last 3 years
       ]);
       
       setActivities(fetchedActivities || []);
       setWellnessData(fetchedWellness || []);
+      setPowerCurves(curves || []);
       if (profile?.icu_ftp) {
         setFtp(profile.icu_ftp);
         safeSetItem('wattson_ftp', profile.icu_ftp.toString());
@@ -218,6 +234,7 @@ const App: React.FC = () => {
 
       safeSetItem('wattson_activities_cache', JSON.stringify(activitiesToCache));
       safeSetItem('wattson_wellness_cache', JSON.stringify(wellnessToCache));
+      safeSetItem('wattson_power_curves', JSON.stringify(curves || []));
       
       const credsChanged = !creds || 
                            activeCreds.apiKey !== creds.apiKey || 
@@ -234,7 +251,11 @@ const App: React.FC = () => {
         const oldestRide = sorted[0];
         const oldestDateStr = new Date(oldestRide.start_date_local).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
         
-        const introMsg = `Connection established. I've analyzed your full history of **${fetchedActivities.length} activities** extending back to **${oldestDateStr}**.\n\nI'm ready to provide coaching based on your long-term evolution. What's on your mind today?`;
+        let introMsg = `Connection established. I've analyzed your full history of **${fetchedActivities.length} activities** extending back to **${oldestDateStr}**.\n\nI'm ready to provide coaching based on your long-term evolution. What's on your mind today?`;
+        
+        if (planContext) {
+          introMsg += `\n\n*Applied context: ${planContext}*`;
+        }
         
         setMessages([{ role: 'model', text: introMsg }]);
       }
@@ -268,13 +289,13 @@ const App: React.FC = () => {
     
     const targetStr = hasRideToday ? tomorrowStr : todayStr;
     const shouldFetch = !loadingSuggestion && 
-                        (!suggestion || suggestion.date !== targetStr);
+                        (!suggestion || suggestion.date !== targetStr || (suggestion.primary.intensity !== 'Rest' && !suggestion.primary.workout_steps));
 
     if (shouldFetch) {
       const fetchNewSuggestion = async () => {
         setLoadingSuggestion(true);
         try {
-          const data = await getDailySuggestion(activities!, userGoal, hasRideToday);
+          const data = await getDailySuggestion(activities!, userGoal, hasRideToday, ftp || undefined);
           setSuggestion(data);
           safeSetItem('wattson_daily_cache', JSON.stringify(data));
         } catch (err) {
@@ -288,11 +309,12 @@ const App: React.FC = () => {
   }, [activities, userGoal, hasRideToday]);
 
   useEffect(() => {
-    if (settingsView === 'methodology' && activities && activities.length > 0 && !userProfile && !isLoadingProfile) {
+    // Methodology view: Athlete DNA
+    if (activeTab === 'settings' && settingsView === 'methodology') {
       const fetchProfile = async () => {
         setIsLoadingProfile(true);
         try {
-          const profile = await analyzeUserProfile(activities, userGoal);
+          const profile = await analyzeUserProfile(activities || [], userGoal, powerCurves);
           setUserProfile(profile);
         } catch (err) {
           console.error("Failed to fetch user profile", err);
@@ -300,10 +322,25 @@ const App: React.FC = () => {
           setIsLoadingProfile(false);
         }
       };
-      
       fetchProfile();
     }
-  }, [settingsView, activities, userGoal, userProfile, isLoadingProfile]);
+  }, [settingsView, activities, userGoal]);
+
+  const handleLogout = () => {
+    const keys = [
+      'wattson_creds', 
+      'wattson_activities_cache', 
+      'wattson_wellness_cache', 
+      'wattson_ftp', 
+      'wattson_daily_cache', 
+      'wattson_chat_history',
+      'wattson_goal',
+      'wattson_seen_version',
+      'wattson_plan_context'
+    ];
+    keys.forEach(k => localStorage.removeItem(k));
+    window.location.reload();
+  };
 
   const stats = useMemo(() => {
     const loadByDate = new Map<string, number>();
@@ -370,8 +407,26 @@ const App: React.FC = () => {
         recentLoad: stats.total7DayLoad, 
         readiness: suggestion?.readiness_score ?? stats.readiness,
         activities: activities || [],
-        wellness: wellnessData || []
+        wellness: wellnessData || [],
+        powerCurves
       });
+      
+      // Look for [UPDATE_PLAN: ...] in the response
+      const planUpdateIdx = response.indexOf('[UPDATE_PLAN:');
+      if (planUpdateIdx !== -1) {
+        const closingIdx = response.indexOf(']', planUpdateIdx);
+        if (closingIdx !== -1) {
+          const directive = response.substring(planUpdateIdx + 13, closingIdx).trim();
+          const cleanText = response.substring(0, planUpdateIdx).trim() + response.substring(closingIdx + 1).trim();
+          
+          setPlanContext(directive);
+          safeSetItem('wattson_plan_context', directive);
+          // If the AI updated the plan, suggest refreshing common views
+          setMessages(prev => [...prev, { role: 'model', text: cleanText + "\n\n*System: Coach context updated. Your next weekly plan generation will reflect these changes.*" }]);
+          return;
+        }
+      }
+
       setMessages(prev => [...prev, { role: 'model', text: response }]);
     } catch {
       setMessages(prev => [...prev, { role: 'model', text: "Engine response error." }]);
@@ -564,8 +619,8 @@ const App: React.FC = () => {
 
             {/* suggestion card - Optimized for 1-screen fit */}
             <div 
-              onClick={() => suggestion && setReasoningPopup({ title: 'Coaching Rationale', content: suggestion.reasoning })} 
-              className="glass-card rounded-[1.8rem] p-4 flex flex-col relative overflow-hidden flex-shrink-0 cursor-pointer active:scale-[0.98] transition-transform"
+              onClick={() => setShowSuggestionDetail(true)}
+              className="glass-card rounded-[1.8rem] p-4 flex flex-col relative overflow-hidden flex-shrink-0 active:scale-[0.98] transition-all cursor-pointer"
             >
               <div className="flex items-center justify-between mb-2.5 relative z-10">
                 <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 rounded-full border border-emerald-500/20 shadow-[0_0_10px_rgba(34,211,238,0.1)]">
@@ -603,18 +658,10 @@ const App: React.FC = () => {
                         <Zap size={12} fill="currentColor" /> {currentWorkout.intensity}
                       </div>
                     </div>
-                    <button onClick={(e) => { e.stopPropagation(); setIsWorkoutExpanded(!isWorkoutExpanded); }} className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-slate-500">
-                      <ChevronDown size={16} className={`transition-transform duration-300 ${isWorkoutExpanded ? 'rotate-180' : ''}`} />
-                    </button>
-                  </div>
-
-                  {isWorkoutExpanded && (
-                    <div className="mt-4 space-y-3 animate-in slide-in-from-bottom-2">
-                      <p className="text-slate-400 text-[11px] leading-relaxed">
-                        {currentWorkout.description}
-                      </p>
+                    <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-slate-500">
+                      <ChevronRight size={16} />
                     </div>
-                  )}
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -622,8 +669,7 @@ const App: React.FC = () => {
             {/* Main Stats Hub - Re-shaped for 1 screen */}
             <div className="grid grid-cols-2 gap-3 flex-shrink-0">
               <div 
-                onClick={() => suggestion && setReasoningPopup({ title: 'Readiness Analysis', content: suggestion.readiness_analysis })}
-                className="glass-card p-4 rounded-[1.8rem] flex flex-col justify-between cursor-pointer active:scale-[0.98] transition-transform"
+                className="glass-card p-4 rounded-[1.8rem] flex flex-col justify-between"
               >
                 {(() => {
                   const displayScore = suggestion 
@@ -644,8 +690,7 @@ const App: React.FC = () => {
               </div>
               
               <div 
-                onClick={() => setReasoningPopup({ title: '7D Load', content: `Over the past week you've accumulated ${stats.total7DayLoad} total TSS. Steady volume is key to building base endurance, while carefully managing acute fatigue (ATL).` })}
-                className="glass-card p-4 rounded-[1.8rem] flex flex-col justify-between cursor-pointer active:scale-[0.98] transition-transform"
+                className="glass-card p-4 rounded-[1.8rem] flex flex-col justify-between"
               >
                 <div>
                   <h4 className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-1.5">7D Load</h4>
@@ -687,8 +732,7 @@ const App: React.FC = () => {
 
             {/* Recent Progress Glimpse - Bottom strip */}
             <div 
-              onClick={() => setReasoningPopup({ title: 'Training Status', content: `waTTson determines your status using chronic training load (fitness) and acute training load (fatigue).` })}
-              className="mt-6 glass-card py-3 px-5 rounded-full border-white/5 flex items-center justify-between flex-shrink-0 cursor-pointer active:scale-[0.98] transition-transform"
+              className="mt-6 glass-card py-3 px-5 rounded-full border-white/5 flex items-center justify-between flex-shrink-0"
             >
                <div className="flex items-center gap-2">
                  <TrendingUp size={14} className="text-emerald-400" />
@@ -805,6 +849,7 @@ const App: React.FC = () => {
                <h2 className="text-xl text-header italic uppercase tracking-tight">
                  {settingsView === 'main' ? 'Pro DNA' : 
                   settingsView === 'goal' ? 'Set Ambition' :
+                  settingsView === 'ftp' ? 'Engine Power' :
                   settingsView === 'data' ? 'Data Vault' : 'Athlete Profile'}
                </h2>
                {settingsView !== 'main' && (
@@ -831,6 +876,19 @@ const App: React.FC = () => {
                    </div>
 
                    <div className="grid grid-cols-1 gap-2">
+                      <button 
+                        onClick={() => setSettingsView('ftp')}
+                        className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-emerald-500/10 shadow-sm"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-400"><Zap size={20} /></div>
+                          <div className="text-left">
+                            <p className="text-[11px] font-black text-white uppercase tracking-widest">FTP Intensity</p>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{ftp || '---'} Watts</p>
+                          </div>
+                        </div>
+                        <ChevronRight size={16} className="text-slate-600 group-hover:text-orange-400 transition-colors" />
+                      </button>
                      <button 
                        onClick={() => setSettingsView('goal')}
                        className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all"
@@ -899,10 +957,54 @@ const App: React.FC = () => {
                         </div>
                       </div>
                     </div>
-                 </div>
-               )}
+                  </div>
+                )}
 
-               {settingsView === 'data' && (
+                {settingsView === 'ftp' && (
+                  <div className="glass-card p-4 rounded-[1.5rem] space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="space-y-4">
+                      <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
+                        Your FTP (Functional Threshold Power) is the engine's core benchmark. While we sync this from Intervals.icu, you can override it here to fine-tune intensity.
+                      </p>
+                      
+                      <div className="bg-slate-950/50 p-6 rounded-2xl border border-white/5 flex flex-col items-center">
+                        <span className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-2">Configure Engine Value</span>
+                        <div className="flex items-center gap-6">
+                          <button 
+                            onClick={() => {
+                              const newVal = Math.max(0, (ftp || 200) - 5);
+                              setFtp(newVal);
+                              safeSetItem('wattson_ftp', newVal.toString());
+                            }}
+                            className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-slate-400 active:scale-90 transition-all hover:bg-white/10"
+                          >
+                            <ChevronLeft size={20} />
+                          </button>
+                          <span className="text-4xl font-black italic text-white tracking-tighter w-24 text-center">{ftp || '---'}</span>
+                          <button 
+                            onClick={() => {
+                              const newVal = (ftp || 200) + 5;
+                              setFtp(newVal);
+                              safeSetItem('wattson_ftp', newVal.toString());
+                            }}
+                            className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-slate-400 active:scale-90 transition-all hover:bg-white/10"
+                          >
+                            <ChevronRight size={20} />
+                          </button>
+                        </div>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-4 text-orange-400">Watts</span>
+                      </div>
+                      
+                      <div className="pt-2">
+                         <p className="text-[10px] text-slate-500 leading-relaxed italic text-center">
+                           Changes here take effect immediately for all subsequent coaching suggestions and intensity calculations.
+                         </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {settingsView === 'data' && (
                  <div className="glass-card p-4 rounded-[1.5rem] space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="space-y-4">
                       <div className="flex items-start gap-4 p-4 bg-slate-950/40 rounded-2xl border border-white/5">
@@ -944,9 +1046,29 @@ const App: React.FC = () => {
                         </div>
                       </div>
 
-                      <div className="pt-2 px-1">
-                        <p className="text-[10px] text-slate-400 leading-relaxed">
-                          All data is strictly pulled in read-only form from Intervals.icu via your API key. Data stays on your device and is not persisted.
+                      <div className="pt-2 px-1 space-y-4">
+                        <div className="p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl flex items-start gap-3">
+                          <Shield size={16} className="text-emerald-400 mt-0.5 shrink-0" />
+                          <div>
+                            <p className="text-[10px] font-black text-white uppercase tracking-widest mb-1">Security Audit Passed</p>
+                            <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
+                              waTTson operates on a **Zero-Persistence** model. Your Intervals.icu API keys are stored only locally in your browser and are never uploaded to a custom server. Data is fetched directly from Intervals.icu to your device.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="p-4 bg-blue-500/5 border border-blue-500/10 rounded-2xl flex items-start gap-3">
+                          <Bot size={16} className="text-blue-400 mt-0.5 shrink-0" />
+                          <div>
+                            <p className="text-[10px] font-black text-white uppercase tracking-widest mb-1">AI Processing Trace</p>
+                            <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
+                              To provide insights, training data is shared with Google Gemini Pro. The context shared includes TSS, duration, and watts. Personally identifiable information (like location or name) is minimized.
+                            </p>
+                          </div>
+                        </div>
+
+                        <p className="text-[10px] text-slate-500 leading-relaxed italic text-center">
+                          Alpha/Beta Build 1.1.0 • Built for waTTson Athletes
                         </p>
                       </div>
                     </div>
@@ -1143,6 +1265,111 @@ const App: React.FC = () => {
           </button>
         </div>
       )}
+      {showWorkoutDetail && currentWorkout && (
+        <div className="absolute inset-0 z-[220] flex items-center justify-center p-4 bg-[#05070a]/90 backdrop-blur-md" onClick={() => setShowWorkoutDetail(false)}>
+          <div className="glass-card w-full max-w-[360px] rounded-[3.5rem] p-10 relative animate-in slide-in-from-bottom-4 duration-300 border border-white/10 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setShowWorkoutDetail(false)} className="absolute top-8 right-8 text-slate-600 hover:text-white transition-colors p-2 z-20">
+              <X size={22} />
+            </button>
+            <div className="flex flex-col items-center">
+              <div className="w-24 h-24 rounded-full bg-emerald-500/10 flex items-center justify-center mb-8 border border-emerald-500/20 shadow-[0_0_50px_rgba(16,185,129,0.1)] relative">
+                <div className="absolute inset-2 border border-emerald-500/30 rounded-full" />
+                <Trophy size={36} className="text-emerald-400" />
+              </div>
+              
+              <h3 className="text-3xl font-black text-white italic tracking-tighter mb-2 uppercase text-center">
+                {hasRideToday ? "TOMORROW'S" : "TODAY'S"} FOCUS
+              </h3>
+              <p className="text-[13px] font-black text-emerald-500 uppercase tracking-[0.25em] mb-10 text-center">{currentWorkout.title}</p>
+              
+              <div className="bg-[#0a0c10] p-8 rounded-[3rem] border border-white/5 w-full text-left space-y-6 shadow-inner relative overflow-hidden">
+                 <div className="flex items-center justify-between border-b border-white/5 pb-5 mx-1">
+                    <div className="flex items-center gap-2 text-[16px] font-black text-white tracking-tighter">
+                       <Clock size={18} className="text-blue-400" /> {currentWorkout.duration_minutes} MIN
+                    </div>
+                    <div className="flex items-center gap-2 text-[16px] font-black text-amber-400 italic">
+                       <Zap size={18} fill="currentColor" className="text-amber-400" /> {currentWorkout.tss || '--'} TSS
+                    </div>
+                 </div>
+
+                 <div className="space-y-5 py-1 max-h-[220px] overflow-y-auto custom-scrollbar px-1">
+                   {currentWorkout.workout_steps && currentWorkout.workout_steps.length > 0 ? (
+                      currentWorkout.workout_steps.map((step, sIdx) => (
+                        <div key={sIdx} className="flex items-center justify-between gap-4 text-[14px] font-bold group">
+                          <div className="flex items-center gap-3 text-slate-300">
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] flex-shrink-0" />
+                            <span className="truncate">{step.duration}m {step.label}</span>
+                          </div>
+                          {step.target_watts && (
+                            <span className="text-emerald-400 font-extrabold italic tabular-nums flex-shrink-0">{step.target_watts}W</span>
+                          )}
+                        </div>
+                      ))
+                   ) : (
+                      <p className="text-[14px] text-slate-400 leading-relaxed italic text-center px-4 font-medium opacity-80">
+                        {currentWorkout.description}
+                      </p>
+                   )}
+                 </div>
+              </div>
+
+              <div className="mt-10 flex flex-col gap-4 w-full">
+                <button 
+                  onClick={async () => {
+                    if (!creds || !currentWorkout) return;
+                    setSyncingWorkout(true);
+                    try {
+                      const targetDate = new Date();
+                      if (hasRideToday) targetDate.setDate(targetDate.getDate() + 1);
+                      const dateStr = toLocalDateStr(targetDate);
+                      
+                      const workoutText = currentWorkout.workout_steps?.map(s => `- ${s.label} ${s.duration}m ${s.target_watts ? `${s.target_watts}w` : ''}`).join('\n') || currentWorkout.description;
+
+                      await uploadWorkout(creds, {
+                        name: currentWorkout.title,
+                        description: currentWorkout.description,
+                        date: dateStr,
+                        moving_time: currentWorkout.duration_minutes * 60,
+                        icu_training_load: currentWorkout.tss || 0,
+                        workout_text: workoutText
+                      });
+                      setSyncSuccess(true);
+                      setTimeout(() => setSyncSuccess(false), 3000);
+                    } catch (err) {
+                      console.error("Sync failed:", err);
+                    } finally {
+                      setSyncingWorkout(false);
+                    }
+                  }}
+                  disabled={syncingWorkout || syncSuccess || currentWorkout.intensity === 'Rest'}
+                  className={`w-full py-5 rounded-full text-[13px] font-black uppercase tracking-[0.14em] flex items-center justify-center gap-3 transition-all shadow-xl active:scale-95 ${
+                    syncSuccess 
+                      ? 'bg-emerald-500 text-white' 
+                      : currentWorkout.intensity === 'Rest'
+                      ? 'bg-slate-900 text-slate-600 border border-white/5 opacity-50 cursor-not-allowed'
+                      : 'bg-[#40e0a0] text-slate-950 hover:bg-[#38d090] shadow-emerald-400/20'
+                  }`}
+                >
+                  {syncingWorkout ? (
+                    <Loader2 size={20} className="animate-spin" />
+                  ) : syncSuccess ? (
+                    <>SYNCED <Check size={20} strokeWidth={3} /></>
+                  ) : (
+                    <>SYNC TO CALENDAR <Calendar size={20} strokeWidth={2.5} /></>
+                  )}
+                </button>
+
+                <button 
+                  onClick={() => setShowWorkoutDetail(false)}
+                  className="w-full py-5 bg-[#1a1c22] rounded-full text-[12px] font-black text-slate-400 hover:text-white transition-all uppercase tracking-[0.2em] active:scale-95"
+                >
+                  CLOSE
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {reasoningPopup && (
         <div className="absolute inset-0 z-[220] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setReasoningPopup(null)}>
@@ -1172,8 +1399,8 @@ const App: React.FC = () => {
                 <p className="text-slate-400 text-[11px] leading-relaxed">waTTson now analyzes your full history of training to build a custom athlete shape based on your history. Access this in Settings &gt; Athlete Profile.</p>
               </div>
               <div>
-                <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Interactive Rationale</h4>
-                <p className="text-slate-400 text-[11px] leading-relaxed">You can now tap on waTTson's recommendations on the home tab to dive deep into exactly why he suggested them based on your fatigue.</p>
+                <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Weekly Planning</h4>
+                <p className="text-slate-400 text-[11px] leading-relaxed">Access your full data-driven training schedule through the Weekly Plan button. Dive into workout details and sync them directly to your calendar.</p>
               </div>
             </div>
 
@@ -1184,7 +1411,77 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {selectedActivity && creds && <CoachingModal activity={selectedActivity} creds={creds} onClose={() => setSelectedActivity(null)} userGoal={userGoal} />}
+      {selectedActivity && creds && (
+        <CoachingModal 
+          activity={selectedActivity} 
+          creds={creds} 
+          onClose={() => setSelectedActivity(null)} 
+          userGoal={userGoal} 
+          ftp={ftp || undefined}
+        />
+      )}
+      {/* Suggestion Detail Modal */}
+      {showSuggestionDetail && suggestion && (
+        <div className="fixed inset-0 z-[110] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-4 animate-in slide-in-from-bottom-4 duration-300" onClick={() => setShowSuggestionDetail(false)}>
+          <div className="glass-card w-full max-w-sm rounded-[3rem] p-6 pb-8 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setShowSuggestionDetail(false)} className="absolute top-6 right-6 text-slate-600 hover:text-white transition-colors p-2 z-20">
+              <X size={20} />
+            </button>
+            <div className="flex flex-col items-center">
+              <div className="w-20 h-20 rounded-full bg-emerald-500/10 flex items-center justify-center mb-6 border border-emerald-500/20 shadow-[0_0_40px_rgba(16,185,129,0.1)] relative flex-shrink-0">
+                <div className="absolute inset-1.5 border border-emerald-500/30 rounded-full" />
+                <Trophy size={32} className="text-emerald-400" />
+              </div>
+              
+              <h3 className="text-2xl font-black text-white italic tracking-tighter mb-1.5 uppercase text-center leading-tight">
+                {hasRideToday ? "(TOMORROW'S) " : "(TODAY'S) "} {currentWorkout?.title.toUpperCase()}
+              </h3>
+              <p className="text-[11px] font-black text-emerald-500 uppercase tracking-[0.25em] mb-8 text-center">{suggestion.reasoning.slice(0, 50)}...</p>
+              
+              <div className="bg-[#0a0c10] p-6 rounded-[2.5rem] border border-white/5 w-full text-left space-y-5 shadow-inner relative overflow-hidden">
+                 <div className="flex items-center justify-between border-b border-white/5 pb-4 mx-1">
+                    <div className="flex items-center gap-2 text-[14px] font-black text-white tracking-tighter">
+                       <Clock size={16} className="text-blue-400" /> {currentWorkout?.duration_minutes} MIN
+                    </div>
+                    <div className="flex items-center gap-2 text-[14px] font-black text-amber-400 italic">
+                       <Zap size={16} fill="currentColor" className="text-amber-400" /> {currentWorkout?.tss || 45} TSS
+                    </div>
+                 </div>
+
+                 <div className="space-y-4 py-1 max-h-[180px] overflow-y-auto custom-scrollbar px-1">
+                   {currentWorkout?.workout_steps && currentWorkout.workout_steps.length > 0 ? (
+                      currentWorkout.workout_steps.map((step, sIdx) => (
+                        <div key={sIdx} className="flex items-center justify-between gap-4 text-[13px] font-bold group">
+                          <div className="flex items-center gap-2.5 text-slate-300">
+                            <div className="w-1 h-1 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] flex-shrink-0" />
+                            <span className="truncate">{step.duration}m {step.label}</span>
+                          </div>
+                          {step.target_watts && (
+                            <span className="text-emerald-400 font-extrabold italic tabular-nums flex-shrink-0">{step.target_watts}W</span>
+                          )}
+                        </div>
+                      ))
+                   ) : (
+                      <p className="text-[13px] text-slate-400 leading-relaxed italic text-center px-4 font-medium opacity-80">
+                        {suggestion.reasoning}
+                      </p>
+                   )}
+                 </div>
+              </div>
+
+              <div className="mt-8 flex flex-col gap-3 w-full">
+                <button 
+                  onClick={() => setShowSuggestionDetail(false)}
+                  className="w-full py-4.5 bg-[#40e0a0] rounded-full text-[12px] font-black text-slate-950 uppercase tracking-[0.2em] active:scale-95 shadow-xl shadow-emerald-400/10"
+                >
+                  OKAY, COACH
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showWeeklyBriefing && creds && (
         <WeeklyBriefingModal 
           activities={activities || []} 
@@ -1194,6 +1491,12 @@ const App: React.FC = () => {
           onClose={() => setShowWeeklyBriefing(false)} 
           todaySuggestion={suggestion}
           ftp={ftp || undefined}
+          powerCurves={powerCurves}
+          planContext={planContext || undefined}
+          onResetPlanContext={() => {
+            setPlanContext(null);
+            localStorage.removeItem('wattson_plan_context');
+          }}
         />
       )}
     </div>

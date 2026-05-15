@@ -1,5 +1,15 @@
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
-import { Activity, ActivityInterval, CoachingFeedback, DailySuggestion, PlannedWorkout, ChatMessage, WeeklyBriefing, Wellness } from "../types";
+import { 
+  Activity, 
+  ActivityInterval, 
+  CoachingFeedback, 
+  DailySuggestion, 
+  PlannedWorkout, 
+  ChatMessage, 
+  WeeklyBriefing, 
+  Wellness,
+  AnnualPowerCurve
+} from "../types";
 
 
 /**
@@ -86,24 +96,35 @@ export const getRideFeedback = async (
   activity: Activity, 
   intervals: ActivityInterval[],
   plannedWorkout: PlannedWorkout | null,
-  userGoal?: string
+  userGoal?: string,
+  ftp?: number
 ): Promise<CoachingFeedback> => {
   const cacheKey = `wattson_feedback_${activity.id}_${userGoal || 'default'}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
+  const plannedWorkoutCtx = plannedWorkout 
+    ? `Planned Workout: "${plannedWorkout.name}". Description: "${plannedWorkout.description}".`
+    : "No planned workout for this ride.";
+
   const prompt = `You are waTTson, an elite cycling coach. 
     Analyze this ride: "${activity.name}". 
     TSS: ${activity.icu_training_load || activity.icu_tss || activity.training_load || 0}. 
     Intensity: ${activity.icu_intensity || 0}.
+    efTP: ${activity.icu_eftp || 'N/A'}W.
     Duration: ${Math.round((activity.moving_time || activity.elapsed_time || 0) / 60)}m.
     Power: ${Math.round(activity.average_watts || activity.icu_average_watts || 0)}W avg, ${Math.round(activity.weighted_average_watts || activity.icu_weighted_average_watts || 0)}W np.
     HR: ${Math.round(activity.average_heartrate || 0)}bpm avg.
     Goal: ${userGoal || 'Fitness'}.
     
+    ${plannedWorkoutCtx}
+    
     Return JSON with:
     summary: A 1-sentence punchy coaching summary.
-    goal_contribution: A clear explanation of how this session contributes to ${userGoal}.`;
+    goal_contribution: A clear explanation of how this session contributes to ${userGoal}.
+    workout_steps: If a planned workout exists, provide the structured steps intended for this workout. 
+      Steps should include duration (mins), target_watts (W), and label.
+      Use ${ftp ? `athlete FTP: ${ftp}W` : 'sensible intensity levels'} for absolute targets where appropriate.`;
 
   const response = await callGemini({
     contents: prompt,
@@ -113,7 +134,19 @@ export const getRideFeedback = async (
         type: Type.OBJECT,
         properties: {
           summary: { type: Type.STRING },
-          goal_contribution: { type: Type.STRING }
+          goal_contribution: { type: Type.STRING },
+          workout_steps: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                duration: { type: Type.NUMBER },
+                target_watts: { type: Type.NUMBER },
+                label: { type: Type.STRING }
+              },
+              required: ['duration', 'label']
+            }
+          }
         },
         required: ['summary', 'goal_contribution']
       }
@@ -127,7 +160,7 @@ export const getRideFeedback = async (
 /**
  * Generates a daily workout suggestion based on recent history.
  */
-export const getDailySuggestion = async (recentActivities: Activity[], userGoal?: string, forTomorrow: boolean = false): Promise<DailySuggestion> => {
+export const getDailySuggestion = async (recentActivities: Activity[], userGoal?: string, forTomorrow: boolean = false, ftp?: number): Promise<DailySuggestion> => {
   const targetDate = new Date();
   if (forTomorrow) targetDate.setDate(targetDate.getDate() + 1);
   
@@ -138,11 +171,21 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
 
   const history = recentActivities
     .sort((a, b) => b.start_date_local.localeCompare(a.start_date_local))
-    .slice(0, 7)
-    .map(a => `${a.start_date_local.split('T')[0]}: ${a.icu_training_load || a.icu_tss || 0} TSS (${a.type})`)
+    .slice(0, 14)
+    .map(a => `${a.start_date_local.split('T')[0]}: ${a.icu_training_load || a.icu_tss || 0} TSS (${a.type}), efTP: ${a.icu_eftp || 'N/A'}W`)
     .join(', ');
 
-  const prompt = `Coach: Suggest workout for ${targetStr}. History (7d): ${history}. Goal: "${userGoal}". JSON please. Ensure readiness_score is a number from 1 to 10.`;
+  const prompt = `You are waTTson, an elite cycling coach. Suggest a workout for ${targetStr}. 
+    History (7d): ${history}. 
+    Goal: "${userGoal}". 
+    
+    CRITICAL: 
+    1. For each workout option (primary and alternative), you MUST provide structured "workout_steps".
+    2. "workout_steps" MUST be an array of objects with {duration: number, target_watts: number, label: string}.
+    3. Estimate "tss" (Training Stress Score) as a number for each workout.
+    4. Use ${ftp ? `athlete FTP: ${ftp}W` : 'sensible intensity levels'} for absolute targets where appropriate.
+    5. Do NOT include any JSON comments.
+    6. "readiness_score" must be 1-10.`;
 
   const response = await callGemini({
     contents: prompt,
@@ -161,9 +204,22 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
               description: { type: Type.STRING },
               intensity: { type: Type.STRING },
               duration_minutes: { type: Type.NUMBER },
-              type: { type: Type.STRING }
+              type: { type: Type.STRING },
+              tss: { type: Type.NUMBER },
+              workout_steps: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    duration: { type: Type.NUMBER },
+                    target_watts: { type: Type.NUMBER },
+                    label: { type: Type.STRING }
+                  },
+                  required: ['duration', 'label']
+                }
+              }
             },
-            required: ['title', 'description', 'intensity', 'duration_minutes', 'type']
+            required: ['title', 'description', 'intensity', 'duration_minutes', 'type', 'tss']
           },
           alternative: {
             type: Type.OBJECT,
@@ -172,9 +228,22 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
               description: { type: Type.STRING },
               intensity: { type: Type.STRING },
               duration_minutes: { type: Type.NUMBER },
-              type: { type: Type.STRING }
-                },
-            required: ['title', 'description', 'intensity', 'duration_minutes', 'type']
+              type: { type: Type.STRING },
+              tss: { type: Type.NUMBER },
+              workout_steps: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    duration: { type: Type.NUMBER },
+                    target_watts: { type: Type.NUMBER },
+                    label: { type: Type.STRING }
+                  },
+                  required: ['duration', 'label']
+                }
+              }
+            },
+            required: ['title', 'description', 'intensity', 'duration_minutes', 'type', 'tss']
           }
         },
         required: ['readiness_score', 'readiness_analysis', 'reasoning', 'primary', 'alternative']
@@ -195,19 +264,32 @@ export const getWeeklyBriefing = async (
   wellness: Wellness[], 
   userGoal?: string,
   startContext?: string,
-  ftp?: number
+  ftp?: number,
+  powerCurves?: AnnualPowerCurve[],
+  planContext?: string,
+  force?: boolean
 ): Promise<WeeklyBriefing> => {
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   
-  // Include startContext in cache key to ensure it rotates if the "already had a ride" status changes
-  const contextHash = startContext ? btoa(startContext).slice(0, 10) : 'no-ctx';
-  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${contextHash}`;
-  const cached = getCache(cacheKey);
-  if (cached) return cached;
+  // Include startContext and planContext in cache key to ensure it rotates if the "already had a ride" status changes or directives change
+  const contextHash = (startContext || '') + (planContext || '');
+  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${contextHash ? btoa(contextHash).slice(0, 10) : 'no-ctx'}`;
+  
+  if (!force) {
+    const cached = getCache(cacheKey);
+    if (cached) return cached;
+  }
 
   const latestWellness = wellness[wellness.length - 1];
   const stats = `CTL: ${latestWellness?.ctl || 0}, TSB: ${latestWellness?.tsb || 0}, ATL: ${latestWellness?.atl || 0}`;
+
+  // Format power curve for latest year for context
+  let pcCtx = '';
+  if (powerCurves && powerCurves.length > 0) {
+    const pc = powerCurves[0]; // Assuming sorted by year desc
+    pcCtx = `Current Year Power Bests: ${pc.bests.map(b => `${b.duration}s:${b.watts}W`).join(', ')}`;
+  }
 
   // Generate the actual list of days to enforce order
   const dayNames: string[] = [];
@@ -222,11 +304,13 @@ export const getWeeklyBriefing = async (
   }
 
   const prompt = `Plan 7-day outlook. Goal: ${userGoal}. Stats: ${stats}. ${startContext || ''}. 
+    ${planContext ? `IMPORTANT COACHING DIRECTIVES: ${planContext}` : ''}
+    ${pcCtx}
     CRITICAL: You MUST provide a plan for exactly these 7 days in this EXACT order: ${dayNames.join(', ')}.
     The first day in the "days" array MUST be ${dayNames[0]}.
     For each non-Rest day, suggest structural steps in "workout_steps".
     Steps should include duration (mins), target_watts (W), and label.
-    Use ${ftp ? `athlete FTP: ${ftp}W` : 'sensible intensity levels'} for watts.
+    Use ${ftp ? `athlete FTP: ${ftp}W` : 'sensible intensity levels'} for watts, referencing the power profile if provided.
     Return JSON with phase, focus, outlook_summary, days[].`;
 
   const response = await callGemini({
@@ -287,6 +371,7 @@ export const sendChatMessage = async (
     readiness: number;
     activities: Activity[];
     wellness: Wellness[];
+    powerCurves: AnnualPowerCurve[];
   }
 ): Promise<string> => {
   // Format a data summary for the AI
@@ -297,6 +382,12 @@ export const sendChatMessage = async (
     `${a.start_date_local.split('T')[0]}: ${a.name}, ${Math.round((a.distance || 0)/1000)}km, TSS ${a.icu_training_load || a.icu_tss || 0}`
   ).join('\n');
 
+  // Format power curves for the coach
+  const powerCurveStr = context.powerCurves.map(pc => {
+    const bests = pc.bests.map(b => `${b.duration}s: ${b.watts}W`).join(', ');
+    return `${pc.year} Annual Bests: ${bests}`;
+  }).join('\n');
+
   // Compress full history for the LLM to access
   // For histories > 200 items, we summarize older ones to stay concise while maintaining the "full history" awareness
   let fullHistoryCompact = '';
@@ -305,7 +396,7 @@ export const sendChatMessage = async (
     const olderPool = sortedActivities.slice(100);
     
     const recentStr = recentPool.map(a => 
-      `${a.start_date_local.split('T')[0]}|TSS:${a.icu_training_load || a.icu_tss || 0}`
+      `${a.start_date_local.split('T')[0]}|TSS:${a.icu_training_load || a.icu_tss || 0}|efTP:${a.icu_eftp || 'N/A'}W`
     ).join(',');
 
     // Summarize older data by month or year to keep it useful but compact
@@ -322,7 +413,7 @@ export const sendChatMessage = async (
     fullHistoryCompact = `Recent: ${recentStr} | Older Summaries: ${summaryStr}`;
   } else {
     fullHistoryCompact = sortedActivities.map(a => 
-      `${a.start_date_local.split('T')[0]}|${a.type}|TSS:${a.icu_training_load || a.icu_tss || 0}|${Math.round((a.distance || 0)/1000)}km`
+      `${a.start_date_local.split('T')[0]}|${a.type}|TSS:${a.icu_training_load || a.icu_tss || 0}|efTP:${a.icu_eftp || 'N/A'}W|${Math.round((a.distance || 0)/1000)}km`
     ).join(', ');
   }
 
@@ -333,10 +424,17 @@ export const sendChatMessage = async (
     Recent History (Full details):
     ${historySummary}
     
+    Athlete Annual Power Bests:
+    ${powerCurveStr}
+    
     Full Historical Data (Date|Type|TSS|Distance):
     ${fullHistoryCompact}
     Total activities available: ${context.activities.length}.
-    Always answer accurately based on this full data set when the user asks about their past training, trends, or long-term history.`;
+    Always answer accurately based on this full data set.
+    
+    PLAN ADAPTATION: If the user asks to change their future training plan (e.g. "more intensity", "day off tomorrow", "focus on hill climbs"), you can "agree" and then append a hidden tag at the end of your message in the format: [UPDATE_PLAN: actual technical directive for the weekly builder]. 
+    Example: "I've added more VO2 intervals to your week. [UPDATE_PLAN: Increase intensity for Tuesday/Thursday and add 1 short VO2 session]". 
+    Keep the technical directive brief and clear for the next generation.`;
 
   const contents = history.map(m => ({
     role: m.role,
@@ -363,7 +461,8 @@ export const sendChatMessage = async (
  */
 export const analyzeUserProfile = async (
   activities: Activity[],
-  userGoal: string
+  userGoal: string,
+  powerCurves: AnnualPowerCurve[]
 ): Promise<import('../types').UserProfileAnalysis> => {
   const cacheKey = `wattson_user_profile_${userGoal}`;
   const cached = getCache(cacheKey);
@@ -373,11 +472,20 @@ export const analyzeUserProfile = async (
   const recentActivities = sortedActivities.slice(0, 30);
   
   const historySummary = recentActivities.map(a => 
-    `${a.start_date_local.split('T')[0]}: ${a.name}, Duration: ${Math.round((a.moving_time||0)/60)}m, TSS: ${a.icu_training_load || a.icu_tss || 0}, IF: ${a.icu_intensity||0}, Avg Power: ${a.average_watts}W`
+    `${a.start_date_local.split('T')[0]}: ${a.name}, Duration: ${Math.round((a.moving_time||0)/60)}m, TSS: ${a.icu_training_load || a.icu_tss || 0}, efTP: ${a.icu_eftp || 'N/A'}W, IF: ${a.icu_intensity||0}, Avg Power: ${a.average_watts}W`
   ).join('\n');
+
+  const powerCurveStr = powerCurves.map(pc => {
+    const bests = pc.bests.map(b => `${b.duration}s: ${b.watts}W`).join(', ');
+    return `${pc.year} Annual Bests: ${bests}`;
+  }).join('\n');
 
   const prompt = `You are waTTson, an elite cycling coach. Analyze this athlete's data and create a profile.
     Goal: ${userGoal}
+    
+    Athlete Annual Power Bests:
+    ${powerCurveStr}
+    
     Recent 30 Rides:
     ${historySummary}
     

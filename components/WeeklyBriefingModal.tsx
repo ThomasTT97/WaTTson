@@ -1,9 +1,9 @@
 
 import React, { useEffect, useState } from 'react';
-import { Activity, Wellness, WeeklyBriefing, IntervalsCredentials, DailySuggestion } from '../types';
+import { Activity, Wellness, WeeklyBriefing, IntervalsCredentials, DailySuggestion, AnnualPowerCurve } from '../types';
 import { getWeeklyBriefing } from '../services/geminiService';
 import { uploadWorkout } from '../services/intervalsService';
-import { X, Sparkles, ChevronRight, Trophy, Clock, Zap, Info, Calendar as CalendarIcon, Check, Loader2 } from 'lucide-react';
+import { X, Sparkles, ChevronRight, Trophy, Clock, Zap, Info, Calendar as CalendarIcon, Check, Loader2, RefreshCw } from 'lucide-react';
 
 interface WeeklyBriefingModalProps {
   activities: Activity[];
@@ -13,6 +13,9 @@ interface WeeklyBriefingModalProps {
   onClose: () => void;
   todaySuggestion?: DailySuggestion | null;
   ftp?: number;
+  powerCurves?: AnnualPowerCurve[];
+  planContext?: string;
+  onResetPlanContext?: () => void;
 }
 
 const toLocalDateStr = (d: Date) => {
@@ -20,49 +23,54 @@ const toLocalDateStr = (d: Date) => {
 };
 
 export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({ 
-  activities, wellness, userGoal, onClose, todaySuggestion, creds, ftp
+  activities, wellness, userGoal, onClose, todaySuggestion, creds, ftp, powerCurves, planContext, onResetPlanContext
 }) => {
   const [briefing, setBriefing] = useState<WeeklyBriefing | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedDay, setSelectedDay] = useState<WeeklyBriefing['days'][0] | null>(null);
   const [syncingDay, setSyncingDay] = useState<string | null>(null);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchBriefing = async () => {
-      setLoading(true);
-      try {
-        const now = new Date();
-        const todayStr = toLocalDateStr(now);
-        const hasActivityToday = activities.some(a => a.start_date_local.startsWith(todayStr));
+  const fetchBriefing = async (force: boolean = false) => {
+    if (force) setIsRefreshing(true);
+    else setLoading(true);
+    
+    try {
+      const now = new Date();
+      const todayStr = toLocalDateStr(now);
+      const hasActivityToday = activities.some(a => a.start_date_local.startsWith(todayStr));
+      
+      const todayName = now.toLocaleDateString('en-US', { weekday: 'long' });
+      const tomorrow = new Date();
+      tomorrow.setDate(now.getDate() + 1);
+      const tomorrowName = tomorrow.toLocaleDateString('en-US', { weekday: 'long' });
+
+      // Ensure consistency with the home screen suggestion for the first day
+      const todaySuggestionText = todaySuggestion 
+        ? `The primary suggested workout is: "${todaySuggestion.primary.title}" (${todaySuggestion.primary.duration_minutes} min, ${todaySuggestion.primary.intensity} intensity). `
+        : "";
         
-        const todayName = now.toLocaleDateString('en-US', { weekday: 'long' });
-        const tomorrow = new Date();
-        tomorrow.setDate(now.getDate() + 1);
-        const tomorrowName = tomorrow.toLocaleDateString('en-US', { weekday: 'long' });
-
-        // Ensure consistency with the home screen suggestion for the first day
-        const todaySuggestionText = todaySuggestion 
-          ? `The primary suggested workout is: "${todaySuggestion.primary.title}" (${todaySuggestion.primary.duration_minutes} min, ${todaySuggestion.primary.intensity} intensity). `
-          : "";
-          
-        let startContext = "";
-        if (hasActivityToday) {
-          startContext = `Plan MUST start from TOMORROW, which is ${tomorrowName} (Day 1 = Tomorrow), as the athlete already completed a workout today. ${todaySuggestionText} Use this workout for ${tomorrowName}. `;
-        } else {
-          startContext = `Plan MUST start from TODAY, which is ${todayName}. ${todaySuggestionText} Use this workout for ${todayName} (Day 1). `;
-        }
-
-        const data = await getWeeklyBriefing(activities, wellness, userGoal, startContext, ftp);
-        setBriefing(data);
-      } catch (err) {
-        console.error("Briefing failed:", err);
-      } finally {
-        setLoading(false);
+      let startContext = "";
+      if (hasActivityToday) {
+        startContext = `Plan MUST start from TOMORROW, which is ${tomorrowName} (Day 1 = Tomorrow), as the athlete already completed a workout today. ${todaySuggestionText} Use this workout for ${tomorrowName}. `;
+      } else {
+        startContext = `Plan MUST start from TODAY, which is ${todayName}. ${todaySuggestionText} Use this workout for ${todayName} (Day 1). `;
       }
-    };
+
+      const data = await getWeeklyBriefing(activities, wellness, userGoal, startContext, ftp, powerCurves, planContext, force);
+      setBriefing(data);
+    } catch (err) {
+      console.error("Briefing failed:", err);
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
     fetchBriefing();
-  }, [activities, wellness, userGoal, todaySuggestion, ftp]);
+  }, [activities, wellness, userGoal, todaySuggestion, ftp, powerCurves, planContext]);
 
   const handleSyncToIntervals = async (day: WeeklyBriefing['days'][0], index: number) => {
     setSyncingDay(day.day);
@@ -123,15 +131,24 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] bg-[#05070a]/95 backdrop-blur-3xl flex flex-col animate-in slide-in-from-bottom duration-300 max-w-[450px] mx-auto overflow-hidden">
+      <div className="fixed inset-0 z-[100] bg-[#05070a]/95 backdrop-blur-3xl flex flex-col animate-in slide-in-from-bottom duration-300 md:max-w-[480px] md:mx-auto md:shadow-2xl overflow-hidden">
       {/* Header */}
       <div 
         className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-transparent"
         style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}
       >
-        <div>
-          <h2 className="text-xl font-black text-white tracking-tight leading-none">Weekly Briefing</h2>
-          <p className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] mt-1.5">7-Day Performance Outlook</p>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => fetchBriefing(true)}
+            disabled={loading || isRefreshing}
+            className="w-9 h-9 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20 active:scale-90 transition-all disabled:opacity-50"
+          >
+            <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
+          </button>
+          <div>
+            <h2 className="text-xl font-black text-white tracking-tight leading-none">Weekly Briefing</h2>
+            <p className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] mt-1.5">7-Day Performance Outlook</p>
+          </div>
         </div>
         <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center text-slate-500 active:scale-90 transition-all border border-white/10">
           <X size={18} />
@@ -199,12 +216,27 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
             </div>
 
             <div className="mt-auto pt-4" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
+              {planContext && (
+                <div className="mb-3 p-4 bg-emerald-500/5 rounded-2xl border border-emerald-500/20 flex flex-col gap-2">
+                   <div className="flex items-center justify-between">
+                     <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Active Coaching Directive</span>
+                     <button 
+                       onClick={() => onResetPlanContext?.()}
+                       className="text-[9px] font-black text-slate-500 hover:text-rose-400 uppercase tracking-widest"
+                     >
+                       Reset
+                     </button>
+                   </div>
+                   <p className="text-[11px] text-slate-300 font-medium italic leading-snug">"{planContext}"</p>
+                </div>
+              )}
+              
               <div className="p-4 bg-slate-900/40 rounded-2xl border border-white/5 flex gap-3 items-center">
                 <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
                    <Info size={14} className="text-emerald-500" />
                 </div>
                 <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
-                  Plan is adaptive based on recorded stress. Tap any session for coach reasoning.
+                  Plan is adaptive based on recorded stress. {planContext ? "Refined by coach chat." : "Talk to waTTson to rework focus."}
                 </p>
               </div>
             </div>
@@ -218,50 +250,51 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
 
       {/* Why Detail Popup */}
       {selectedDay && (
-        <div className="fixed inset-0 z-[110] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-6 animate-in zoom-in-95 duration-200">
-          <div className="glass-card w-full max-w-[340px] rounded-[3rem] p-10 relative">
-            <button onClick={() => setSelectedDay(null)} className="absolute top-8 right-8 text-slate-500 hover:text-white transition-colors">
+        <div className="fixed inset-0 z-[110] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-4 animate-in slide-in-from-bottom-4 duration-300" onClick={() => setSelectedDay(null)}>
+          <div className="glass-card w-full max-w-sm rounded-[3rem] p-6 pb-8 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setSelectedDay(null)} className="absolute top-6 right-6 text-slate-600 hover:text-white transition-colors p-2 z-20">
               <X size={20} />
             </button>
-            <div className="flex flex-col items-center text-center">
-              <div className={`w-16 h-16 rounded-[1.8rem] flex items-center justify-center mb-6 shadow-2xl border border-white/10 ${intensityColors[selectedDay.intensity]?.split(' ')[1] || 'bg-slate-800'}`}>
-                <Trophy size={28} className={intensityColors[selectedDay.intensity]?.split(' ')[0] || 'text-slate-400'} />
+            <div className="flex flex-col items-center">
+              <div className="w-20 h-20 rounded-full bg-emerald-500/10 flex items-center justify-center mb-6 border border-emerald-500/20 shadow-[0_0_40px_rgba(16,185,129,0.1)] relative flex-shrink-0">
+                <div className="absolute inset-1.5 border border-emerald-500/30 rounded-full" />
+                <Trophy size={32} className="text-emerald-400" />
               </div>
               
-              <h3 className="text-xl font-black text-white italic tracking-tight mb-1">
-                {briefing?.days.findIndex(d => d.day === selectedDay.day) === 0 ? (activities.some(a => a.start_date_local.startsWith(toLocalDateStr(new Date()))) ? "TOMORROW'S" : "TODAY'S") : selectedDay.day} FOCUS
+              <h3 className="text-2xl font-black text-white italic tracking-tighter mb-1.5 uppercase text-center leading-tight">
+                {briefing?.days.findIndex(d => d.day === selectedDay.day) === 0 ? (activities.some(a => a.start_date_local.startsWith(toLocalDateStr(new Date()))) ? "TOMORROW'S" : "TODAY'S") : selectedDay.day.toUpperCase()} FOCUS
               </h3>
-              <p className="text-[11px] font-black text-emerald-500 uppercase tracking-[0.2em] mb-6">{selectedDay.focus}</p>
+              <p className="text-[11px] font-black text-emerald-500 uppercase tracking-[0.25em] mb-8 text-center">{selectedDay.focus}</p>
               
-              <div className="bg-slate-950/60 p-6 rounded-[2rem] border border-white/5 w-full text-left space-y-4 shadow-inner overflow-hidden">
-                 <div className="flex items-center justify-between opacity-80 border-b border-white/5 pb-3">
-                    <div className="flex items-center gap-1.5 text-xs font-black text-white">
-                       <Clock size={14} className="text-blue-400" /> {selectedDay.duration_target} MIN
+              <div className="bg-[#0a0c10] p-6 rounded-[2.5rem] border border-white/5 w-full text-left space-y-5 shadow-inner relative overflow-hidden">
+                 <div className="flex items-center justify-between border-b border-white/5 pb-4 mx-1">
+                    <div className="flex items-center gap-2 text-[14px] font-black text-white tracking-tighter">
+                       <Clock size={16} className="text-blue-400" /> {selectedDay.duration_target} MIN
                     </div>
-                    <div className="flex items-center gap-1.5 text-xs font-black text-amber-400">
-                       <Zap size={14} fill="currentColor" /> {selectedDay.load_target} TSS
+                    <div className="flex items-center gap-2 text-[14px] font-black text-amber-400 italic">
+                       <Zap size={16} fill="currentColor" className="text-amber-400" /> {selectedDay.load_target} TSS
                     </div>
                  </div>
 
-                 {selectedDay.workout_steps && selectedDay.workout_steps.length > 0 ? (
-                   <div className="space-y-2 py-1 max-h-[180px] overflow-y-auto custom-scrollbar pr-2">
-                     {selectedDay.workout_steps.map((step, sIdx) => (
-                       <div key={sIdx} className="flex items-center justify-between gap-3 text-[11px] font-bold">
-                         <div className="flex items-center gap-2 text-slate-400">
-                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
-                           <span>{step.duration}m {step.label}</span>
-                         </div>
-                         {step.target_watts && (
-                           <span className="text-emerald-400/80">{step.target_watts}W</span>
-                         )}
-                       </div>
-                     ))}
-                   </div>
-                 ) : (
-                   <p className="text-sm text-slate-300 leading-relaxed italic font-light">
-                     "{selectedDay.why}"
-                   </p>
-                 )}
+                 <div className="space-y-4 py-1 max-h-[180px] overflow-y-auto custom-scrollbar px-1">
+                   {selectedDay.workout_steps && selectedDay.workout_steps.length > 0 ? (
+                      selectedDay.workout_steps.map((step, sIdx) => (
+                        <div key={sIdx} className="flex items-center justify-between gap-4 text-[13px] font-bold group">
+                          <div className="flex items-center gap-2.5 text-slate-300">
+                            <div className="w-1 h-1 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] flex-shrink-0" />
+                            <span className="truncate">{step.duration}m {step.label}</span>
+                          </div>
+                          {step.target_watts && (
+                            <span className="text-emerald-400 font-extrabold italic tabular-nums flex-shrink-0">{step.target_watts}W</span>
+                          )}
+                        </div>
+                      ))
+                   ) : (
+                      <p className="text-[13px] text-slate-400 leading-relaxed italic text-center px-4 font-medium opacity-80">
+                        {selectedDay.why}
+                      </p>
+                   )}
+                 </div>
               </div>
 
               <div className="mt-8 flex flex-col gap-3 w-full">
@@ -273,26 +306,26 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                     }
                   }}
                   disabled={syncingDay === selectedDay.day || syncSuccess === selectedDay.day || selectedDay.intensity === 'Rest'}
-                  className={`w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-all shadow-xl ${
+                  className={`w-full py-4.5 rounded-full text-[12px] font-black uppercase tracking-[0.14em] flex items-center justify-center gap-2.5 transition-all shadow-xl active:scale-95 ${
                     syncSuccess === selectedDay.day 
                       ? 'bg-emerald-500 text-white' 
                       : selectedDay.intensity === 'Rest'
                       ? 'bg-slate-900 text-slate-600 border border-white/5 opacity-50 cursor-not-allowed'
-                      : 'bg-emerald-400 text-slate-950 hover:bg-emerald-300 active:scale-95'
+                      : 'bg-[#40e0a0] text-slate-950 hover:bg-[#38d090] shadow-emerald-400/20'
                   }`}
                 >
                   {syncingDay === selectedDay.day ? (
-                    <Loader2 size={16} className="animate-spin" />
+                    <Loader2 size={18} className="animate-spin" />
                   ) : syncSuccess === selectedDay.day ? (
-                    <>SYNCED <Check size={16} strokeWidth={3} /></>
+                    <>SYNCED <Check size={18} strokeWidth={3} /></>
                   ) : (
-                    <>SYNC TO CALENDAR <CalendarIcon size={14} strokeWidth={2.5} /></>
+                    <>SYNC TO CALENDAR <CalendarIcon size={18} strokeWidth={2.5} /></>
                   )}
                 </button>
 
                 <button 
                   onClick={() => setSelectedDay(null)}
-                  className="w-full py-4 bg-white/5 rounded-2xl text-[10px] font-black text-slate-500 hover:text-white transition-all uppercase tracking-[0.2em] border border-white/5"
+                  className="w-full py-4.5 bg-[#1a1c22] rounded-full text-[11px] font-black text-slate-400 hover:text-white transition-all uppercase tracking-[0.2em] active:scale-95"
                 >
                   CLOSE
                 </button>

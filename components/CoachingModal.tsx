@@ -22,9 +22,10 @@ interface CoachingModalProps {
   creds: IntervalsCredentials;
   onClose: () => void;
   userGoal?: string;
+  ftp?: number;
 }
 
-export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, onClose, userGoal }) => {
+export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, onClose, userGoal, ftp }) => {
   const [feedback, setFeedback] = useState<CoachingFeedback | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
           fetchActivityIntervals(activity.id, creds),
           fetchPlannedWorkout(dateStr, creds)
         ]);
-        const data = await getRideFeedback(activity, intervals, plannedWorkout, userGoal);
+        const data = await getRideFeedback(activity, intervals, plannedWorkout, userGoal, ftp);
         setFeedback(data);
       } catch (err: any) {
         setError(err.message || "Engine analysis failed.");
@@ -48,7 +49,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
       }
     };
     fetchFeedback();
-  }, [activity, creds, userGoal]);
+  }, [activity, creds, userGoal, ftp]);
 
   const dateObj = new Date(activity.start_date_local);
   const formatDuration = (totalSeconds: number) => {
@@ -214,10 +215,26 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                     <div className="w-6 h-6 rounded-lg bg-amber-500/20 flex items-center justify-center">
                       <Target size={11} className="text-amber-400" />
                     </div>
-                    <h3 className="text-[10px] font-black text-amber-400 uppercase tracking-[0.2em]">Progression Path</h3>
+                    <h3 className="text-[10px] font-black text-amber-400 uppercase tracking-[0.2em]">Workout Plan</h3>
                   </div>
                   
                   <div className="bg-slate-950/60 p-5 rounded-[1.5rem] border border-white/5 relative overflow-hidden group">
+                    {feedback.workout_steps && feedback.workout_steps.length > 0 ? (
+                       <div className="space-y-3 mb-4">
+                         {feedback.workout_steps.map((step, sIdx) => (
+                           <div key={sIdx} className="flex items-center justify-between gap-3 text-[12px] font-bold">
+                             <div className="flex items-center gap-2 text-slate-300">
+                               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />
+                               <span>{step.duration}m {step.label}</span>
+                             </div>
+                             {step.target_watts && (
+                               <span className="text-emerald-400 font-black italic">{step.target_watts}W</span>
+                             )}
+                           </div>
+                         ))}
+                       </div>
+                    ) : null}
+                    
                     <p className="text-[13px] text-slate-300 leading-relaxed relative z-10">{feedback.goal_contribution}</p>
                     
                     <div className="mt-6 pt-5 border-t border-white/5 flex items-center justify-between relative z-10">

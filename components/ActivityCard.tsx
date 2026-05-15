@@ -85,6 +85,13 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
               <span className="text-slate-400">{Math.round(activity.average_heartrate)}bpm</span>
             </div>
           ) : null}
+
+          {activity.icu_eftp && activity.icu_eftp > 0 && (
+            <div className="flex items-center gap-1 text-[10px] font-black bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+              <span className="text-emerald-400">eFTP</span>
+              <span className="text-white">{Math.round(activity.icu_eftp)}W</span>
+            </div>
+          )}
         </div>
       </div>
 

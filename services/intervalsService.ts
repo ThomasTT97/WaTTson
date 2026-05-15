@@ -81,7 +81,7 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
     'icu_tss', 'icu_joules', 'calories', 'icu_efficiency_factor', 'icu_variability_index',
     'icu_hr_variability', 'icu_hrr', 'has_heartrate', 'has_power', 'average_temp',
     'device_name', 'external_id', 'icu_pm_actual_load', 'icu_atl', 'icu_ctl', 'icu_tsb',
-    'analyzed', 'icu_power_hr_z2_ef', 'icu_power_hr_z2', 'icu_power_hr_z2_hr'
+    'analyzed', 'icu_power_hr_z2_ef', 'icu_power_hr_z2', 'icu_power_hr_z2_hr', 'icu_eftp'
   ].join(',');
 
   const allActivities: Activity[] = [];
@@ -268,6 +268,64 @@ export const fetchAthleteProfile = async (creds: IntervalsCredentials): Promise<
   }
 };
 
+/**
+ * Fetches power curve data for a specific year.
+ */
+export const fetchPowerCurve = async (creds: IntervalsCredentials, year: number): Promise<any> => {
+  if (creds.apiKey === 'demo') return { year, bests: getMockPowerBests() };
+  const { apiKey, athleteId } = creds;
+  const auth = btoa(`API_KEY:${apiKey.trim()}`);
+  const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
+  
+  const oldest = `${year}-01-01`;
+  const newest = `${year}-12-31`;
+  const url = `https://intervals.icu/api/v1/athlete/${athleteId}/power-curve?oldest=${oldest}&newest=${newest}`;
+  
+  try {
+    const response = await fetch(url, { method: 'GET', headers });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (error) {
+    console.error(`Error fetching power curve for ${year}:`, error);
+    return null;
+  }
+};
+
+/**
+ * Gets annual best efforts for standard intervals.
+ */
+export const getAnnualPowerCurves = async (creds: IntervalsCredentials, yearsCount: number = 3): Promise<any[]> => {
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: yearsCount }, (_, i) => currentYear - i);
+  const results = [];
+
+  const durations = [1, 10, 20, 30, 60, 120, 180, 240, 300, 480, 600, 1200, 3600, 5400, 7200, 10800];
+
+  for (const year of years) {
+    const data = await fetchPowerCurve(creds, year);
+    if (data && data.watts && data.secs) {
+      const bests = durations.map(d => {
+        // Find closest duration in returned data
+        let idx = data.secs.indexOf(d);
+        if (idx === -1) {
+          // Find first index where secs >= d
+          idx = data.secs.findIndex((s: number) => s >= d);
+        }
+        return {
+          duration: d,
+          watts: idx !== -1 ? data.watts[idx] : 0
+        };
+      });
+      results.push({ year, bests });
+    } else if (creds.apiKey === 'demo') {
+      results.push({ year, bests: getMockPowerBests() });
+    }
+    // Small delay to be safe
+    if (creds.apiKey !== 'demo') await new Promise(r => setTimeout(r, 200));
+  }
+  return results;
+};
+
 export const uploadWorkout = async (
   creds: IntervalsCredentials, 
   workout: { name: string; description: string; date: string; type?: string; moving_time?: number; icu_training_load?: number; workout_text?: string }
@@ -330,6 +388,7 @@ export const getMockActivities = (): Activity[] => {
         average_watts: 180 + Math.random() * 50,
         weighted_average_watts: 210 + Math.random() * 50,
         icu_training_load: 60 + Math.random() * 40,
+        icu_eftp: 220 + Math.random() * 30,
         source: 'ZWIFT'
       });
     }
@@ -371,3 +430,22 @@ export const getMockPlannedWorkout = (dateStr: string): PlannedWorkout => ({
   moving_time: 3600,
   icu_training_load: 75
 });
+
+export const getMockPowerBests = () => [
+  { duration: 1, watts: 1100 },
+  { duration: 10, watts: 950 },
+  { duration: 20, watts: 820 },
+  { duration: 30, watts: 750 },
+  { duration: 60, watts: 600 },
+  { duration: 120, watts: 480 },
+  { duration: 180, watts: 420 },
+  { duration: 240, watts: 390 },
+  { duration: 300, watts: 370 },
+  { duration: 480, watts: 330 },
+  { duration: 600, watts: 310 },
+  { duration: 1200, watts: 280 },
+  { duration: 3600, watts: 240 },
+  { duration: 5400, watts: 220 },
+  { duration: 7200, watts: 200 },
+  { duration: 10800, watts: 180 }
+];

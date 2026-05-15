@@ -37,6 +37,7 @@ export interface Activity {
   icu_ctl?: number;
   icu_tsb?: number;
   analyzed?: boolean;
+  icu_eftp?: number;
 }
 
 export interface ActivityInterval {
@@ -75,6 +76,11 @@ export interface Wellness {
 export interface CoachingFeedback {
   summary: string;
   goal_contribution: string;
+  workout_steps?: {
+    duration: number;
+    target_watts?: number;
+    label: string;
+  }[];
 }
 
 export interface WorkoutOption {
@@ -83,6 +89,12 @@ export interface WorkoutOption {
   intensity: 'Low' | 'Moderate' | 'High' | 'Rest';
   duration_minutes: number;
   type: 'intervals' | 'endurance';
+  tss?: number;
+  workout_steps?: {
+    duration: number; // minutes
+    target_watts?: number;
+    label: string;
+  }[];
 }
 
 export interface DailySuggestion {
@@ -131,4 +143,14 @@ export interface UserProfileAnalysis {
   effective_methods: string[];
   ineffective_methods: string[];
   recommended_focus: string;
+}
+
+export interface PowerBest {
+  duration: number; // in seconds
+  watts: number;
+}
+
+export interface AnnualPowerCurve {
+  year: number;
+  bests: PowerBest[];
 }
