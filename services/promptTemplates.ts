@@ -87,21 +87,16 @@ export const getDailySuggestionPrompt = (p: DailySuggestionParams): string => {
 
 export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
   const totalDays = p.dayNames.length;
-  return `Plan a day-by-day professional training schedule of exactly ${totalDays} days. Goal: ${p.userGoal || 'Increase endurance'}. Current physiology: ${p.stats}. ${p.startContext || ''}. 
-    ${p.planContext ? `IMPORTANT COACHING DIRECTIVES TO IMPLEMENT: ${p.planContext}` : ''}
+  return `Plan ${totalDays} days training. Goal: ${p.userGoal || 'Endurance'}. Physiology: ${p.stats}. ${p.startContext || ''}. 
+    ${p.planContext || ''}
     ${p.pcCtx}
     
-    CRITICAL: You MUST provide a plan for exactly ${totalDays} days in this EXACT order: ${p.dayNames.join(', ')}.
-    The days array MUST contain exactly ${totalDays} elements.
-    
-    PERFORMANCE REQUIREMENTS FOR EXTREME SPEED:
-    1. Keep the "why" explanation for each day extremely short and precise (under 12 words).
-    2. You MUST suggest "workout_steps" for ALL workouts EXCEPT Rest days. Endurance, Easy, Medium, and Hard workouts MUST have workout steps.
-    3. Keep "workout_steps" to 3-4 steps max.
-    
-    Steps should include duration (mins), target_watts (W), and label.
-    Use ${p.ftp ? `athlete FTP: ${p.ftp}W` : 'sensible intensity levels'} for watts, referencing the power profile if provided.
-    Return JSON with phase, focus, outlook_summary, days[].`;
+    CRITICAL:
+    1. Plan exactly ${totalDays} days: ${p.dayNames.join(', ')}.
+    2. "why" < 12 words.
+    3. Suggest "workout_steps" for ALL workouts EXCEPT Rest days.
+    4. "workout_steps" max 3 steps: duration(m), target_watts(W), label.
+    5. Return JSON with phase, focus, outlook_summary, days[].`;
 };
 
 export const getChatMessagePrompt = (p: ChatMessageParams): string => {

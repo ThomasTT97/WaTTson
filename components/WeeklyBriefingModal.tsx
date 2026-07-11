@@ -34,6 +34,22 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
   const [activeWeek, setActiveWeek] = useState<1 | 2 | 3 | 4>(1);
   const [promptInput, setPromptInput] = useState('');
   const [showChangePlanPopup, setShowChangePlanPopup] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+
+  // Simulated progress bar
+  React.useEffect(() => {
+    if (loadingWeeklyBriefing) {
+      setLoadingProgress(0);
+      const interval = setInterval(() => {
+        setLoadingProgress(prev => (prev < 99 ? prev + 1 : prev));
+      }, 100);
+      return () => clearInterval(interval);
+    } else {
+      setLoadingProgress(100);
+      const timeout = setTimeout(() => setLoadingProgress(0), 500);
+      return () => clearTimeout(timeout);
+    }
+  }, [loadingWeeklyBriefing]);
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isScrollingToRef = useRef<boolean>(false);
@@ -264,9 +280,17 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
         className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 flex flex-col gap-5 relative scroll-smooth"
       >
         {loadingWeeklyBriefing ? (
-          <div className="flex-1 flex flex-col items-center justify-center space-y-4 py-12">
-            <div className="w-10 h-10 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
-            <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest animate-pulse">Calculating Trajectory...</p>
+          <div className="flex-1 flex flex-col items-center justify-center space-y-6 py-12 px-8 w-full">
+            <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-white/5">
+              <div 
+                className="bg-emerald-500 h-full transition-all duration-300 ease-out shadow-[0_0_10px_rgba(16,185,129,0.5)]" 
+                style={{ width: `${loadingProgress}%` }}
+              />
+            </div>
+            <div className="flex flex-col items-center gap-1">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Calculating Trajectory...</p>
+              <p className="text-[10px] font-bold text-emerald-400">{Math.round(loadingProgress)}%</p>
+            </div>
           </div>
         ) : weeklyBriefing ? (
           <div className="flex flex-col gap-6 animate-in fade-in duration-500 pb-12">

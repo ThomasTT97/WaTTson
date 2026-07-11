@@ -73,10 +73,11 @@ const callGemini = async (params: any): Promise<GenerateContentResponse> => {
   
   // Model fallback chain: 
   // 1. gemini-2.5-flash (Incredibly fast, smart)
-  // 2. gemini-1.5-flash (Fallback)
-  // 3. gemini-1.5-pro (Robust)
-  // 4. gemini-pro (Legacy fallback)
-  const models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
+  // 2. gemini-2.0-flash-lite (Very fast)
+  // 3. gemini-1.5-flash (Fallback)
+  // 4. gemini-1.5-pro (Robust)
+  // 5. gemini-pro (Legacy fallback)
+  const models = ['gemini-2.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
   
   let lastError: any = null;
   for (const model of models) {
@@ -145,7 +146,7 @@ export const getRideFeedback = async (
                 target_watts: { type: Type.NUMBER },
                 label: { type: Type.STRING }
               },
-              required: ['duration', 'label']
+              required: ['duration', 'target_watts', 'label']
             }
           }
         },
@@ -211,7 +212,7 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
                     target_watts: { type: Type.NUMBER },
                     label: { type: Type.STRING }
                   },
-                  required: ['duration', 'label']
+                  required: ['duration', 'target_watts', 'label']
                 }
               }
             },
@@ -235,7 +236,7 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
                     target_watts: { type: Type.NUMBER },
                     label: { type: Type.STRING }
                   },
-                  required: ['duration', 'label']
+                  required: ['duration', 'target_watts', 'label']
                 }
               }
             },
@@ -332,6 +333,7 @@ export const getWeeklyBriefing = async (
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
       responseMimeType: 'application/json',
+      temperature: 0.2,
       responseSchema: {
         type: Type.OBJECT,
         properties: {
@@ -357,7 +359,8 @@ export const getWeeklyBriefing = async (
                       duration: { type: Type.NUMBER },
                       target_watts: { type: Type.NUMBER },
                       label: { type: Type.STRING }
-                    }
+                    },
+                    required: ['duration', 'target_watts', 'label']
                   }
                 }
               },
