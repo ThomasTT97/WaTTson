@@ -1,7 +1,5 @@
-
-import React, { useEffect, useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Activity, Wellness, WeeklyBriefing, IntervalsCredentials, DailySuggestion, AnnualPowerCurve } from '../types';
-import { getWeeklyBriefing } from '../services/geminiService';
 import { uploadWorkout } from '../services/intervalsService';
 import { X, Sparkles, ChevronRight, Trophy, Clock, Zap, Info, Calendar as CalendarIcon, Check, Loader2, RefreshCw } from 'lucide-react';
 
@@ -15,7 +13,11 @@ interface WeeklyBriefingModalProps {
   ftp?: number;
   powerCurves?: AnnualPowerCurve[];
   planContext?: string;
+  weeklyBriefing: WeeklyBriefing | null;
+  loadingWeeklyBriefing: boolean;
   onResetPlanContext?: () => void;
+  onUpdatePlanContext?: (context: string) => void;
+  onForceRefresh?: () => void;
 }
 
 const toLocalDateStr = (d: Date) => {
@@ -23,56 +25,20 @@ const toLocalDateStr = (d: Date) => {
 };
 
 export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({ 
-  activities, wellness, userGoal, onClose, todaySuggestion, creds, ftp, powerCurves, planContext, onResetPlanContext
+  activities, wellness, userGoal, onClose, todaySuggestion, creds, ftp, powerCurves, planContext, onResetPlanContext, onUpdatePlanContext,
+  weeklyBriefing, loadingWeeklyBriefing, onForceRefresh
 }) => {
-  const [briefing, setBriefing] = useState<WeeklyBriefing | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedDay, setSelectedDay] = useState<WeeklyBriefing['days'][0] | null>(null);
   const [syncingDay, setSyncingDay] = useState<string | null>(null);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
+  const [activeWeek, setActiveWeek] = useState<1 | 2 | 3 | 4>(1);
+  const [promptInput, setPromptInput] = useState('');
+  const [showChangePlanPopup, setShowChangePlanPopup] = useState(false);
+  
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isScrollingToRef = useRef<boolean>(false);
 
-  const fetchBriefing = async (force: boolean = false) => {
-    if (force) setIsRefreshing(true);
-    else setLoading(true);
-    
-    try {
-      const now = new Date();
-      const todayStr = toLocalDateStr(now);
-      const hasActivityToday = activities.some(a => a.start_date_local.startsWith(todayStr));
-      
-      const todayName = now.toLocaleDateString('en-US', { weekday: 'long' });
-      const tomorrow = new Date();
-      tomorrow.setDate(now.getDate() + 1);
-      const tomorrowName = tomorrow.toLocaleDateString('en-US', { weekday: 'long' });
-
-      // Ensure consistency with the home screen suggestion for the first day
-      const todaySuggestionText = todaySuggestion 
-        ? `The primary suggested workout is: "${todaySuggestion.primary.title}" (${todaySuggestion.primary.duration_minutes} min, ${todaySuggestion.primary.intensity} intensity). `
-        : "";
-        
-      let startContext = "";
-      if (hasActivityToday) {
-        startContext = `Plan MUST start from TOMORROW, which is ${tomorrowName} (Day 1 = Tomorrow), as the athlete already completed a workout today. ${todaySuggestionText} Use this workout for ${tomorrowName}. `;
-      } else {
-        startContext = `Plan MUST start from TODAY, which is ${todayName}. ${todaySuggestionText} Use this workout for ${todayName} (Day 1). `;
-      }
-
-      const data = await getWeeklyBriefing(activities, wellness, userGoal, startContext, ftp, powerCurves, planContext, force);
-      setBriefing(data);
-    } catch (err) {
-      console.error("Briefing failed:", err);
-    } finally {
-      setLoading(false);
-      setIsRefreshing(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchBriefing();
-  }, [activities, wellness, userGoal, todaySuggestion, ftp, powerCurves, planContext]);
-
-  const handleSyncToIntervals = async (day: WeeklyBriefing['days'][0], index: number) => {
+  const handleSyncToIntervals = async (day: WeeklyBriefing['days'][0], absoluteIndex: number) => {
     setSyncingDay(day.day);
     try {
       const todayStr = toLocalDateStr(new Date());
@@ -80,7 +46,7 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
       const offset = hasActivityToday ? 1 : 0;
 
       const targetDate = new Date();
-      targetDate.setDate(targetDate.getDate() + index + offset);
+      targetDate.setDate(targetDate.getDate() + absoluteIndex + offset);
       const dateStr = toLocalDateStr(targetDate);
       
       const workoutText = day.workout_steps?.map(s => `- ${s.label || 'Step'} ${s.duration}m ${s.target_watts ? `${s.target_watts}w` : ''}`).join('\n') || day.why;
@@ -127,123 +93,259 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
     if (lower.includes('fri')) return 'FRI';
     if (lower.includes('sat')) return 'SAT';
     if (lower.includes('sun')) return 'SUN';
+    const match = dayStr.match(/^([A-Za-z]{3})/);
+    if (match) return match[1].toUpperCase();
     return dayStr.slice(0, 3).toUpperCase();
   };
 
+  const getDayLabel = (dayStr: string) => {
+    const match = dayStr.match(/\(([^)]+)\)/);
+    if (match) return match[1];
+    return '';
+  };
+
+  const getDayOfWeekFromAbbr = (abbr: string): number => {
+    const clean = abbr.trim().substring(0, 3).toLowerCase();
+    switch (clean) {
+      case 'mon': return 1;
+      case 'tue': return 2;
+      case 'wed': return 3;
+      case 'thu': return 4;
+      case 'fri': return 5;
+      case 'sat': return 6;
+      case 'sun': return 7;
+      default: return 1;
+    }
+  };
+
+  const getWeek1Length = () => {
+    if (!weeklyBriefing || weeklyBriefing.days.length === 0) return 7;
+    const firstDay = weeklyBriefing.days[0].day;
+    const dayOfWeek = getDayOfWeekFromAbbr(firstDay);
+    return 8 - dayOfWeek;
+  };
+
+  const getDaysForWeek = (wk: 1 | 2 | 3 | 4) => {
+    if (!weeklyBriefing) return [];
+    const week1Len = getWeek1Length();
+    if (wk === 1) {
+      return weeklyBriefing.days.slice(0, week1Len);
+    }
+    const startIndex = week1Len + (wk - 2) * 7;
+    return weeklyBriefing.days.slice(startIndex, startIndex + 7);
+  };
+
+  const scrollToWeekSection = (wk: 1 | 2 | 3 | 4) => {
+    isScrollingToRef.current = true;
+    setActiveWeek(wk);
+    const container = scrollContainerRef.current;
+    const element = document.getElementById(`week-section-${wk}`);
+    if (container && element) {
+      container.scrollTo({
+        top: element.offsetTop - 12,
+        behavior: 'smooth'
+      });
+    }
+    setTimeout(() => {
+      isScrollingToRef.current = false;
+    }, 800);
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (isScrollingToRef.current) return;
+    const container = e.currentTarget;
+    const scrollPositions = ([1, 2, 3, 4] as const).map(wk => {
+      const el = document.getElementById(`week-section-${wk}`);
+      if (!el) return { wk, distance: Infinity };
+      // Measure offset relative to container scroll top
+      const distance = Math.abs(el.offsetTop - container.scrollTop - 20);
+      return { wk, distance };
+    });
+    
+    const closest = scrollPositions.reduce((min, curr) => curr.distance < min.distance ? curr : min, { wk: 1 as any, distance: Infinity });
+    if (closest.wk !== activeWeek) {
+      setActiveWeek(closest.wk);
+    }
+  };
+
+  const weekPhaseNames = {
+    1: "Build & Adapt",
+    2: "Peak Progression",
+    3: "Target Taper",
+    4: "Recovery & Test"
+  };
+
   return (
-      <div className="fixed inset-0 z-[100] bg-[#05070a]/95 backdrop-blur-3xl flex flex-col animate-in slide-in-from-bottom duration-300 md:max-w-[480px] md:mx-auto md:shadow-2xl overflow-hidden">
-      {/* Header */}
+    <div className="fixed inset-0 z-[100] bg-[#05070a]/95 backdrop-blur-3xl flex flex-col animate-in slide-in-from-bottom duration-300 md:max-w-[480px] md:mx-auto md:shadow-2xl overflow-hidden">
+      
+      {/* Header - Matches the Look and Feel of Global Top Bar */}
       <div 
-        className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-transparent"
-        style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}
+        className="flex-none flex items-center justify-between pb-3 px-6 border-b border-white/5 bg-transparent"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top) + 16px)' }}
       >
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => fetchBriefing(true)}
-            disabled={loading || isRefreshing}
-            className="w-9 h-9 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20 active:scale-90 transition-all disabled:opacity-50"
-          >
-            <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
-          </button>
-          <div>
-            <h2 className="text-xl font-black text-white tracking-tight leading-none">Weekly Briefing</h2>
-            <p className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] mt-1.5">7-Day Performance Outlook</p>
+        <div className="flex items-center gap-4">
+          <div className="w-9 h-9 rounded-xl glass-card flex flex-shrink-0 items-center justify-center shadow-inner relative overflow-hidden border border-white/10">
+             <CalendarIcon size={18} className="text-emerald-400" />
+          </div>
+          <div className="flex flex-col justify-center">
+            <div className="flex items-center gap-2">
+              <h2 className="text-2xl font-black text-white italic tracking-tight leading-none">
+                wa<span className="text-emerald-400">TT</span>son
+              </h2>
+            </div>
           </div>
         </div>
-        <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center text-slate-500 active:scale-90 transition-all border border-white/10">
-          <X size={18} />
-        </button>
+        
+        <div className="flex justify-end gap-3 items-center">
+          <button 
+            onClick={onForceRefresh}
+            disabled={loadingWeeklyBriefing}
+            className="w-10 h-10 rounded-xl glass-card flex items-center justify-center text-emerald-400 border border-emerald-500/20 active:scale-95 transition-all shadow-[0_0_15px_rgba(34,211,238,0.15)] disabled:opacity-50"
+            title="Refresh Plan"
+          >
+            <RefreshCw size={16} className={loadingWeeklyBriefing ? "animate-spin text-emerald-400" : ""} />
+          </button>
+          
+          <button 
+            onClick={onClose} 
+            className="w-10 h-10 rounded-xl glass-card flex items-center justify-center text-slate-500 border border-white/10 active:scale-95 transition-all"
+          >
+            <X size={20} />
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 flex flex-col">
-        {loading ? (
-          <div className="flex-1 flex flex-col items-center justify-center space-y-4">
+      {/* PINNED CONTROLS AREA ON TOP - Option to change via prompt */}
+      <div className="flex-none px-5 py-3 border-b border-white/5 bg-slate-950/20 flex flex-col gap-2.5">
+        
+        {/* Promoted Change Plan Button */}
+        <button
+          onClick={() => setShowChangePlanPopup(true)}
+          className="w-full py-2.5 bg-white/5 border border-white/10 hover:border-emerald-500/30 hover:bg-white/10 text-white font-black text-[11px] uppercase tracking-widest rounded-xl transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+        >
+          <Sparkles size={12} className="text-emerald-400 animate-pulse" /> Change plan
+        </button>
+
+        {/* Week tab selectors (used as jump-to-week anchors) */}
+        <div className="grid grid-cols-4 gap-1 p-1 bg-slate-950/60 border border-white/5 rounded-xl">
+          {([1, 2, 3, 4] as const).map((wk) => (
+            <button
+              key={wk}
+              onClick={() => scrollToWeekSection(wk)}
+              className={`py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all text-center ${
+                activeWeek === wk
+                  ? 'bg-emerald-500 text-slate-950 shadow'
+                  : 'text-slate-500 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              W{wk}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* CONTINUOUS DAY-BY-DAY SCROLL CONTAINER */}
+      <div 
+        id="trainings-plan-scroll-container" 
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 flex flex-col gap-5 relative scroll-smooth"
+      >
+        {loadingWeeklyBriefing ? (
+          <div className="flex-1 flex flex-col items-center justify-center space-y-4 py-12">
             <div className="w-10 h-10 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
-            <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest animate-pulse">Analyzing Trajectory...</p>
+            <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest animate-pulse">Calculating Trajectory...</p>
           </div>
-        ) : briefing ? (
-          <div className="flex-1 flex flex-col gap-3 animate-in fade-in duration-700">
-            <h4 className="text-[9px] font-black text-slate-700 uppercase tracking-[0.4em] text-center mb-1">
-              7-Day Projection
-            </h4>
+        ) : weeklyBriefing ? (
+          <div className="flex flex-col gap-6 animate-in fade-in duration-500 pb-12">
             
-            <div className="flex-1 flex flex-col justify-between max-h-[calc(100vh-220px)] gap-1">
-              {briefing.days.map((day, idx) => (
-                <button 
-                  key={idx} 
-                  onClick={() => setSelectedDay(day)}
-                  className={`w-full text-left py-2.5 px-3 rounded-2xl border flex items-center gap-3 hover:brightness-110 active:scale-[0.99] transition-all shadow-lg ${intensityRowStyles[day.intensity] || intensityRowStyles['Medium']}`}
+            {/* continuous 4-week render */}
+            {([1, 2, 3, 4] as const).map((wk) => {
+              const weekDays = getDaysForWeek(wk);
+              return (
+                <div 
+                  key={wk} 
+                  id={`week-section-${wk}`}
+                  className="scroll-mt-3 flex flex-col gap-2 border-l border-white/5 pl-4 ml-2 relative"
                 >
-                  {/* Day Box */}
-                  <div className="w-10 h-10 rounded-xl bg-black/40 flex items-center justify-center shrink-0 border border-white/5">
-                    <span className="text-[11px] font-black text-slate-400 uppercase leading-none tracking-tighter">{getDayAbbr(day.day)}</span>
-                  </div>
-
-                  {/* Info Column */}
-                  <div className="flex-1 min-w-0 flex flex-col justify-center">
-                    <div className="flex items-baseline gap-2">
-                       <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest leading-none">
-                         {idx === 0 ? (activities.some(a => a.start_date_local.startsWith(toLocalDateStr(new Date()))) ? "TOMORROW" : "TODAY") : (idx === 1 && !activities.some(a => a.start_date_local.startsWith(toLocalDateStr(new Date()))) ? "TOMORROW" : "")}
-                       </span>
-                    </div>
-                    <div className="flex items-baseline gap-1.5">
-                      <span className="text-2xl font-black text-white leading-none tracking-tighter italic">
-                        {day.duration_target > 0 ? day.duration_target : '--'}
-                      </span>
-                      <span className="text-[9px] font-black text-slate-600 uppercase tracking-tighter leading-none">MIN</span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 mt-0.5 opacity-90">
-                      {day.load_target > 0 ? (
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter flex items-center gap-1">
-                          <Zap size={10} className="text-amber-500/80" fill="currentColor" /> Target {day.load_target} TSS
-                        </span>
-                      ) : (
-                        <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tighter">Full Recovery</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Badge */}
-                  <div className="flex items-center gap-2">
-                    <span className={`text-[9px] font-black px-3 py-1 rounded-full border uppercase tracking-widest min-w-[65px] text-center shadow-sm ${intensityColors[day.intensity] || intensityColors['Medium']}`}>
-                      {day.intensity}
+                  {/* Decorative timeline node */}
+                  <div className="absolute -left-[5px] top-2.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#05070a] shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
+                  
+                  <div className="flex items-baseline justify-between mb-1">
+                    <h3 className="text-xs font-black text-white uppercase tracking-wider">
+                      Week {wk} • <span className="text-emerald-400">{weekPhaseNames[wk]}</span>
+                    </h3>
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                      {weekDays[0] && getDayLabel(weekDays[0].day)} — {weekDays[weekDays.length - 1] && getDayLabel(weekDays[weekDays.length - 1].day)}
                     </span>
-                    <ChevronRight size={14} className="text-slate-800" />
                   </div>
-                </button>
-              ))}
+
+                  <div className="flex flex-col gap-2">
+                    {weekDays.map((day, idx) => {
+                      const absoluteIdx = weeklyBriefing ? weeklyBriefing.days.indexOf(day) : idx;
+                      return (
+                        <button 
+                          key={idx} 
+                          onClick={() => setSelectedDay(day)}
+                          className={`w-full text-left py-2.5 px-3 rounded-xl border flex items-center gap-3 hover:brightness-110 active:scale-[0.99] transition-all shadow ${intensityRowStyles[day.intensity] || intensityRowStyles['Medium']}`}
+                        >
+                          {/* Day Box */}
+                          <div className="w-9 h-9 rounded-lg bg-black/40 flex flex-col items-center justify-center shrink-0 border border-white/5">
+                            <span className="text-[10px] font-black text-slate-300 uppercase leading-none tracking-tighter">{getDayAbbr(day.day)}</span>
+                            {getDayLabel(day.day) && (
+                              <span className="text-[7px] font-bold text-slate-500 mt-0.5 uppercase tracking-tighter">{getDayLabel(day.day)}</span>
+                            )}
+                          </div>
+
+                          {/* Info Column */}
+                          <div className="flex-1 min-w-0 flex flex-col justify-center">
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-xl font-black text-white leading-none tracking-tighter italic">
+                                {day.duration_target > 0 ? day.duration_target : '--'}
+                              </span>
+                              <span className="text-[8px] font-black text-slate-600 uppercase tracking-tighter leading-none">MIN</span>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 mt-0.5 opacity-90">
+                              {day.load_target > 0 ? (
+                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-tighter flex items-center gap-1 leading-none">
+                                  <Zap size={9} className="text-amber-500/80" fill="currentColor" /> Target {day.load_target} TSS
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-bold text-slate-600 uppercase tracking-tighter leading-none">Full Recovery</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Badge */}
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-[8px] font-black px-2 py-0.5 rounded-md border uppercase tracking-wider min-w-[55px] text-center ${intensityColors[day.intensity] || intensityColors['Medium']}`}>
+                              {day.intensity}
+                            </span>
+                            <ChevronRight size={12} className="text-slate-700" />
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Bottom info banner */}
+            <div className="p-4 bg-slate-900/40 rounded-2xl border border-white/5 flex gap-3 items-center mt-2 shrink-0">
+              <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 shrink-0">
+                 <Info size={14} className="text-emerald-500" />
+              </div>
+              <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
+                Your 4-week trainings plan adapts automatically based on recorded stressors, wellness indicators, and power curves.
+              </p>
             </div>
 
-            <div className="mt-auto pt-4" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
-              {planContext && (
-                <div className="mb-3 p-4 bg-emerald-500/5 rounded-2xl border border-emerald-500/20 flex flex-col gap-2">
-                   <div className="flex items-center justify-between">
-                     <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Active Coaching Directive</span>
-                     <button 
-                       onClick={() => onResetPlanContext?.()}
-                       className="text-[9px] font-black text-slate-500 hover:text-rose-400 uppercase tracking-widest"
-                     >
-                       Reset
-                     </button>
-                   </div>
-                   <p className="text-[11px] text-slate-300 font-medium italic leading-snug">"{planContext}"</p>
-                </div>
-              )}
-              
-              <div className="p-4 bg-slate-900/40 rounded-2xl border border-white/5 flex gap-3 items-center">
-                <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
-                   <Info size={14} className="text-emerald-500" />
-                </div>
-                <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
-                  Plan is adaptive based on recorded stress. {planContext ? "Refined by coach chat." : "Talk to waTTson to rework focus."}
-                </p>
-              </div>
-            </div>
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-center opacity-30">
-            <p className="text-sm font-bold uppercase tracking-widest">Unable to generate outlook</p>
+          <div className="flex-1 flex items-center justify-center text-center py-12 opacity-30">
+            <p className="text-sm font-bold uppercase tracking-widest">Unable to generate trainings plan</p>
           </div>
         )}
       </div>
@@ -262,12 +364,12 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
               </div>
               
               <h3 className="text-2xl font-black text-white italic tracking-tighter mb-1.5 uppercase text-center leading-tight">
-                {briefing?.days.findIndex(d => d.day === selectedDay.day) === 0 ? (activities.some(a => a.start_date_local.startsWith(toLocalDateStr(new Date()))) ? "TOMORROW'S" : "TODAY'S") : selectedDay.day.toUpperCase()} FOCUS
+                {selectedDay.day.toUpperCase()} FOCUS
               </h3>
               <p className="text-[11px] font-black text-emerald-500 uppercase tracking-[0.25em] mb-8 text-center">{selectedDay.focus}</p>
               
               <div className="bg-[#0a0c10] p-6 rounded-[2.5rem] border border-white/5 w-full text-left space-y-5 shadow-inner relative overflow-hidden">
-                 <div className="flex items-center justify-between border-b border-white/5 pb-4 mx-1">
+                 <div className="flex items-center justify-between border-b border-[#05070a] pb-4 mx-1">
                     <div className="flex items-center gap-2 text-[14px] font-black text-white tracking-tighter">
                        <Clock size={16} className="text-blue-400" /> {selectedDay.duration_target} MIN
                     </div>
@@ -300,8 +402,8 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
               <div className="mt-8 flex flex-col gap-3 w-full">
                 <button 
                   onClick={() => {
-                    if (briefing) {
-                      const idx = briefing.days.findIndex(d => d.day === selectedDay.day);
+                    if (weeklyBriefing) {
+                      const idx = weeklyBriefing.days.findIndex(d => d.day === selectedDay.day);
                       handleSyncToIntervals(selectedDay, idx);
                     }
                   }}
@@ -328,6 +430,60 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                   className="w-full py-4.5 bg-[#1a1c22] rounded-full text-[11px] font-black text-slate-400 hover:text-white transition-all uppercase tracking-[0.2em] active:scale-95"
                 >
                   CLOSE
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change Plan Prompt Modal */}
+      {showChangePlanPopup && (
+        <div className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setShowChangePlanPopup(false)}>
+          <div className="glass-card w-full max-w-sm rounded-[2.5rem] p-6 pb-8 relative border border-white/10 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setShowChangePlanPopup(false)} className="absolute top-6 right-6 text-slate-600 hover:text-white transition-colors p-2 z-20">
+              <X size={20} />
+            </button>
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center mb-5 border border-emerald-500/20 shadow-[0_0_30px_rgba(16,185,129,0.1)] relative flex-shrink-0">
+                <Sparkles size={24} className="text-emerald-400 animate-pulse" />
+              </div>
+              
+              <h3 className="text-xl font-black text-white italic tracking-tighter mb-1.5 uppercase text-center">
+                Adapt Trainings Plan
+              </h3>
+              <p className="text-[11px] text-slate-400 leading-relaxed mb-6 text-center max-w-[280px]">
+                Ask waTTson to adapt your schedule (e.g., "Taper for Saturday race", "increase hill climb intervals", "easier week").
+              </p>
+              
+              <textarea
+                autoFocus
+                value={promptInput}
+                onChange={(e) => setPromptInput(e.target.value)}
+                placeholder="Ex: Taper for Saturday race, increase threshold..."
+                className="w-full bg-slate-950/60 border border-white/10 rounded-2xl p-4 text-xs text-white focus:outline-none focus:border-emerald-500/30 font-semibold placeholder-slate-600 transition-colors min-h-[100px] mb-6 resize-none"
+              />
+
+              <div className="flex gap-3 w-full">
+                <button 
+                  onClick={() => setShowChangePlanPopup(false)}
+                  className="flex-1 py-3.5 bg-[#1a1c22] rounded-full text-[10px] font-black text-slate-400 hover:text-white transition-all uppercase tracking-widest active:scale-95"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => {
+                    if (!promptInput.trim()) return;
+                    if (onUpdatePlanContext) {
+                      onUpdatePlanContext(promptInput.trim());
+                    }
+                    setPromptInput('');
+                    setShowChangePlanPopup(false);
+                  }}
+                  disabled={!promptInput.trim()}
+                  className="flex-1 py-3.5 bg-[#40e0a0] hover:bg-[#38d090] text-slate-950 font-black text-[10px] uppercase tracking-widest rounded-full shadow-lg shadow-emerald-400/20 active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none"
+                >
+                  Apply
                 </button>
               </div>
             </div>

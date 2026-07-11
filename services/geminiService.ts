@@ -8,8 +8,16 @@ import {
   ChatMessage, 
   WeeklyBriefing, 
   Wellness,
-  AnnualPowerCurve
+  AnnualPowerCurve,
+  RecoveryAdvice
 } from "../types";
+import {
+  getRideFeedbackPrompt,
+  getDailySuggestionPrompt,
+  getWeeklyBriefingPrompt,
+  getChatMessagePrompt,
+  getUserProfilePrompt
+} from "./promptTemplates";
 
 
 /**
@@ -64,9 +72,9 @@ const callGemini = async (params: any): Promise<GenerateContentResponse> => {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   
   // Model fallback chain: 
-  // 1. gemini-3-flash-preview (Standard Flash)
+  // 1. gemini-3.5-flash (Incredibly fast, smart)
   // 2. gemini-3.1-flash-lite (Unlimited tokens/Last robust fallback)
-  const models = ['gemini-3-flash-preview', 'gemini-3.1-flash-lite'];
+  const models = ['gemini-3.5-flash', 'gemini-3.1-flash-lite'];
   
   let lastError: any = null;
   for (const model of models) {
@@ -107,24 +115,19 @@ export const getRideFeedback = async (
     ? `Planned Workout: "${plannedWorkout.name}". Description: "${plannedWorkout.description}".`
     : "No planned workout for this ride.";
 
-  const prompt = `You are waTTson, an elite cycling coach. 
-    Analyze this ride: "${activity.name}". 
-    TSS: ${activity.icu_training_load || activity.icu_tss || activity.training_load || 0}. 
-    Intensity: ${activity.icu_intensity || 0}.
-    efTP: ${activity.icu_eftp || 'N/A'}W.
-    Duration: ${Math.round((activity.moving_time || activity.elapsed_time || 0) / 60)}m.
-    Power: ${Math.round(activity.average_watts || activity.icu_average_watts || 0)}W avg, ${Math.round(activity.weighted_average_watts || activity.icu_weighted_average_watts || 0)}W np.
-    HR: ${Math.round(activity.average_heartrate || 0)}bpm avg.
-    Goal: ${userGoal || 'Fitness'}.
-    
-    ${plannedWorkoutCtx}
-    
-    Return JSON with:
-    summary: A 1-sentence punchy coaching summary.
-    goal_contribution: A clear explanation of how this session contributes to ${userGoal}.
-    workout_steps: If a planned workout exists, provide the structured steps intended for this workout. 
-      Steps should include duration (mins), target_watts (W), and label.
-      Use ${ftp ? `athlete FTP: ${ftp}W` : 'sensible intensity levels'} for absolute targets where appropriate.`;
+  const prompt = getRideFeedbackPrompt({
+    activityName: activity.name || '',
+    tss: activity.icu_training_load || activity.icu_tss || activity.training_load || 0,
+    intensity: activity.icu_intensity || 0,
+    eftp: activity.icu_eftp || 'N/A',
+    durationMins: Math.round((activity.moving_time || activity.elapsed_time || 0) / 60),
+    avgPower: Math.round(activity.average_watts || activity.icu_average_watts || 0),
+    npPower: Math.round(activity.weighted_average_watts || activity.icu_weighted_average_watts || 0),
+    avgHr: Math.round(activity.average_heartrate || 0),
+    userGoal: userGoal || 'Fitness',
+    plannedWorkoutCtx,
+    ftp
+  });
 
   const response = await callGemini({
     contents: prompt,
@@ -175,17 +178,12 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
     .map(a => `${a.start_date_local.split('T')[0]}: ${a.icu_training_load || a.icu_tss || 0} TSS (${a.type}), efTP: ${a.icu_eftp || 'N/A'}W`)
     .join(', ');
 
-  const prompt = `You are waTTson, an elite cycling coach. Suggest a workout for ${targetStr}. 
-    History (7d): ${history}. 
-    Goal: "${userGoal}". 
-    
-    CRITICAL: 
-    1. For each workout option (primary and alternative), you MUST provide structured "workout_steps".
-    2. "workout_steps" MUST be an array of objects with {duration: number, target_watts: number, label: string}.
-    3. Estimate "tss" (Training Stress Score) as a number for each workout.
-    4. Use ${ftp ? `athlete FTP: ${ftp}W` : 'sensible intensity levels'} for absolute targets where appropriate.
-    5. Do NOT include any JSON comments.
-    6. "readiness_score" must be 1-10.`;
+  const prompt = getDailySuggestionPrompt({
+    targetStr,
+    history,
+    userGoal: userGoal || '',
+    ftp
+  });
 
   const response = await callGemini({
     contents: prompt,
@@ -257,7 +255,7 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
 };
 
 /**
- * Generates a 7-day training outlook based on physiology and goals.
+ * Generates a 4-week (28-day) training plan outlook based on physiology and goals.
  */
 export const getWeeklyBriefing = async (
   recentActivities: Activity[], 
@@ -274,7 +272,19 @@ export const getWeeklyBriefing = async (
   
   // Include startContext and planContext in cache key to ensure it rotates if the "already had a ride" status changes or directives change
   const contextHash = (startContext || '') + (planContext || '');
-  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${contextHash ? btoa(contextHash).slice(0, 10) : 'no-ctx'}`;
+  
+  // Safe hash instead of fragile btoa which crashes on non-ASCII characters
+  const safeHash = (str: string) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return Math.abs(hash).toString(36);
+  };
+
+  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${contextHash ? safeHash(contextHash) : 'no-ctx'}`;
   
   if (!force) {
     const cached = getCache(cacheKey);
@@ -291,27 +301,34 @@ export const getWeeklyBriefing = async (
     pcCtx = `Current Year Power Bests: ${pc.bests.map(b => `${b.duration}s:${b.watts}W`).join(', ')}`;
   }
 
-  // Generate the actual list of days to enforce order
+  // Generate the actual list of days, ensuring Monday-Sunday alignment and making Week 1 shorter
   const dayNames: string[] = [];
   const tempDate = new Date();
   // If startContext contains "Plan MUST start from TOMORROW", we shift the dayNames generator
   const startsTomorrow = startContext?.includes("TOMORROW");
   if (startsTomorrow) tempDate.setDate(tempDate.getDate() + 1);
 
-  for (let i = 0; i < 7; i++) {
-    dayNames.push(tempDate.toLocaleDateString('en-US', { weekday: 'long' }));
+  // Compute Week 1 length based on start date (tempDate)
+  const startDayOfWeek = tempDate.getDay() === 0 ? 7 : tempDate.getDay();
+  const week1Length = 8 - startDayOfWeek;
+  const totalDays = week1Length + 21; // Week 1 (shorter) + 3 full weeks (21 days)
+
+  for (let i = 0; i < totalDays; i++) {
+    const weekday = tempDate.toLocaleDateString('en-US', { weekday: 'short' });
+    const monthDay = tempDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    dayNames.push(`${weekday} (${monthDay})`);
     tempDate.setDate(tempDate.getDate() + 1);
   }
 
-  const prompt = `Plan 7-day outlook. Goal: ${userGoal}. Stats: ${stats}. ${startContext || ''}. 
-    ${planContext ? `IMPORTANT COACHING DIRECTIVES: ${planContext}` : ''}
-    ${pcCtx}
-    CRITICAL: You MUST provide a plan for exactly these 7 days in this EXACT order: ${dayNames.join(', ')}.
-    The first day in the "days" array MUST be ${dayNames[0]}.
-    For each non-Rest day, suggest structural steps in "workout_steps".
-    Steps should include duration (mins), target_watts (W), and label.
-    Use ${ftp ? `athlete FTP: ${ftp}W` : 'sensible intensity levels'} for watts, referencing the power profile if provided.
-    Return JSON with phase, focus, outlook_summary, days[].`;
+  const prompt = getWeeklyBriefingPrompt({
+    userGoal: userGoal || 'Increase endurance',
+    stats,
+    startContext,
+    planContext,
+    pcCtx,
+    dayNames,
+    ftp
+  });
 
   const response = await callGemini({
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -417,24 +434,15 @@ export const sendChatMessage = async (
     ).join(', ');
   }
 
-  const systemInstruction = `You are waTTson, a direct cycling coach. 
-    Concise text-style replies (1-3 sentences). 
-    User Goal: ${context.goal}. 
-    Current Load (7d): ${context.recentLoad}, Readiness: ${context.readiness}.
-    Recent History (Full details):
-    ${historySummary}
-    
-    Athlete Annual Power Bests:
-    ${powerCurveStr}
-    
-    Full Historical Data (Date|Type|TSS|Distance):
-    ${fullHistoryCompact}
-    Total activities available: ${context.activities.length}.
-    Always answer accurately based on this full data set.
-    
-    PLAN ADAPTATION: If the user asks to change their future training plan (e.g. "more intensity", "day off tomorrow", "focus on hill climbs"), you can "agree" and then append a hidden tag at the end of your message in the format: [UPDATE_PLAN: actual technical directive for the weekly builder]. 
-    Example: "I've added more VO2 intervals to your week. [UPDATE_PLAN: Increase intensity for Tuesday/Thursday and add 1 short VO2 session]". 
-    Keep the technical directive brief and clear for the next generation.`;
+  const systemInstruction = getChatMessagePrompt({
+    goal: context.goal,
+    recentLoad: context.recentLoad,
+    readiness: context.readiness,
+    historySummary,
+    powerCurveStr,
+    fullHistoryCompact,
+    totalActivities: context.activities.length
+  });
 
   const contents = history.map(m => ({
     role: m.role,
@@ -480,23 +488,11 @@ export const analyzeUserProfile = async (
     return `${pc.year} Annual Bests: ${bests}`;
   }).join('\n');
 
-  const prompt = `You are waTTson, an elite cycling coach. Analyze this athlete's data and create a profile.
-    Goal: ${userGoal}
-    
-    Athlete Annual Power Bests:
-    ${powerCurveStr}
-    
-    Recent 30 Rides:
-    ${historySummary}
-    
-    Return JSON with:
-    athlete_type: e.g. "Sprint Specialist", "Endurance Diesel", etc.
-    strengths: array of 2-3 strings describing what they are good at.
-    areas_for_improvement: array of 2-3 strings.
-    training_response: String explaining how this user reacts to past training methods (e.g. "You adapt well to high volume but struggle with back-to-back VO2max sessions").
-    effective_methods: array of 2 strings of methods that worked well (e.g. "Long Z2 rides", "Polarized training").
-    ineffective_methods: array of 2 strings of methods that caused stagnation or excessive fatigue.
-    recommended_focus: 1-sentence recommendation going forward.`;
+  const prompt = getUserProfilePrompt({
+    userGoal,
+    powerCurveStr,
+    historySummary
+  });
 
   const response = await callGemini({
     contents: prompt,
@@ -522,3 +518,106 @@ export const analyzeUserProfile = async (
   setCache(cacheKey, result);
   return result;
 };
+
+/**
+ * Generates recovery advice for the athlete based on current daily metrics and upcoming plan.
+ */
+export const getRecoveryAdvice = async (
+  activities: Activity[],
+  wellness: Wellness[],
+  userGoal: string,
+  upcomingBriefing?: WeeklyBriefing | null
+): Promise<RecoveryAdvice> => {
+  const cacheKey = `wattson_recovery_advice_${userGoal}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+  
+  const todayActivities = activities.filter(a => a.start_date_local && a.start_date_local.startsWith(todayStr));
+  const todayLoad = todayActivities.reduce((sum, a) => sum + (a.icu_training_load || a.icu_tss || 0), 0);
+  const todayDistance = todayActivities.reduce((sum, a) => sum + (a.distance || 0), 0);
+
+  const sortedWellness = [...wellness].sort((a,b) => b.date.localeCompare(a.date));
+  const recentWellness = sortedWellness[0];
+
+  let upcomingText = "Rest or endurance build";
+  if (upcomingBriefing && upcomingBriefing.days && upcomingBriefing.days.length > 0) {
+    const nextDay = upcomingBriefing.days[0];
+    upcomingText = `Focus: ${nextDay.focus}, load target: ${nextDay.load_target} TSS, intensity: ${nextDay.intensity}. Why: ${nextDay.why}`;
+  }
+
+  const prompt = `You are waTTson, an expert cycling coach AI. Provide hyper-personalized recovery advice for TODAY based on the athlete's current wellness metrics, today's training load, and the upcoming training target.
+
+ATHLETE OVERALL GOAL: "${userGoal}"
+
+TODAY'S ACTIVITY LOAD:
+- Completed ${todayActivities.length} rides today.
+- Today's training load: ${todayLoad} TSS.
+- Distance completed: ${Math.round(todayDistance / 1000)} km.
+
+ATHLETE RECENT WELLNESS METRICS:
+${recentWellness ? `- Date: ${recentWellness.date}
+- Resting Heart Rate: ${recentWellness.restHR || 'N/A'} bpm
+- Heart Rate Variability (HRV): ${recentWellness.hrv || 'N/A'} ms
+- Weight: ${recentWellness.weight || 'N/A'} kg
+- CTL (Fitness): ${recentWellness.ctl || 'N/A'}
+- ATL (Fatigue): ${recentWellness.atl || 'N/A'}
+- TSB (Form): ${recentWellness.tsb || 'N/A'}` : "No recent wellness logs available."}
+
+UPCOMING TRAINING TARGET (TOMORROW):
+- ${upcomingText}
+
+Please synthesize this information and output a highly actionable recovery guidance JSON object. Do not recommend anything unrealistic. Include concrete guidelines on:
+1. Food & Hydration (Specific macronutrient focuses like carb load / protein repair, hydration amount, and timing based on today's ride intensity/TSS and tomorrow's target).
+2. Sleep & Rest (Recommended hours, timing, and preparation advice based on current fatigue).
+3. Active/Passive Recovery Protocols (Foam rolling, stretching, recovery spin, cold plunges, compression, or complete rest).
+
+Return exactly the following JSON structure:
+{
+  "score": 85,
+  "summary": "Brief 1-2 sentence overview summarizing their current metabolic and muscular state.",
+  "sleep_advice": "Detailed, highly-actionable sleep and rest preparation guidance.",
+  "food_advice": "Detailed, highly-actionable hydration and nutrition plan (macronutrients, timing, specific recommendations).",
+  "activity_advice": "Detailed, highly-actionable recovery protocols (stretching, self-massage, recovery ride instructions).",
+  "key_metrics": [
+    { "label": "e.g. HRV Status", "value": "e.g. 64 ms (Optimal)", "status": "good" }
+  ]
+}`;
+
+  const response = await callGemini({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          score: { type: Type.NUMBER },
+          summary: { type: Type.STRING },
+          sleep_advice: { type: Type.STRING },
+          food_advice: { type: Type.STRING },
+          activity_advice: { type: Type.STRING },
+          key_metrics: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                label: { type: Type.STRING },
+                value: { type: Type.STRING },
+                status: { type: Type.STRING, enum: ['good', 'warning', 'neutral'] }
+              },
+              required: ['label', 'value', 'status']
+            }
+          }
+        },
+        required: ['score', 'summary', 'sleep_advice', 'food_advice', 'activity_advice', 'key_metrics']
+      }
+    }
+  });
+
+  const result = safeParseJSON(response.text);
+  setCache(cacheKey, result);
+  return result;
+};
+

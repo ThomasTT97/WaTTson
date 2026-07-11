@@ -2,5 +2,5 @@
   "name": "waTTson",
   "description": "An intelligent cycling coach that syncs with Intervals.icu to analyze your training load, provide feedback on rides, and suggest daily workouts based on your fitness trends.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Activity, 
@@ -7,13 +7,15 @@ import {
   ChatMessage,
   Wellness,
   UserProfileAnalysis,
-  AnnualPowerCurve
+  AnnualPowerCurve,
+  WeeklyBriefing
 } from './types';
 import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile, getAnnualPowerCurves, uploadWorkout } from './services/intervalsService';
 import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile } from './services/geminiService';
 import { ActivityCard } from './components/ActivityCard';
 import { CoachingModal } from './components/CoachingModal';
 import { WeeklyBriefingModal } from './components/WeeklyBriefingModal';
+import { RecoveryAdviceModal } from './components/RecoveryAdviceModal';
 import { 
   LayoutDashboard, 
   Bike,
@@ -45,7 +47,8 @@ import {
   X,
   Info,
   Trophy,
-  Loader2
+  Loader2,
+  Edit
 } from 'lucide-react';
 
 const CyclistIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -125,6 +128,9 @@ const App: React.FC = () => {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const [showWeeklyBriefing, setShowWeeklyBriefing] = useState(false);
+  const [showRecoveryAdvice, setShowRecoveryAdvice] = useState(false);
+  const [weeklyBriefing, setWeeklyBriefing] = useState<WeeklyBriefing | null>(null);
+  const [loadingWeeklyBriefing, setLoadingWeeklyBriefing] = useState(false);
   
   const [suggestion, setSuggestion] = useState<DailySuggestion | null>(() => {
     try {
@@ -308,6 +314,48 @@ const App: React.FC = () => {
     }
   }, [activities, userGoal, hasRideToday]);
 
+  const fetchWeeklyBriefingData = useCallback(async (customPlanContext?: string, force = false) => {
+    if (!activities || activities.length === 0) return;
+    setLoadingWeeklyBriefing(true);
+    try {
+      const now = new Date();
+      const todayStr = toLocalDateStr(now);
+      const hasActivityToday = activities.some(a => a.start_date_local.startsWith(todayStr));
+      
+      const todayName = now.toLocaleDateString('en-US', { weekday: 'long' });
+      const tomorrow = new Date();
+      tomorrow.setDate(now.getDate() + 1);
+      const tomorrowName = tomorrow.toLocaleDateString('en-US', { weekday: 'long' });
+
+      const todaySuggestionText = suggestion 
+        ? `The primary suggested workout is: "${suggestion.primary.title}" (${suggestion.primary.duration_minutes} min, ${suggestion.primary.intensity} intensity). `
+        : "";
+        
+      let startContext = "";
+      if (hasActivityToday) {
+        startContext = `Plan MUST start from TOMORROW, which is ${tomorrowName} (Day 1 = Tomorrow), as the athlete already completed a workout today. ${todaySuggestionText} Use this workout for ${tomorrowName}. `;
+      } else {
+        startContext = `Plan MUST start from TODAY, which is ${todayName}. ${todaySuggestionText} Use this workout for ${todayName} (Day 1). `;
+      }
+
+      const ctxToUse = customPlanContext !== undefined ? customPlanContext : (planContext || undefined);
+
+      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force);
+      setWeeklyBriefing(data);
+    } catch (err) {
+      console.error("Failed to load weekly briefing:", err);
+    } finally {
+      setLoadingWeeklyBriefing(false);
+    }
+  }, [activities, wellnessData, userGoal, suggestion, ftp, powerCurves, planContext]);
+
+  useEffect(() => {
+    if (activities && activities.length > 0) {
+      fetchWeeklyBriefingData(undefined, false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activities]);
+
   useEffect(() => {
     // Methodology view: Athlete DNA
     if (activeTab === 'settings' && settingsView === 'methodology') {
@@ -388,7 +436,7 @@ const App: React.FC = () => {
     const recoveryProgress = form < 0 ? Math.max(10, 100 - (Math.abs(form) * 2)) : 100;
     const recoveryLabel = form < 0 ? `${Math.round(Math.abs(form) * 2.5)}h Recovery` : "Fully Primed";
 
-    return { last7Days, total7DayLoad, statusLabel, statusColor, statusBg, readiness, recoveryProgress, recoveryLabel, form };
+    return { last7Days, total7DayLoad, statusLabel, statusColor, statusBg, readiness, recoveryProgress, recoveryLabel, form: Math.round(form), ctl: Math.round(ctl), atl: Math.round(atl) };
   }, [activities]);
 
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
@@ -413,24 +461,62 @@ const App: React.FC = () => {
       
       // Look for [UPDATE_PLAN: ...] in the response
       const planUpdateIdx = response.indexOf('[UPDATE_PLAN:');
+      let finalResponseText = response;
+      let hasPlanUpdate = false;
+      let directive = '';
       if (planUpdateIdx !== -1) {
         const closingIdx = response.indexOf(']', planUpdateIdx);
         if (closingIdx !== -1) {
-          const directive = response.substring(planUpdateIdx + 13, closingIdx).trim();
-          const cleanText = response.substring(0, planUpdateIdx).trim() + response.substring(closingIdx + 1).trim();
-          
-          setPlanContext(directive);
-          safeSetItem('wattson_plan_context', directive);
-          // If the AI updated the plan, suggest refreshing common views
-          setMessages(prev => [...prev, { role: 'model', text: cleanText + "\n\n*System: Coach context updated. Your next weekly plan generation will reflect these changes.*" }]);
-          return;
+          directive = response.substring(planUpdateIdx + 13, closingIdx).trim();
+          finalResponseText = response.substring(0, planUpdateIdx).trim() + response.substring(closingIdx + 1).trim();
+          hasPlanUpdate = true;
         }
       }
 
-      setMessages(prev => [...prev, { role: 'model', text: response }]);
+      const rawText = hasPlanUpdate 
+        ? finalResponseText + "\n\n*System: Coach context updated. Your next weekly plan generation will reflect these changes.*"
+        : finalResponseText;
+
+      // Add empty model message first
+      setMessages(prev => [...prev, { role: 'model', text: '' }]);
+      
+      let currentIdx = 0;
+      const speed = 10; // Fast and ultra-fluid typing simulation
+      
+      const typeNext = () => {
+        if (currentIdx < rawText.length) {
+          const chunkSize = Math.min(3, rawText.length - currentIdx);
+          currentIdx += chunkSize;
+          
+          setMessages(prev => {
+            const copy = [...prev];
+            if (copy.length > 0 && copy[copy.length - 1].role === 'model') {
+              copy[copy.length - 1] = {
+                ...copy[copy.length - 1],
+                text: rawText.substring(0, currentIdx)
+              };
+            }
+            return copy;
+          });
+          
+          setTimeout(typeNext, speed);
+        } else {
+          // Finished typing, synchronize context
+          if (hasPlanUpdate && directive) {
+            setPlanContext(directive);
+            safeSetItem('wattson_plan_context', directive);
+            fetchWeeklyBriefingData(directive, true);
+          }
+          setIsChatLoading(false);
+        }
+      };
+      
+      setTimeout(typeNext, 50);
+
     } catch {
       setMessages(prev => [...prev, { role: 'model', text: "Engine response error." }]);
-    } finally { setIsChatLoading(false); }
+      setIsChatLoading(false);
+    }
   };
 
   const groupedActivities = useMemo(() => {
@@ -573,173 +659,175 @@ const App: React.FC = () => {
               <RefreshCw size={16} className={isSyncing ? 'animate-spin text-emerald-400' : ''} />
             </button>
           )}
-
-          <button 
-            onClick={() => setIsSidebarOpen(true)}
-            className="w-10 h-10 rounded-xl glass-card flex items-center justify-center text-emerald-400 border border-emerald-500/20 active:scale-95 transition-all shadow-[0_0_15px_rgba(34,211,238,0.15)]"
-          >
-            <Menu size={22} />
-          </button>
         </div>
       </header>
 
       {/* Scrollable View Area */}
       <div 
-        className={`flex-1 hide-scrollbar scroll-smooth flex flex-col relative ${activeTab === 'chat' ? 'p-0 overflow-hidden' : 'px-4 pt-4 overflow-y-auto'}`}
-        style={activeTab !== 'chat' ? { paddingBottom: 'env(safe-area-inset-bottom, 16px)' } : {}}
+        className={`flex-1 hide-scrollbar scroll-smooth flex flex-col relative ${activeTab === 'chat' ? 'p-0 overflow-hidden' : activeTab === 'dashboard' ? 'px-4 pt-3 pb-4 overflow-hidden' : 'px-4 pt-4 pb-24 overflow-y-auto'}`}
       >
 
         {activeTab === 'dashboard' && (
-          <div className="flex flex-col space-y-3 animate-in fade-in duration-500 pb-2">
-            {/* Performance Status - Simplified 1-Screen Card - MOVED TO TOP */}
-            <div className="glass-card p-4 rounded-[1.8rem] flex flex-col flex-shrink-0">
-              <div className="flex justify-between items-center mb-3">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full animate-pulse ${stats.statusColor.replace('text-', 'bg-')}`}></div>
-                  <h3 className="text-[11px] font-bold text-white uppercase tracking-tight">Physiology: <span className={stats.statusColor}>{stats.statusLabel}</span></h3>
+          <div className="flex flex-col space-y-3.5 animate-in fade-in duration-500 pb-2">
+            
+            {/* Section: Why */}
+            <div className="flex flex-col space-y-1.5">
+              <div className="px-1">
+                <span className="inline-block px-2.5 py-0.5 bg-emerald-500 text-slate-950 text-[9px] font-black uppercase tracking-[0.2em] rounded-md">
+                  Why
+                </span>
+              </div>
+              <div className="glass-card p-2.5 rounded-xl border border-emerald-500/10 flex items-center gap-2.5 bg-gradient-to-r from-slate-950 via-slate-900/40 to-slate-950 relative overflow-hidden group">
+                <div className="absolute inset-y-0 right-0 w-32 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none group-hover:bg-emerald-500/10 transition-all duration-500" />
+                
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex flex-shrink-0 items-center justify-center relative shadow-inner overflow-hidden">
+                  <div className="absolute inset-1.5 border border-emerald-500/25 rounded-lg animate-ping [animation-duration:3s]" />
+                  <Target size={15} className="text-emerald-400" />
                 </div>
-                <button 
-                  onClick={() => setShowWeeklyBriefing(true)} 
-                  className="text-[10px] font-black text-slate-950 uppercase tracking-[0.14em] flex items-center gap-2 bg-emerald-400 px-4 py-2 rounded-full hover:bg-emerald-300 hover:shadow-[0_0_15px_rgba(34,211,238,0.3)] active:scale-95 transition-all"
+                
+                <div className="flex-1 min-w-0 pr-1">
+                  <h2 className="text-[12px] font-black text-white italic tracking-tight leading-snug truncate">
+                    "{userGoal || 'Define your primary training goal'}"
+                  </h2>
+                </div>
+                
+                <button
+                  onClick={() => setShowGoalEditor(true)}
+                  className="w-7 h-7 rounded-md bg-white/5 border border-white/5 text-slate-400 hover:text-white hover:bg-white/10 transition-all active:scale-95 flex items-center justify-center shrink-0"
+                  title="Edit Goal"
                 >
-                   Weekly Plan <Calendar size={12} strokeWidth={2.5} />
+                  <Edit size={10} />
                 </button>
               </div>
+            </div>
+
+            {/* Section: How */}
+            <div className="flex flex-col space-y-1.5">
+              <div className="px-1">
+                <span className="inline-block px-2.5 py-0.5 bg-emerald-500 text-slate-950 text-[9px] font-black uppercase tracking-[0.2em] rounded-md">
+                  How
+                </span>
+              </div>
               
-              <div className="bg-slate-950/40 p-3 rounded-2xl border border-white/5">
-                <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest text-slate-600 mb-2">
-                  <span>Recovery State</span>
-                  <span className={stats.form < 0 ? 'text-amber-500' : 'text-emerald-500'}>{stats.recoveryLabel}</span>
+              <div className="grid grid-cols-2 gap-2">
+                {/* Training Plan Card */}
+                <div 
+                  onClick={() => setShowWeeklyBriefing(true)}
+                  className="glass-card p-2.5 rounded-xl border border-white/5 hover:border-emerald-500/20 flex items-center gap-2.5 bg-gradient-to-r from-slate-950 via-slate-900/20 to-slate-950 active:scale-[0.99] transition-all duration-300 cursor-pointer group"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500/20 group-hover:scale-105 transition-all shrink-0">
+                    <Calendar size={14} className="text-emerald-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-[11px] font-black uppercase tracking-wider text-white truncate">
+                      Trainings Plan
+                    </h3>
+                  </div>
+                  <ChevronRight size={12} className="text-slate-500 group-hover:text-emerald-400 group-hover:translate-x-0.5 transition-all shrink-0" />
                 </div>
-                <div className="w-full h-1 bg-slate-900 rounded-full overflow-hidden">
-                  <div className={`h-full transition-all duration-1000 ${stats.form < 0 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${stats.recoveryProgress}%` }} />
+
+                {/* Recovery Advice Card */}
+                <div 
+                  onClick={() => setShowRecoveryAdvice(true)}
+                  className="glass-card p-2.5 rounded-xl border border-white/5 hover:border-emerald-500/20 flex items-center gap-2.5 bg-gradient-to-r from-slate-950 via-slate-900/20 to-slate-950 active:scale-[0.99] transition-all duration-300 cursor-pointer group"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500/20 group-hover:scale-105 transition-all shrink-0">
+                    <ActivityIcon size={14} className="text-emerald-400 animate-pulse" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-[11px] font-black uppercase tracking-wider text-white truncate">
+                      Recovery Advice
+                    </h3>
+                  </div>
+                  <ChevronRight size={12} className="text-slate-500 group-hover:text-emerald-400 group-hover:translate-x-0.5 transition-all shrink-0" />
                 </div>
               </div>
             </div>
 
-            {/* suggestion card - Optimized for 1-screen fit */}
-            <div 
-              onClick={() => setShowSuggestionDetail(true)}
-              className="glass-card rounded-[1.8rem] p-4 flex flex-col relative overflow-hidden flex-shrink-0 active:scale-[0.98] transition-all cursor-pointer"
-            >
-              <div className="flex items-center justify-between mb-2.5 relative z-10">
-                <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 rounded-full border border-emerald-500/20 shadow-[0_0_10px_rgba(34,211,238,0.1)]">
-                  <Sparkles size={10} className="text-emerald-400" />
-                  <span className="text-[9px] font-black text-white uppercase tracking-[0.15em]">
-                    {(() => {
-                      const d = new Date();
-                      if (hasRideToday) d.setDate(d.getDate() + 1);
-                      const name = d.toLocaleDateString('en-US', { weekday: 'long' });
-                      return `TARGET: ${name.toUpperCase()} ${hasRideToday ? '(TOMORROW)' : '(TODAY)'}`;
-                    })()}
-                  </span>
-                </div>
-                {suggestion && (
-                  <button onClick={(e) => { e.stopPropagation(); setShowAlternative(!showAlternative); }} className="w-7 h-7 flex items-center justify-center rounded-full bg-white/5 border border-white/5 text-slate-400 hover:text-white transition-colors">
-                    <RotateCcw size={11} />
-                  </button>
-                )}
+            {/* Section: Results */}
+            <div className="flex flex-col space-y-1.5">
+              <div className="px-1">
+                <span className="inline-block px-2.5 py-0.5 bg-emerald-500 text-slate-950 text-[9px] font-black uppercase tracking-[0.2em] rounded-md">
+                  Results
+                </span>
               </div>
 
-              {loadingSuggestion ? (
-                <div className="flex flex-col items-center justify-center py-6 opacity-40">
-                  <div className="w-5 h-5 border border-emerald-500/10 border-t-emerald-500 rounded-full animate-spin"></div>
-                </div>
-              ) : currentWorkout ? (
-                <div className="flex flex-col relative z-10">
-                  <h3 className="text-xl text-header italic mb-3 leading-tight tracking-tight">{currentWorkout.title}</h3>
-
-                  <div className="flex items-center justify-between">
-                    <div className="flex gap-1.5">
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900/50 rounded-xl border border-white/5 text-[10px] font-bold">
-                        <Clock size={12} className="text-blue-400" /> {currentWorkout.duration_minutes}m
-                      </div>
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/5 rounded-xl border border-amber-500/10 text-[10px] font-bold text-amber-400/80">
-                        <Zap size={12} fill="currentColor" /> {currentWorkout.intensity}
-                      </div>
-                    </div>
-                    <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-slate-500">
-                      <ChevronRight size={16} />
-                    </div>
+              {/* 3-column PMC metrics */}
+              <div className="grid grid-cols-3 gap-2">
+                {/* Fitness / CTL */}
+                <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px] group hover:border-white/10 transition-all">
+                  <div className="absolute top-0 right-0 w-8 h-8 bg-blue-500/5 rounded-full blur-xl pointer-events-none"></div>
+                  <div className="flex items-center gap-1 text-blue-400">
+                    <TrendingUp size={9} strokeWidth={2.5} />
+                    <span className="text-[7.5px] font-black uppercase tracking-widest text-slate-400">Fitness</span>
+                  </div>
+                  <div className="mt-0.5">
+                    <span className="text-xl font-black italic tracking-tight text-white font-mono">{stats.ctl}</span>
                   </div>
                 </div>
-              ) : null}
-            </div>
 
-            {/* Main Stats Hub - Re-shaped for 1 screen */}
-            <div className="grid grid-cols-2 gap-3 flex-shrink-0">
-              <div 
-                className="glass-card p-4 rounded-[1.8rem] flex flex-col justify-between"
-              >
-                {(() => {
-                  const displayScore = suggestion 
-                    ? Math.round(suggestion.readiness_score > 10 ? suggestion.readiness_score / 10 : suggestion.readiness_score)
-                    : stats.readiness;
-                  const displayColor = displayScore >= 7 ? 'text-emerald-400' : displayScore >= 4 ? 'text-amber-400' : 'text-rose-400';
-                  
-                  return (
-                    <div>
-                      <h4 className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-1.5">Readiness</h4>
-                      <div className="flex items-baseline gap-1">
-                        <span className={`text-3xl font-black italic tracking-tighter ${suggestion ? displayColor : stats.statusColor}`}>{displayScore}</span>
-                        <span className="text-[10px] font-bold text-slate-600">/ 10</span>
-                      </div>
-                    </div>
-                  );
-                })()}
+                {/* Fatigue / ATL */}
+                <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px] group hover:border-white/10 transition-all">
+                  <div className="absolute top-0 right-0 w-8 h-8 bg-amber-500/5 rounded-full blur-xl pointer-events-none"></div>
+                  <div className="flex items-center gap-1 text-amber-400">
+                    <Zap size={9} strokeWidth={2.5} fill="currentColor" />
+                    <span className="text-[7.5px] font-black uppercase tracking-widest text-slate-400">Fatigue</span>
+                  </div>
+                  <div className="mt-0.5">
+                    <span className="text-xl font-black italic tracking-tight text-white font-mono">{stats.atl}</span>
+                  </div>
+                </div>
+
+                {/* Form / TSB */}
+                <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px] group hover:border-white/10 transition-all">
+                  <div className="absolute top-0 right-0 w-8 h-8 bg-emerald-500/5 rounded-full blur-xl pointer-events-none"></div>
+                  <div className="flex items-center gap-1 text-emerald-400">
+                    <ActivityIcon size={9} strokeWidth={2.5} />
+                    <span className="text-[7.5px] font-black uppercase tracking-widest text-slate-400">Form</span>
+                  </div>
+                  <div className="mt-0.5 flex flex-col items-center">
+                    <span className={`text-xl font-black italic tracking-tight font-mono leading-none ${stats.form >= 5 ? 'text-emerald-400' : stats.form < -25 ? 'text-rose-400' : stats.form < -10 ? 'text-amber-400' : 'text-slate-200'}`}>
+                      {stats.form > 0 ? `+${stats.form}` : stats.form}
+                    </span>
+                  </div>
+                </div>
               </div>
-              
-              <div 
-                className="glass-card p-4 rounded-[1.8rem] flex flex-col justify-between"
-              >
-                <div>
-                  <h4 className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-1.5">7D Load</h4>
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-3xl font-black italic tracking-tighter text-white">{stats.total7DayLoad}</span>
-                    <span className="text-[10px] font-bold text-slate-600 uppercase">TSS</span>
+
+              {/* 2-column secondary metrics */}
+              <div className="grid grid-cols-2 gap-2">
+                {/* Readiness Score */}
+                <div className="glass-card p-2 rounded-xl border border-white/5 bg-gradient-to-b from-slate-900/30 to-slate-950/20 hover:border-white/10 transition-all flex items-center justify-between min-h-[38px] px-3">
+                  <h4 className="text-[7.5px] font-bold text-slate-400 uppercase tracking-widest">Readiness</h4>
+                  {(() => {
+                    const displayScore = suggestion 
+                      ? Math.round(suggestion.readiness_score > 10 ? suggestion.readiness_score / 10 : suggestion.readiness_score)
+                      : stats.readiness;
+                    const displayColor = displayScore >= 7 ? 'text-emerald-400' : displayScore >= 4 ? 'text-amber-400' : 'text-rose-400';
+                    
+                    return (
+                      <div className="flex items-baseline gap-0.5">
+                        <span className={`text-base font-black italic tracking-tighter font-mono ${suggestion ? displayColor : stats.statusColor}`}>
+                          {displayScore}
+                        </span>
+                        <span className="text-[8px] font-bold text-slate-500">/10</span>
+                      </div>
+                    );
+                  })()}
+                </div>
+                
+                {/* 7-Day Load */}
+                <div className="glass-card p-2 rounded-xl border border-white/5 bg-gradient-to-b from-slate-900/30 to-slate-950/20 hover:border-white/10 transition-all flex items-center justify-between min-h-[38px] px-3">
+                  <h4 className="text-[7.5px] font-bold text-slate-400 uppercase tracking-widest">7D Load</h4>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className="text-base font-black italic tracking-tighter text-white font-mono">
+                      {stats.total7DayLoad}
+                    </span>
+                    <span className="text-[8px] font-black text-slate-500 uppercase tracking-wider">TSS</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Quick Navigation */}
-            <div className="grid grid-cols-2 gap-3 flex-shrink-0">
-              <button 
-                onClick={() => setActiveTab('rides')}
-                className="glass-card p-4 rounded-[1.8rem] flex items-center gap-3 active:scale-[0.98] transition-all hover:bg-white/5 border border-white/5 shadow-sm group"
-              >
-                <div className="w-9 h-9 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:bg-blue-500/20 transition-colors">
-                  <Bike size={18} />
-                </div>
-                <div className="text-left">
-                  <span className="block text-[8px] font-bold text-slate-600 uppercase tracking-widest">Analyze</span>
-                  <span className="block text-[11px] font-black text-white uppercase tracking-tight">Logs</span>
-                </div>
-              </button>
-              
-              <button 
-                onClick={() => setActiveTab('chat')}
-                className="glass-card p-4 rounded-[1.8rem] flex items-center gap-3 active:scale-[0.98] transition-all hover:bg-white/5 border border-white/5 shadow-sm group"
-              >
-                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500/20 transition-colors">
-                  <MessageSquare size={18} />
-                </div>
-                <div className="text-left">
-                  <span className="block text-[11px] font-black text-xl text-white italic uppercase tracking-tight leading-none">wa<span className="text-emerald-400">TT</span>son</span>
-                </div>
-              </button>
-            </div>
-
-            {/* Recent Progress Glimpse - Bottom strip */}
-            <div 
-              className="mt-6 glass-card py-3 px-5 rounded-full border-white/5 flex items-center justify-between flex-shrink-0"
-            >
-               <div className="flex items-center gap-2">
-                 <TrendingUp size={14} className="text-emerald-400" />
-                 <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Training Status</span>
-               </div>
-               <span className="text-[9px] font-bold text-white uppercase tracking-widest">{stats.statusLabel}</span>
-            </div>
           </div>
         )}
 
@@ -761,43 +849,100 @@ const App: React.FC = () => {
 
         {activeTab === 'chat' && (
           <div className="flex-1 flex flex-col min-h-0 bg-transparent animate-in fade-in duration-500 overflow-hidden relative">
-             <div className="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-4 custom-scrollbar">
+             <div className="flex-1 min-h-0 overflow-y-auto space-y-4 px-4 py-4 custom-scrollbar">
                {messages.length === 0 ? (
-                 <div className="h-full flex flex-col items-center justify-center text-center px-6 pb-12">
-                    <p className="text-[11px] text-slate-500 leading-relaxed mb-6 max-w-[220px]">
-                      wa<span className="text-emerald-400">TT</span>son is ready. I can analyze your training context or recent load history.
+                 <div className="h-full flex flex-col items-center justify-center text-center px-6 pb-12 animate-in fade-in duration-500">
+                    <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-5 shadow-inner animate-pulse relative">
+                       <div className="absolute inset-2 border border-emerald-500/20 rounded-2xl animate-ping [animation-duration:4s]" />
+                       <Bot size={28} className="text-emerald-400" />
+                    </div>
+                    <p className="text-sm font-black text-white italic uppercase tracking-wider mb-2">waTTson Coach AI</p>
+                    <p className="text-[11px] text-slate-400 leading-relaxed mb-6 max-w-[240px]">
+                      Your performance engine is fully calibrated. Ask me anything or select a diagnostic focus chip below:
                     </p>
-                    <div className="flex flex-wrap gap-2 justify-center">
+                    <div className="flex flex-wrap gap-2 justify-center max-w-[320px]">
                        {(CHAT_SUGGESTIONS as string[]).map((suggestionText) => (
                          <button 
                            key={suggestionText}
                            onClick={() => handleSendMessage(suggestionText)}
-                           className="text-[9px] font-bold text-slate-400 bg-white/5 border border-white/5 rounded-full py-2 px-4 hover:bg-white/10 active:scale-95 transition-all"
+                           className="text-[10px] font-black text-slate-200 bg-[#12141c]/80 border border-white/5 hover:border-emerald-500/30 hover:bg-emerald-500/5 hover:text-emerald-400 rounded-xl py-2.5 px-4 active:scale-95 transition-all flex items-center gap-1.5 uppercase tracking-wider shadow-md"
                          >
-                           {suggestionText}
+                           <Sparkles size={11} className="text-emerald-400" /> {suggestionText}
                          </button>
                        ))}
                     </div>
                  </div>
                ) : (
                 <div className="space-y-4">
-                  {(messages as ChatMessage[]).map((msg, idx) => (
-                    <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-1 duration-200`}>
-                        <div className={`max-w-[85%] px-4 py-3 rounded-[1.4rem] text-[14px] leading-relaxed shadow-sm ${
-                          msg.role === 'user' 
-                          ? 'bg-emerald-500 text-slate-950 font-bold rounded-tr-sm' 
-                          : 'glass-card text-slate-100 rounded-tl-sm'
+                  {(messages as ChatMessage[]).map((msg, idx) => {
+                    const isUser = msg.role === 'user';
+                    
+                    // Parse system instructions if appended
+                    const textParts = msg.text.split('*System:');
+                    const mainText = textParts[0].trim();
+                    const systemText = textParts[1] ? textParts[1].replace(/\*/g, '').trim() : '';
+
+                    // If it's a typing model placeholder
+                    const isEmptyModel = !isUser && !mainText;
+
+                    return (
+                      <div 
+                        key={idx} 
+                        className={`flex gap-2.5 items-end ${isUser ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 duration-300`}
+                      >
+                        {/* waTTson Avatar */}
+                        {!isUser && (
+                          <div className="w-8 h-8 rounded-xl bg-slate-900 border border-emerald-500/20 flex flex-shrink-0 items-center justify-center shadow-md relative overflow-hidden self-start mt-0.5">
+                            <Bot size={14} className="text-emerald-400" />
+                          </div>
+                        )}
+                        
+                        <div className={`max-w-[80%] px-4 py-3 rounded-2xl shadow-md ${
+                          isUser 
+                          ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 font-bold rounded-tr-none' 
+                          : 'glass-card text-slate-100 rounded-tl-none border border-emerald-500/5'
                         }`}>
-                          {msg.text}
+                          <div className="text-[14px] leading-relaxed whitespace-pre-line">
+                            {isEmptyModel ? (
+                              <div className="flex gap-1 items-center py-1">
+                                <div className="w-1.5 h-1.5 bg-emerald-400/40 rounded-full animate-bounce [animation-delay:0ms]"></div>
+                                <div className="w-1.5 h-1.5 bg-emerald-400/40 rounded-full animate-bounce [animation-delay:150ms]"></div>
+                                <div className="w-1.5 h-1.5 bg-emerald-400/40 rounded-full animate-bounce [animation-delay:300ms]"></div>
+                              </div>
+                            ) : (
+                              mainText
+                            )}
+                          </div>
+                          
+                          {systemText && (
+                            <div className="mt-3 pt-2.5 border-t border-emerald-500/10 flex items-start gap-2 text-[10px] text-emerald-400 font-mono tracking-wide leading-relaxed bg-emerald-500/5 p-2 rounded-xl border border-emerald-500/10">
+                              <Check size={11} className="text-emerald-400 mt-0.5 shrink-0" />
+                              <div>
+                                <span className="font-bold uppercase text-[8px] tracking-widest text-emerald-500 block mb-0.5">DIRECTIVE SYNCED</span>
+                                {systemText}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                    </div>
-                  ))}
-                  {isChatLoading && (
-                    <div className="flex justify-start">
-                        <div className="glass-card px-4 py-3 rounded-[1.4rem] flex gap-1.5 items-center">
-                          <div className="w-1.5 h-1.5 bg-emerald-400/50 rounded-full animate-bounce"></div>
-                          <div className="w-1.5 h-1.5 bg-emerald-400/50 rounded-full animate-bounce [animation-delay:0.2s]"></div>
-                          <div className="w-1.5 h-1.5 bg-emerald-400/50 rounded-full animate-bounce [animation-delay:0.4s]"></div>
+
+                        {/* User Avatar */}
+                        {isUser && (
+                          <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex flex-shrink-0 items-center justify-center shadow-md self-start mt-0.5">
+                            <User size={13} className="text-emerald-400" />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {isChatLoading && messages.length > 0 && messages[messages.length - 1].role === 'user' && (
+                    <div className="flex justify-start gap-2.5 items-end animate-in fade-in duration-200">
+                        <div className="w-8 h-8 rounded-xl bg-slate-900 border border-emerald-500/20 flex flex-shrink-0 items-center justify-center relative overflow-hidden">
+                          <Bot size={14} className="text-emerald-400 animate-pulse" />
+                        </div>
+                        <div className="glass-card px-4 py-3 rounded-2xl rounded-tl-none flex gap-1.5 items-center">
+                          <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce"></div>
+                          <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                          <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce [animation-delay:0.4s]"></div>
                         </div>
                     </div>
                   )}
@@ -806,7 +951,7 @@ const App: React.FC = () => {
                )}
              </div>
 
-             <div className="sticky bottom-0 shrink-0 px-4 pt-3 bg-slate-950/80 backdrop-blur-2xl border-t border-white/5 z-20" style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
+             <div className="sticky bottom-0 shrink-0 px-4 pt-3 bg-slate-950/40 backdrop-blur-md border-t border-white/5 z-20">
                <form 
                  onSubmit={(e) => { e.preventDefault(); handleSendMessage(chatInput); }} 
                  className="relative max-w-full"
@@ -1164,86 +1309,6 @@ const App: React.FC = () => {
         )}
       </div>
 
-      <AnimatePresence>
-        {isSidebarOpen && (
-          <>
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsSidebarOpen(false)}
-              className="fixed inset-0 bg-black/60 backdrop-blur-md z-[200]"
-            />
-            <motion.div 
-              initial={{ x: '-100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '-100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="fixed top-0 left-0 bottom-0 w-72 bg-slate-950 border-r border-white/10 z-[210] flex flex-col p-6 shadow-2xl"
-            >
-              <div className="flex items-center justify-between mb-10 pt-4">
-                <div className="flex items-center gap-3">
-                   <div className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 shadow-inner">
-                     <CyclistIcon size={20} className="text-emerald-400" />
-                   </div>
-                   <h2 className="text-2xl font-black text-white italic tracking-tight">wa<span className="text-emerald-400">TT</span>son</h2>
-                </div>
-                <button onClick={() => setIsSidebarOpen(false)} className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-colors">
-                  <X size={20} />
-                </button>
-              </div>
-
-              <nav className="flex-1 space-y-2">
-                 {[
-                   { id: 'dashboard', icon: LayoutDashboard, label: 'Control Center' },
-                   { id: 'rides', icon: Bike, label: 'Training Logs' },
-                   { id: 'chat', icon: MessageSquare, label: 'waTTson' },
-                   { id: 'settings', icon: Settings, label: 'Athlete DNA' }
-                 ].map((item) => (
-                   <button 
-                     key={item.id}
-                     onClick={() => { setActiveTab(item.id as any); setIsSidebarOpen(false); }}
-                     className={`w-full flex items-center gap-4 px-4 py-4 rounded-2xl transition-all duration-300 ${activeTab === item.id ? 'bg-emerald-500 text-slate-950 font-bold shadow-[0_0_25px_rgba(16,185,129,0.2)]' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}
-                   >
-                     <item.icon size={22} strokeWidth={activeTab === item.id ? 2.5 : 2} />
-                     <span className="text-xs font-black uppercase tracking-[0.1em]">{item.label}</span>
-                   </button>
-                 ))}
-              </nav>
-
-              <div className="mt-auto space-y-4 pt-6 border-t border-white/5" style={{ paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
-                 <div className="flex items-center gap-3 px-2">
-                   <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center border border-white/5 shadow-inner">
-                     <User size={20} className="text-slate-500" />
-                   </div>
-                   <div className="flex-1 min-w-0">
-                     <p className="text-[10px] font-black text-white truncate uppercase tracking-widest">ID: {creds?.athleteId}</p>
-                     <p className="text-[8px] font-bold text-emerald-500 uppercase tracking-[0.2em]">Systems v{APP_VERSION}</p>
-                   </div>
-                 </div>
-                 
-                 <div className="grid grid-cols-2 gap-2">
-                   <button 
-                     onClick={() => { setSuggestion(null); loadData(creds!); setIsSidebarOpen(false); }}
-                     className="flex flex-col items-center justify-center gap-2 p-3 rounded-xl bg-white/5 border border-white/5 text-slate-400 hover:text-white transition-all"
-                   >
-                     <RefreshCw size={14} className={isSyncing ? 'animate-spin text-emerald-400' : ''} />
-                     <span className="text-[8px] font-bold uppercase tracking-widest">Full Sync</span>
-                   </button>
-                   <button 
-                     onClick={() => { localStorage.clear(); window.location.reload(); }}
-                     className="flex flex-col items-center justify-center gap-2 p-3 rounded-xl bg-rose-500/5 text-rose-500 hover:bg-rose-500/10 transition-colors border border-rose-500/10"
-                   >
-                     <LogOut size={14} />
-                     <span className="text-[8px] font-bold uppercase tracking-widest">Logout</span>
-                   </button>
-                 </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
       {showGoalEditor && (
         <div className="fixed inset-0 z-[210] bg-slate-950/98 backdrop-blur-3xl flex flex-col p-8 animate-in slide-in-from-bottom-4 duration-400" style={{ paddingBottom: 'max(32px, env(safe-area-inset-bottom))' }}>
           <div className="flex items-center justify-between mb-8 mt-2">
@@ -1258,7 +1323,12 @@ const App: React.FC = () => {
             placeholder="Ex: Improve hill climb efficiency..."
           />
           <button 
-            onClick={() => { safeSetItem('wattson_goal', userGoal); setSuggestion(null); setShowGoalEditor(false); }}
+            onClick={() => { 
+              safeSetItem('wattson_goal', userGoal); 
+              setSuggestion(null); 
+              setShowGoalEditor(false); 
+              fetchWeeklyBriefingData(undefined, true);
+            }}
             className="w-full py-5 bg-emerald-500 text-slate-950 font-bold text-[10px] uppercase tracking-[0.2em] rounded-[1.8rem] shadow-2xl active:scale-95 transition-all"
           >
             Update Engine Target
@@ -1493,12 +1563,69 @@ const App: React.FC = () => {
           ftp={ftp || undefined}
           powerCurves={powerCurves}
           planContext={planContext || undefined}
+          weeklyBriefing={weeklyBriefing}
+          loadingWeeklyBriefing={loadingWeeklyBriefing}
           onResetPlanContext={() => {
             setPlanContext(null);
             localStorage.removeItem('wattson_plan_context');
+            fetchWeeklyBriefingData("", true);
+          }}
+          onUpdatePlanContext={(directive) => {
+            setPlanContext(directive);
+            safeSetItem('wattson_plan_context', directive);
+            fetchWeeklyBriefingData(directive, true);
+          }}
+          onForceRefresh={() => {
+            fetchWeeklyBriefingData(undefined, true);
           }}
         />
       )}
+
+      {showRecoveryAdvice && (
+        <RecoveryAdviceModal
+          activities={activities || []}
+          wellness={wellnessData}
+          userGoal={userGoal}
+          weeklyBriefing={weeklyBriefing}
+          onClose={() => setShowRecoveryAdvice(false)}
+        />
+      )}
+
+      {/* Dynamic Floating Bottom Bar */}
+      <div className="flex-none bg-slate-950/85 backdrop-blur-3xl border-t border-white/5 z-40" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)', paddingTop: '10px' }}>
+        <div className="max-w-[450px] mx-auto px-6 flex justify-around items-center">
+          {[
+            { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
+            { id: 'rides', icon: Bike, label: 'Logs' },
+            { id: 'chat', icon: MessageSquare, label: 'waTTson' },
+            { id: 'settings', icon: Settings, label: 'Profile' }
+          ].map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id as any)}
+                className="flex flex-col items-center justify-center py-1 flex-1 relative transition-all duration-300 active:scale-90"
+              >
+                <div className={`p-1.5 rounded-xl transition-all duration-300 ${isActive ? 'text-emerald-400 bg-emerald-500/10' : 'text-slate-500 hover:text-slate-300'}`}>
+                  <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
+                </div>
+                <span className={`text-[9px] font-bold mt-1 tracking-wider uppercase transition-colors duration-300 ${isActive ? 'text-emerald-400 font-black' : 'text-slate-600'}`}>
+                  {item.label}
+                </span>
+                {isActive && (
+                  <motion.div
+                    layoutId="activeTabIndicator"
+                    className="absolute bottom-0 w-1.5 h-1.5 bg-emerald-400 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)]"
+                    transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                  />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 };

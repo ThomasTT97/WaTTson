@@ -154,3 +154,16 @@ export interface AnnualPowerCurve {
   year: number;
   bests: PowerBest[];
 }
+
+export interface RecoveryAdvice {
+  score: number;
+  summary: string;
+  sleep_advice: string;
+  food_advice: string;
+  activity_advice: string;
+  key_metrics: {
+    label: string;
+    value: string;
+    status: 'good' | 'warning' | 'neutral';
+  }[];
+}
