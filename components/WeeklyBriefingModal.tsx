@@ -218,13 +218,25 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
       {/* PINNED CONTROLS AREA ON TOP - Option to change via prompt */}
       <div className="flex-none px-5 py-3 border-b border-white/5 bg-slate-950/20 flex flex-col gap-2.5">
         
-        {/* Promoted Change Plan Button */}
-        <button
-          onClick={() => setShowChangePlanPopup(true)}
-          className="w-full py-2.5 bg-white/5 border border-white/10 hover:border-emerald-500/30 hover:bg-white/10 text-white font-black text-[11px] uppercase tracking-widest rounded-xl transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-        >
-          <Sparkles size={12} className="text-emerald-400 animate-pulse" /> Change plan
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowChangePlanPopup(true)}
+            className="flex-1 py-2.5 bg-white/5 border border-white/10 hover:border-emerald-500/30 hover:bg-white/10 text-white font-black text-[11px] uppercase tracking-widest rounded-xl transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+          >
+            <Sparkles size={12} className="text-emerald-400 animate-pulse" /> Change plan
+          </button>
+          {planContext && (
+            <button
+              onClick={() => {
+                if (onResetPlanContext) onResetPlanContext();
+              }}
+              className="px-4 py-2.5 bg-white/5 border border-white/10 hover:border-amber-500/30 hover:bg-white/10 text-slate-400 hover:text-amber-400 font-black text-[11px] uppercase tracking-widest rounded-xl transition-all active:scale-[0.98] flex items-center justify-center"
+              title="Revert to Optimal Plan"
+            >
+              <RefreshCw size={12} /> Optimal
+            </button>
+          )}
+        </div>
 
         {/* Week tab selectors (used as jump-to-week anchors) */}
         <div className="grid grid-cols-4 gap-1 p-1 bg-slate-950/60 border border-white/5 rounded-xl">
@@ -352,82 +364,58 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
 
       {/* Why Detail Popup */}
       {selectedDay && (
-        <div className="fixed inset-0 z-[110] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-4 animate-in slide-in-from-bottom-4 duration-300" onClick={() => setSelectedDay(null)}>
-          <div className="glass-card w-full max-w-sm rounded-[3rem] p-6 pb-8 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
-            <button onClick={() => setSelectedDay(null)} className="absolute top-6 right-6 text-slate-600 hover:text-white transition-colors p-2 z-20">
-              <X size={20} />
+        <div className="fixed inset-0 z-[110] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedDay(null)}>
+          <div className="bg-slate-950/80 w-full max-w-sm rounded-[2rem] p-6 pb-6 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setSelectedDay(null)} className="absolute top-5 right-5 text-slate-500 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full">
+              <X size={18} />
             </button>
             <div className="flex flex-col items-center">
-              <div className="w-20 h-20 rounded-full bg-emerald-500/10 flex items-center justify-center mb-6 border border-emerald-500/20 shadow-[0_0_40px_rgba(16,185,129,0.1)] relative flex-shrink-0">
-                <div className="absolute inset-1.5 border border-emerald-500/30 rounded-full" />
-                <Trophy size={32} className="text-emerald-400" />
+              <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center mb-5 border border-emerald-500/20 shadow-[0_0_30px_rgba(16,185,129,0.1)] relative flex-shrink-0">
+                <Trophy size={28} className="text-emerald-400" />
               </div>
               
-              <h3 className="text-2xl font-black text-white italic tracking-tighter mb-1.5 uppercase text-center leading-tight">
+              <h3 className="text-xl font-black text-white italic tracking-tighter mb-1 uppercase text-center leading-tight">
                 {selectedDay.day.toUpperCase()} FOCUS
               </h3>
-              <p className="text-[11px] font-black text-emerald-500 uppercase tracking-[0.25em] mb-8 text-center">{selectedDay.focus}</p>
+              <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.2em] mb-6 text-center">{selectedDay.focus}</p>
               
-              <div className="bg-[#0a0c10] p-6 rounded-[2.5rem] border border-white/5 w-full text-left space-y-5 shadow-inner relative overflow-hidden">
-                 <div className="flex items-center justify-between border-b border-[#05070a] pb-4 mx-1">
-                    <div className="flex items-center gap-2 text-[14px] font-black text-white tracking-tighter">
+              <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-left space-y-4 relative overflow-hidden">
+                 <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-4">
+                    <div className="flex items-center gap-2 text-sm font-black text-white tracking-tighter">
                        <Clock size={16} className="text-blue-400" /> {selectedDay.duration_target} MIN
                     </div>
-                    <div className="flex items-center gap-2 text-[14px] font-black text-amber-400 italic">
+                    <div className="flex items-center gap-2 text-sm font-black text-amber-400 italic">
                        <Zap size={16} fill="currentColor" className="text-amber-400" /> {selectedDay.load_target} TSS
                     </div>
                  </div>
 
-                 <div className="space-y-4 py-1 max-h-[180px] overflow-y-auto custom-scrollbar px-1">
+                 <div className="space-y-3 py-2 max-h-[220px] overflow-y-auto custom-scrollbar px-1">
                    {selectedDay.workout_steps && selectedDay.workout_steps.length > 0 ? (
                       selectedDay.workout_steps.map((step, sIdx) => (
-                        <div key={sIdx} className="flex items-center justify-between gap-4 text-[13px] font-bold group">
-                          <div className="flex items-center gap-2.5 text-slate-300">
-                            <div className="w-1 h-1 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] flex-shrink-0" />
-                            <span className="truncate">{step.duration}m {step.label}</span>
+                        <div key={sIdx} className="flex flex-col gap-1 text-[13px] font-medium group">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-start gap-2.5 text-slate-300">
+                              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] mt-1.5 flex-shrink-0" />
+                              <span className="leading-tight">{step.duration}m {step.label}</span>
+                            </div>
+                            {step.target_watts && (
+                              <span className="text-emerald-400 font-black italic tabular-nums flex-shrink-0 bg-emerald-500/10 px-2 py-0.5 rounded text-[12px]">{step.target_watts}W</span>
+                            )}
                           </div>
-                          {step.target_watts && (
-                            <span className="text-emerald-400 font-extrabold italic tabular-nums flex-shrink-0">{step.target_watts}W</span>
-                          )}
                         </div>
                       ))
                    ) : (
-                      <p className="text-[13px] text-slate-400 leading-relaxed italic text-center px-4 font-medium opacity-80">
+                      <p className="text-[13px] text-slate-400 leading-relaxed text-center px-2 font-medium opacity-80">
                         {selectedDay.why}
                       </p>
                    )}
                  </div>
               </div>
 
-              <div className="mt-8 flex flex-col gap-3 w-full">
-                <button 
-                  onClick={() => {
-                    if (weeklyBriefing) {
-                      const idx = weeklyBriefing.days.findIndex(d => d.day === selectedDay.day);
-                      handleSyncToIntervals(selectedDay, idx);
-                    }
-                  }}
-                  disabled={syncingDay === selectedDay.day || syncSuccess === selectedDay.day || selectedDay.intensity === 'Rest'}
-                  className={`w-full py-4.5 rounded-full text-[12px] font-black uppercase tracking-[0.14em] flex items-center justify-center gap-2.5 transition-all shadow-xl active:scale-95 ${
-                    syncSuccess === selectedDay.day 
-                      ? 'bg-emerald-500 text-white' 
-                      : selectedDay.intensity === 'Rest'
-                      ? 'bg-slate-900 text-slate-600 border border-white/5 opacity-50 cursor-not-allowed'
-                      : 'bg-[#40e0a0] text-slate-950 hover:bg-[#38d090] shadow-emerald-400/20'
-                  }`}
-                >
-                  {syncingDay === selectedDay.day ? (
-                    <Loader2 size={18} className="animate-spin" />
-                  ) : syncSuccess === selectedDay.day ? (
-                    <>SYNCED <Check size={18} strokeWidth={3} /></>
-                  ) : (
-                    <>SYNC TO CALENDAR <CalendarIcon size={18} strokeWidth={2.5} /></>
-                  )}
-                </button>
-
+              <div className="mt-6 flex flex-col gap-3 w-full">
                 <button 
                   onClick={() => setSelectedDay(null)}
-                  className="w-full py-4.5 bg-[#1a1c22] rounded-full text-[11px] font-black text-slate-400 hover:text-white transition-all uppercase tracking-[0.2em] active:scale-95"
+                  className="w-full py-4 bg-[#1a1c22] rounded-2xl text-[11px] font-black text-slate-300 hover:text-white hover:bg-slate-800 transition-all uppercase tracking-[0.2em] active:scale-95"
                 >
                   CLOSE
                 </button>
@@ -437,56 +425,46 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
         </div>
       )}
 
-      {/* Change Plan Prompt Modal */}
+      {/* Change Plan Full Screen Modal */}
       {showChangePlanPopup && (
-        <div className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setShowChangePlanPopup(false)}>
-          <div className="glass-card w-full max-w-sm rounded-[2.5rem] p-6 pb-8 relative border border-white/10 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <button onClick={() => setShowChangePlanPopup(false)} className="absolute top-6 right-6 text-slate-600 hover:text-white transition-colors p-2 z-20">
+        <div className="fixed inset-0 z-[120] bg-[#05070a] flex flex-col animate-in slide-in-from-bottom-4 duration-200">
+          <div className="flex-none flex items-center justify-between p-6 pb-4 border-b border-white/5" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 24px)' }}>
+            <h3 className="text-lg font-black text-white italic tracking-tighter uppercase flex items-center gap-2">
+              <Sparkles size={18} className="text-emerald-400" />
+              Adapt Plan
+            </h3>
+            <button onClick={() => setShowChangePlanPopup(false)} className="text-slate-400 hover:text-white p-2 transition-colors">
               <X size={20} />
             </button>
-            <div className="flex flex-col items-center">
-              <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center mb-5 border border-emerald-500/20 shadow-[0_0_30px_rgba(16,185,129,0.1)] relative flex-shrink-0">
-                <Sparkles size={24} className="text-emerald-400 animate-pulse" />
-              </div>
-              
-              <h3 className="text-xl font-black text-white italic tracking-tighter mb-1.5 uppercase text-center">
-                Adapt Trainings Plan
-              </h3>
-              <p className="text-[11px] text-slate-400 leading-relaxed mb-6 text-center max-w-[280px]">
-                Ask waTTson to adapt your schedule (e.g., "Taper for Saturday race", "increase hill climb intervals", "easier week").
-              </p>
-              
-              <textarea
-                autoFocus
-                value={promptInput}
-                onChange={(e) => setPromptInput(e.target.value)}
-                placeholder="Ex: Taper for Saturday race, increase threshold..."
-                className="w-full bg-slate-950/60 border border-white/10 rounded-2xl p-4 text-xs text-white focus:outline-none focus:border-emerald-500/30 font-semibold placeholder-slate-600 transition-colors min-h-[100px] mb-6 resize-none"
-              />
+          </div>
+          
+          <div className="flex-1 flex flex-col p-6 h-full">
+            <p className="text-[12px] text-slate-400 leading-relaxed mb-6">
+              Ask waTTson to adapt your schedule (e.g., "Taper for Saturday race", "increase hill climb intervals", "easier week").
+            </p>
+            
+            <textarea
+              autoFocus
+              value={promptInput}
+              onChange={(e) => setPromptInput(e.target.value)}
+              placeholder="Ex: Taper for Saturday race, increase threshold..."
+              className="flex-1 w-full bg-slate-950/60 border border-white/10 rounded-2xl p-4 text-sm text-white focus:outline-none focus:border-emerald-500/30 font-semibold placeholder-slate-600 transition-colors resize-none mb-6"
+            />
 
-              <div className="flex gap-3 w-full">
-                <button 
-                  onClick={() => setShowChangePlanPopup(false)}
-                  className="flex-1 py-3.5 bg-[#1a1c22] rounded-full text-[10px] font-black text-slate-400 hover:text-white transition-all uppercase tracking-widest active:scale-95"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={() => {
-                    if (!promptInput.trim()) return;
-                    if (onUpdatePlanContext) {
-                      onUpdatePlanContext(promptInput.trim());
-                    }
-                    setPromptInput('');
-                    setShowChangePlanPopup(false);
-                  }}
-                  disabled={!promptInput.trim()}
-                  className="flex-1 py-3.5 bg-[#40e0a0] hover:bg-[#38d090] text-slate-950 font-black text-[10px] uppercase tracking-widest rounded-full shadow-lg shadow-emerald-400/20 active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none"
-                >
-                  Apply
-                </button>
-              </div>
-            </div>
+            <button 
+              onClick={() => {
+                if (!promptInput.trim()) return;
+                if (onUpdatePlanContext) {
+                  onUpdatePlanContext(promptInput.trim());
+                }
+                setPromptInput('');
+                setShowChangePlanPopup(false);
+              }}
+              disabled={!promptInput.trim()}
+              className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[12px] uppercase tracking-widest rounded-xl shadow-[0_0_20px_rgba(16,185,129,0.3)] active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none flex-none mb-6"
+            >
+              Apply Adaptation
+            </button>
           </div>
         </div>
       )}

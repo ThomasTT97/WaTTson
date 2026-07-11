@@ -371,11 +371,11 @@ const App: React.FC = () => {
         ? `The primary suggested workout is: "${suggestion.primary.title}" (${suggestion.primary.duration_minutes} min, ${suggestion.primary.intensity} intensity). `
         : "";
         
-      let startContext = "";
+      let startContext = `CURRENT DATE: ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}. `;
       if (hasActivityToday) {
-        startContext = `Plan MUST start from TOMORROW, which is ${tomorrowName} (Day 1 = Tomorrow), as the athlete already completed a workout today. ${todaySuggestionText} Use this workout for ${tomorrowName}. `;
+        startContext += `Plan MUST start from TOMORROW, which is ${tomorrowName} (Day 1 = Tomorrow), as the athlete already completed a workout today. ${todaySuggestionText} Use this workout for ${tomorrowName}. `;
       } else {
-        startContext = `Plan MUST start from TODAY, which is ${todayName}. ${todaySuggestionText} Use this workout for ${todayName} (Day 1). `;
+        startContext += `Plan MUST start from TODAY, which is ${todayName}. ${todaySuggestionText} Use this workout for ${todayName} (Day 1). `;
       }
 
       const ctxToUse = customPlanContext !== undefined ? customPlanContext : (planContext || undefined);

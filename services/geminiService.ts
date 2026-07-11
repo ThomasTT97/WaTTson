@@ -72,9 +72,11 @@ const callGemini = async (params: any): Promise<GenerateContentResponse> => {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   
   // Model fallback chain: 
-  // 1. gemini-3.5-flash (Incredibly fast, smart)
-  // 2. gemini-3.1-flash-lite (Unlimited tokens/Last robust fallback)
-  const models = ['gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+  // 1. gemini-2.5-flash (Incredibly fast, smart)
+  // 2. gemini-1.5-flash (Fallback)
+  // 3. gemini-1.5-pro (Robust)
+  // 4. gemini-pro (Legacy fallback)
+  const models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
   
   let lastError: any = null;
   for (const model of models) {
@@ -86,12 +88,8 @@ const callGemini = async (params: any): Promise<GenerateContentResponse> => {
     } catch (error: any) {
       console.warn(`Gemini model ${model} failed, trying fallback...`, error);
       lastError = error;
-      // If it's a quota issue (429) or other retryable error, we continue to the next model
-      if (error?.message?.includes('429') || error?.message?.includes('quota')) {
-        continue;
-      }
-      // If it's a structural error that won't be fixed by changing models, we might want to stop, 
-      // but the requirement is "last and most robust fallback", so we continue.
+      // Always try the next model in the fallback chain regardless of error type
+      continue;
     }
   }
   throw lastError || new Error("All Gemini models failed.");

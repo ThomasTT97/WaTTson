@@ -96,7 +96,7 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
     
     PERFORMANCE REQUIREMENTS FOR EXTREME SPEED:
     1. Keep the "why" explanation for each day extremely short and precise (under 12 words).
-    2. ONLY suggest "workout_steps" for Medium or Hard intensity workouts. Rest or Easy days should have an empty "workout_steps" array.
+    2. You MUST suggest "workout_steps" for ALL workouts EXCEPT Rest days. Endurance, Easy, Medium, and Hard workouts MUST have workout steps.
     3. Keep "workout_steps" to 3-4 steps max.
     
     Steps should include duration (mins), target_watts (W), and label.
