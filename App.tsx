@@ -794,6 +794,27 @@ const App: React.FC = () => {
                 </span>
               </div>
 
+              {/* Last Ride Section */}
+              {(() => {
+                const lastActivity = activities && activities.length > 0 
+                  ? [...activities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local))[0] 
+                  : null;
+                
+                if (!lastActivity) return null;
+
+                return (
+                  <div className="mb-2">
+                    <ActivityCard 
+                      activity={lastActivity} 
+                      onClick={(activity) => {
+                        setSelectedActivity(activity);
+                        setActiveTab('rides');
+                      }} 
+                    />
+                  </div>
+                );
+              })()}
+
               {/* 3-column PMC metrics */}
               <div className="grid grid-cols-3 gap-2">
                 {/* Fitness / CTL */}
@@ -1615,6 +1636,7 @@ const App: React.FC = () => {
           wellness={wellnessData}
           userGoal={userGoal}
           weeklyBriefing={weeklyBriefing}
+          stats={stats}
           onClose={() => setShowRecoveryAdvice(false)}
         />
       )}

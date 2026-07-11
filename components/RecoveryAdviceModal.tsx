@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Activity, Wellness, WeeklyBriefing, RecoveryAdvice } from '../types';
 import { getRecoveryAdvice } from '../services/geminiService';
-import { X, Sparkles, Moon, Utensils, Activity as ActivityIcon, Heart, RefreshCw, Loader2, Check } from 'lucide-react';
+import { X, Sparkles, Moon, Utensils, Activity as ActivityIcon, Heart, RefreshCw, Loader2, Check, TrendingUp, Zap } from 'lucide-react';
 
 interface RecoveryAdviceModalProps {
   activities: Activity[];
   wellness: Wellness[];
   userGoal?: string;
   weeklyBriefing: WeeklyBriefing | null;
+  stats: { ctl: number; atl: number; form: number };
   onClose: () => void;
 }
 
@@ -16,6 +17,7 @@ export const RecoveryAdviceModal: React.FC<RecoveryAdviceModalProps> = ({
   wellness,
   userGoal = "Increase endurance",
   weeklyBriefing,
+  stats,
   onClose
 }) => {
   const [advice, setAdvice] = useState<RecoveryAdvice | null>(null);
@@ -94,6 +96,42 @@ export const RecoveryAdviceModal: React.FC<RecoveryAdviceModalProps> = ({
         ) : advice ? (
           <div className="space-y-4 animate-in fade-in duration-500">
             
+            {/* PMC Metrics Grid */}
+            <div className="grid grid-cols-3 gap-2">
+              {/* Fitness / CTL */}
+              <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px]">
+                <div className="flex items-center gap-1 text-blue-400">
+                  <TrendingUp size={9} strokeWidth={2.5} />
+                  <span className="text-[7.5px] font-black uppercase tracking-widest text-slate-400">Fitness</span>
+                </div>
+                <div className="mt-0.5">
+                  <span className="text-xl font-black italic tracking-tight text-white font-mono">{stats.ctl}</span>
+                </div>
+              </div>
+
+              {/* Fatigue / ATL */}
+              <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px]">
+                <div className="flex items-center gap-1 text-amber-400">
+                  <Zap size={9} strokeWidth={2.5} fill="currentColor" />
+                  <span className="text-[7.5px] font-black uppercase tracking-widest text-slate-400">Fatigue</span>
+                </div>
+                <div className="mt-0.5">
+                  <span className="text-xl font-black italic tracking-tight text-white font-mono">{stats.atl}</span>
+                </div>
+              </div>
+
+              {/* Form / TSB */}
+              <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px]">
+                <div className="flex items-center gap-1 text-emerald-400">
+                  <ActivityIcon size={9} strokeWidth={2.5} />
+                  <span className="text-[7.5px] font-black uppercase tracking-widest text-slate-400">Form</span>
+                </div>
+                <div className="mt-0.5">
+                  <span className="text-xl font-black italic tracking-tight text-white font-mono">{stats.form}</span>
+                </div>
+              </div>
+            </div>
+
             {/* Score Ring Hero */}
             <div className="glass-card p-4 rounded-2xl border border-emerald-500/10 bg-gradient-to-r from-slate-950 via-slate-900/30 to-slate-950 relative overflow-hidden flex items-center gap-4">
               <div className="relative w-16 h-16 flex-shrink-0 flex items-center justify-center">
@@ -149,9 +187,9 @@ export const RecoveryAdviceModal: React.FC<RecoveryAdviceModalProps> = ({
                     : 'text-slate-400 border-white/5 bg-white/5';
 
                 return (
-                  <div key={idx} className={`border p-2.5 rounded-xl flex flex-col justify-center min-h-[56px] ${statusColor}`}>
-                    <span className="text-[7px] font-black uppercase tracking-widest text-slate-400 mb-0.5">{metric.label}</span>
-                    <span className="text-xs font-black italic tracking-tight">{metric.value}</span>
+                  <div key={idx} className={`border p-3 rounded-2xl flex flex-col gap-0.5 min-h-[60px] ${statusColor} bg-black/40`}>
+                    <span className="text-[9px] font-black uppercase tracking-widest opacity-70">{metric.label}</span>
+                    <span className="text-sm font-black italic tracking-tight">{metric.value}</span>
                   </div>
                 );
               })}
