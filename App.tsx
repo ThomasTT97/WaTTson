@@ -16,6 +16,7 @@ import { ActivityCard } from './components/ActivityCard';
 import { CoachingModal } from './components/CoachingModal';
 import { WeeklyBriefingModal } from './components/WeeklyBriefingModal';
 import { RecoveryAdviceModal } from './components/RecoveryAdviceModal';
+import { ChangelogModal } from './components/ChangelogModal';
 import { 
   LayoutDashboard, 
   Bike,
@@ -78,6 +79,14 @@ const CHAT_SUGGESTIONS: string[] = [
   "Current readiness?",
   "Goal check",
   "Efficiency trend"
+];
+
+const APP_VERSION = '1.1.1';
+const APP_CHANGELOG = [
+  "New: Version changelog popup to keep you informed of updates.",
+  "Fix: Resolved iOS layout scaling issues when keyboard is active. The screen no longer shifts up and the bottom bar correctly hides.",
+  "Improvement: Maximized screen real-estate by removing dead space.",
+  "Update: Reorganized Training Plan and Recovery Advice on the home screen for better visibility."
 ];
 
 const App: React.FC = () => {
@@ -201,43 +210,37 @@ const App: React.FC = () => {
   
   const [userGoal, setUserGoal] = useState<string>(() => localStorage.getItem('wattson_goal') || 'Improve cycling performance');
   const [showGoalEditor, setShowGoalEditor] = useState(false);
+  const [showChangelog, setShowChangelog] = useState(false);
   const [formKey, setFormKey] = useState(creds?.apiKey || '');
   const [formId, setFormId] = useState(creds?.athleteId || '');
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
-  const [viewportStyle, setViewportStyle] = useState({ height: '100dvh', transform: 'translateY(0px)' });
 
   useEffect(() => {
-    const handleResize = () => {
-      if (window.visualViewport) {
-        // If the visual viewport height is significantly less than innerHeight,
-        // it means the keyboard is open on iOS
-        setIsKeyboardOpen(window.visualViewport.height < window.innerHeight - 100);
-        
-        // Offset top accounts for iOS panning the layout viewport
-        setViewportStyle({
-          height: `${window.visualViewport.height}px`,
-          transform: `translateY(${window.visualViewport.offsetTop}px)`
-        });
-        
-        // Ensure no scroll on body
-        window.scrollTo(0, 0);
+    const lastSeenVersion = localStorage.getItem('wattson_last_version');
+    if (lastSeenVersion !== APP_VERSION) {
+      setShowChangelog(true);
+      localStorage.setItem('wattson_last_version', APP_VERSION);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleFocusIn = (e: FocusEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        setIsKeyboardOpen(true);
       }
     };
-    
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', handleResize);
-      window.visualViewport.addEventListener('scroll', handleResize);
-      setViewportStyle({
-        height: `${window.visualViewport.height}px`,
-        transform: `translateY(${window.visualViewport.offsetTop}px)`
-      });
-    }
-    
+
+    const handleFocusOut = () => {
+      setIsKeyboardOpen(false);
+    };
+
+    window.addEventListener('focusin', handleFocusIn);
+    window.addEventListener('focusout', handleFocusOut);
+
     return () => {
-      if (window.visualViewport) {
-        window.visualViewport.removeEventListener('resize', handleResize);
-        window.visualViewport.removeEventListener('scroll', handleResize);
-      }
+      window.removeEventListener('focusin', handleFocusIn);
+      window.removeEventListener('focusout', handleFocusOut);
     };
   }, []);
 
@@ -646,8 +649,7 @@ const App: React.FC = () => {
 
   return (
     <div 
-      className="fixed inset-0 flex flex-col overflow-hidden bg-transparent max-w-[450px] mx-auto w-full shadow-2xl origin-top" 
-      style={viewportStyle}
+      className="fixed inset-0 flex flex-col overflow-hidden bg-transparent max-w-[450px] mx-auto w-full shadow-2xl" 
     >
       <div className="premium-bg"></div>
       
@@ -1630,6 +1632,13 @@ const App: React.FC = () => {
           onClose={() => setShowRecoveryAdvice(false)}
         />
       )}
+
+      <ChangelogModal 
+        isOpen={showChangelog}
+        onClose={() => setShowChangelog(false)}
+        version={APP_VERSION}
+        changes={APP_CHANGELOG}
+      />
 
       {/* Dynamic Floating Bottom Bar */}
       {!isKeyboardOpen && (
