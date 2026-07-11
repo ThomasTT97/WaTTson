@@ -203,6 +203,43 @@ const App: React.FC = () => {
   const [showGoalEditor, setShowGoalEditor] = useState(false);
   const [formKey, setFormKey] = useState(creds?.apiKey || '');
   const [formId, setFormId] = useState(creds?.athleteId || '');
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+  const [viewportStyle, setViewportStyle] = useState({ height: '100dvh', transform: 'translateY(0px)' });
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.visualViewport) {
+        // If the visual viewport height is significantly less than innerHeight,
+        // it means the keyboard is open on iOS
+        setIsKeyboardOpen(window.visualViewport.height < window.innerHeight - 100);
+        
+        // Offset top accounts for iOS panning the layout viewport
+        setViewportStyle({
+          height: `${window.visualViewport.height}px`,
+          transform: `translateY(${window.visualViewport.offsetTop}px)`
+        });
+        
+        // Ensure no scroll on body
+        window.scrollTo(0, 0);
+      }
+    };
+    
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleResize);
+      window.visualViewport.addEventListener('scroll', handleResize);
+      setViewportStyle({
+        height: `${window.visualViewport.height}px`,
+        transform: `translateY(${window.visualViewport.offsetTop}px)`
+      });
+    }
+    
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleResize);
+        window.visualViewport.removeEventListener('scroll', handleResize);
+      }
+    };
+  }, []);
 
   const loadData = async (credentials: IntervalsCredentials, isInitial = false) => {
     if (loading || isSyncing) return;
@@ -608,7 +645,10 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden bg-transparent">
+    <div 
+      className="fixed inset-0 flex flex-col overflow-hidden bg-transparent max-w-[450px] mx-auto w-full shadow-2xl origin-top" 
+      style={viewportStyle}
+    >
       <div className="premium-bg"></div>
       
       {/* Global Top Bar */}
@@ -709,7 +749,7 @@ const App: React.FC = () => {
                 </span>
               </div>
               
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2">
                 {/* Training Plan Card */}
                 <div 
                   onClick={() => setShowWeeklyBriefing(true)}
@@ -719,7 +759,7 @@ const App: React.FC = () => {
                     <Calendar size={14} className="text-emerald-400" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-[11px] font-black uppercase tracking-wider text-white truncate">
+                    <h3 className="text-[11px] font-black uppercase tracking-wider text-white">
                       Trainings Plan
                     </h3>
                   </div>
@@ -735,7 +775,7 @@ const App: React.FC = () => {
                     <ActivityIcon size={14} className="text-emerald-400 animate-pulse" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-[11px] font-black uppercase tracking-wider text-white truncate">
+                    <h3 className="text-[11px] font-black uppercase tracking-wider text-white">
                       Recovery Advice
                     </h3>
                   </div>
@@ -951,7 +991,7 @@ const App: React.FC = () => {
                )}
              </div>
 
-             <div className="sticky bottom-0 shrink-0 px-4 pt-3 bg-slate-950/40 backdrop-blur-md border-t border-white/5 z-20">
+             <div className="sticky bottom-0 shrink-0 px-4 pt-3 pb-3 bg-slate-950/40 backdrop-blur-md border-t border-white/5 z-20">
                <form 
                  onSubmit={(e) => { e.preventDefault(); handleSendMessage(chatInput); }} 
                  className="relative max-w-full"
@@ -1592,40 +1632,42 @@ const App: React.FC = () => {
       )}
 
       {/* Dynamic Floating Bottom Bar */}
-      <div className="flex-none bg-slate-950/85 backdrop-blur-3xl border-t border-white/5 z-40" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)', paddingTop: '10px' }}>
-        <div className="max-w-[450px] mx-auto px-6 flex justify-around items-center">
-          {[
-            { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
-            { id: 'rides', icon: Bike, label: 'Logs' },
-            { id: 'chat', icon: MessageSquare, label: 'waTTson' },
-            { id: 'settings', icon: Settings, label: 'Profile' }
-          ].map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setActiveTab(item.id as any)}
-                className="flex flex-col items-center justify-center py-1 flex-1 relative transition-all duration-300 active:scale-90"
-              >
-                <div className={`p-1.5 rounded-xl transition-all duration-300 ${isActive ? 'text-emerald-400 bg-emerald-500/10' : 'text-slate-500 hover:text-slate-300'}`}>
-                  <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
-                </div>
-                <span className={`text-[9px] font-bold mt-1 tracking-wider uppercase transition-colors duration-300 ${isActive ? 'text-emerald-400 font-black' : 'text-slate-600'}`}>
-                  {item.label}
-                </span>
-                {isActive && (
-                  <motion.div
-                    layoutId="activeTabIndicator"
-                    className="absolute bottom-0 w-1.5 h-1.5 bg-emerald-400 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)]"
-                    transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-                  />
-                )}
-              </button>
-            );
-          })}
+      {!isKeyboardOpen && (
+        <div className="flex-none bg-slate-950/85 backdrop-blur-3xl border-t border-white/5 z-40" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 12px) - 6px)', paddingTop: '10px' }}>
+          <div className="max-w-[450px] mx-auto px-6 flex justify-around items-center">
+            {[
+              { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
+              { id: 'rides', icon: Bike, label: 'Logs' },
+              { id: 'chat', icon: MessageSquare, label: 'waTTson' },
+              { id: 'settings', icon: Settings, label: 'Profile' }
+            ].map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id as any)}
+                  className="flex flex-col items-center justify-center py-1 flex-1 relative transition-all duration-300 active:scale-90"
+                >
+                  <div className={`p-1.5 rounded-xl transition-all duration-300 ${isActive ? 'text-emerald-400 bg-emerald-500/10' : 'text-slate-500 hover:text-slate-300'}`}>
+                    <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
+                  </div>
+                  <span className={`text-[9px] font-bold mt-1 tracking-wider uppercase transition-colors duration-300 ${isActive ? 'text-emerald-400 font-black' : 'text-slate-600'}`}>
+                    {item.label}
+                  </span>
+                  {isActive && (
+                    <motion.div
+                      layoutId="activeTabIndicator"
+                      className="absolute bottom-0 w-1.5 h-1.5 bg-emerald-400 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)]"
+                      transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
