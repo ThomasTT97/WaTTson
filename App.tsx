@@ -706,7 +706,7 @@ const App: React.FC = () => {
 
       {/* Scrollable View Area */}
       <div 
-        className={`flex-1 hide-scrollbar scroll-smooth flex flex-col relative ${activeTab === 'chat' ? 'p-0 overflow-hidden' : activeTab === 'dashboard' ? 'px-4 pt-3 pb-4 overflow-hidden' : 'px-4 pt-4 pb-24 overflow-y-auto'}`}
+        className={`flex-1 hide-scrollbar scroll-smooth flex flex-col relative ${activeTab === 'chat' ? 'p-0 overflow-hidden' : 'px-4 pt-4 pb-24 overflow-y-auto'}`}
       >
 
         {activeTab === 'dashboard' && (
@@ -874,18 +874,28 @@ const App: React.FC = () => {
         )}
 
         {activeTab === 'rides' && (
-          <div className="space-y-4 animate-in slide-in-from-right-2 duration-400 pb-2">
-             <div className="space-y-4 pt-1">
-               {Object.entries(groupedActivities).map(([month, monthRides]) => (
-                 <div key={month} className="space-y-1.5">
-                   <div className="flex items-center gap-3 px-1 mb-1">
-                     <span className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">{month}</span>
-                     <div className="flex-1 h-px bg-white/5" />
+          <div className="flex flex-col animate-in slide-in-from-right-2 duration-400">
+             {selectedActivity && creds ? (
+               <CoachingModal 
+                 activity={selectedActivity} 
+                 creds={creds} 
+                 onClose={() => setSelectedActivity(null)} 
+                 userGoal={userGoal} 
+                 ftp={ftp || undefined}
+               />
+             ) : (
+               <div className="flex flex-col pt-1 pb-2 space-y-4">
+                 {Object.entries(groupedActivities).map(([month, monthRides]) => (
+                   <div key={month} className="space-y-1.5">
+                     <div className="flex items-center gap-3 px-1 mb-1">
+                       <span className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">{month}</span>
+                       <div className="flex-1 h-px bg-white/5" />
+                     </div>
+                     {(monthRides as Activity[]).map(a => <ActivityCard key={a.id} activity={a} onClick={setSelectedActivity} />)}
                    </div>
-                   {(monthRides as Activity[]).map(a => <ActivityCard key={a.id} activity={a} onClick={setSelectedActivity} />)}
-                 </div>
-               ))}
-             </div>
+                 ))}
+               </div>
+             )}
           </div>
         )}
 
@@ -993,7 +1003,7 @@ const App: React.FC = () => {
                )}
              </div>
 
-             <div className="sticky bottom-0 shrink-0 px-4 pt-3 pb-3 bg-slate-950/40 backdrop-blur-md border-t border-white/5 z-20">
+             <div className="sticky bottom-0 shrink-0 px-4 pt-3 bg-slate-950/80 backdrop-blur-md border-t border-white/5 z-20" style={{ paddingBottom: isKeyboardOpen ? '12px' : 'calc(max(16px, env(safe-area-inset-bottom)) + 64px)' }}>
                <form 
                  onSubmit={(e) => { e.preventDefault(); handleSendMessage(chatInput); }} 
                  className="relative max-w-full"
@@ -1031,59 +1041,58 @@ const App: React.FC = () => {
         )}
 
         {activeTab === 'settings' && (
-          <div className="flex flex-col space-y-3 animate-in slide-in-from-right-2 duration-400">
-             <div className="flex justify-between items-center pt-1 px-1">
-               <h2 className="text-xl text-header italic uppercase tracking-tight">
-                 {settingsView === 'main' ? 'Pro DNA' : 
-                  settingsView === 'goal' ? 'Set Ambition' :
-                  settingsView === 'ftp' ? 'Engine Power' :
-                  settingsView === 'data' ? 'Data Vault' : 'Athlete Profile'}
-               </h2>
-               {settingsView !== 'main' && (
+          <div className="flex flex-col animate-in slide-in-from-right-2 duration-400">
+             {settingsView === 'main' ? null : (
+               <div className="flex items-center justify-start pb-2 px-1 pt-1 mb-2">
                  <button 
                    onClick={() => setSettingsView('main')}
-                   className="flex items-center gap-1 text-[10px] font-black text-slate-500 uppercase tracking-widest hover:text-white transition-colors"
+                   className="w-9 h-9 rounded-xl glass-card flex items-center justify-center text-slate-500 border border-white/10 active:scale-95 transition-all"
                  >
-                   <ChevronLeft size={14} /> Back
+                   <ChevronLeft size={18} />
                  </button>
-               )}
-             </div>
+               </div>
+             )}
 
-             <div className="flex flex-col space-y-3 pb-2 px-1">
+             <div className="flex flex-col pb-2 px-1">
                {settingsView === 'main' && (
                  <>
-                   <div className="glass-card p-4 rounded-[1.5rem] space-y-4">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-2xl bg-slate-900 flex items-center justify-center text-slate-500 border border-white/5 shadow-inner"><User size={24} /></div>
-                        <div>
-                          <p className="text-sm font-bold text-white tracking-tight">Athlete ID: {creds?.athleteId}</p>
-                          <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-widest mt-0.5">Systems Operational</p>
-                        </div>
-                      </div>
-                   </div>
+                   <div className="flex flex-col gap-2">
+                     <button 
+                       onClick={() => setSettingsView('methodology')}
+                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-amber-500/10 shadow-sm"
+                     >
+                       <div className="flex items-center gap-4">
+                         <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400"><User size={20} /></div>
+                         <div className="text-left">
+                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Your Rider Profile</p>
+                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">AI Assessment</p>
+                         </div>
+                       </div>
+                       <ChevronRight size={16} className="text-slate-600 group-hover:text-amber-400 transition-colors" />
+                     </button>
 
-                   <div className="grid grid-cols-1 gap-2">
                       <button 
                         onClick={() => setSettingsView('ftp')}
-                        className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-emerald-500/10 shadow-sm"
+                        className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-orange-500/10 shadow-sm"
                       >
                         <div className="flex items-center gap-4">
                           <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-400"><Zap size={20} /></div>
                           <div className="text-left">
-                            <p className="text-[11px] font-black text-white uppercase tracking-widest">FTP Intensity</p>
+                            <p className="text-[11px] font-black text-white uppercase tracking-widest">Your FTP</p>
                             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{ftp || '---'} Watts</p>
                           </div>
                         </div>
                         <ChevronRight size={16} className="text-slate-600 group-hover:text-orange-400 transition-colors" />
                       </button>
+
                      <button 
                        onClick={() => setSettingsView('goal')}
-                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all"
+                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-emerald-500/10 shadow-sm"
                      >
                        <div className="flex items-center gap-4">
                          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400"><Target size={20} /></div>
                          <div className="text-left">
-                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Training Goal</p>
+                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Your Goal</p>
                            <p className="text-[10px] text-slate-500 font-bold italic truncate max-w-[180px]">"{userGoal}"</p>
                          </div>
                        </div>
@@ -1092,38 +1101,24 @@ const App: React.FC = () => {
 
                      <button 
                        onClick={() => setSettingsView('data')}
-                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all"
+                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-purple-500/10 shadow-sm"
                      >
                        <div className="flex items-center gap-4">
                          <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400"><Database size={20} /></div>
                          <div className="text-left">
-                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Data & Privacy</p>
+                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Your Data</p>
                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Connected Assets</p>
                          </div>
                        </div>
                        <ChevronRight size={16} className="text-slate-600 group-hover:text-purple-400 transition-colors" />
                      </button>
-
-                     <button 
-                       onClick={() => setSettingsView('methodology')}
-                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all"
-                     >
-                       <div className="flex items-center gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400"><User size={20} /></div>
-                         <div className="text-left">
-                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Athlete Profile</p>
-                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">AI Assessment</p>
-                         </div>
-                       </div>
-                       <ChevronRight size={16} className="text-slate-600 group-hover:text-amber-400 transition-colors" />
-                     </button>
                    </div>
                    
-                   <div className="grid grid-cols-2 gap-2">
-                     <button onClick={() => { setSuggestion(null); loadData(creds!); }} className="p-4 bg-white/5 rounded-[1.3rem] border border-white/5 text-[9px] font-black uppercase tracking-widest text-slate-500 flex flex-col items-center gap-2 active:scale-95 transition-all">
+                   <div className="grid grid-cols-2 gap-2 mt-auto pt-4">
+                     <button onClick={() => { setSuggestion(null); loadData(creds!); }} className="p-3.5 bg-white/5 rounded-[1.3rem] border border-white/5 text-[9px] font-black uppercase tracking-widest text-slate-500 flex flex-col items-center gap-2 active:scale-95 transition-all">
                         <RotateCcw size={16} /> Sync Engine
                      </button>
-                     <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="p-4 bg-rose-500/5 rounded-[1.3rem] border border-rose-500/10 text-[9px] font-black uppercase tracking-widest text-rose-500 flex flex-col items-center gap-2 active:scale-95 transition-all">
+                     <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="p-3.5 bg-rose-500/5 rounded-[1.3rem] border border-rose-500/10 text-[9px] font-black uppercase tracking-widest text-rose-500 flex flex-col items-center gap-2 active:scale-95 transition-all">
                         <LogOut size={16} /> Logout
                      </button>
                    </div>
@@ -1523,15 +1518,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {selectedActivity && creds && (
-        <CoachingModal 
-          activity={selectedActivity} 
-          creds={creds} 
-          onClose={() => setSelectedActivity(null)} 
-          userGoal={userGoal} 
-          ftp={ftp || undefined}
-        />
-      )}
       {/* Suggestion Detail Modal */}
       {showSuggestionDetail && suggestion && (
         <div className="fixed inset-0 z-[110] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-4 animate-in slide-in-from-bottom-4 duration-300" onClick={() => setShowSuggestionDetail(false)}>
@@ -1642,11 +1628,11 @@ const App: React.FC = () => {
 
       {/* Dynamic Floating Bottom Bar */}
       {!isKeyboardOpen && (
-        <div className="flex-none bg-slate-950/85 backdrop-blur-3xl border-t border-white/5 z-40" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 12px) - 6px)', paddingTop: '10px' }}>
+        <div className="absolute bottom-0 left-0 right-0 bg-slate-950/85 backdrop-blur-3xl border-t border-white/5 z-40" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))', paddingTop: '12px' }}>
           <div className="max-w-[450px] mx-auto px-6 flex justify-around items-center">
             {[
               { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
-              { id: 'rides', icon: Bike, label: 'Logs' },
+              { id: 'rides', icon: Bike, label: 'Rides' },
               { id: 'chat', icon: MessageSquare, label: 'waTTson' },
               { id: 'settings', icon: Settings, label: 'Profile' }
             ].map((item) => {
