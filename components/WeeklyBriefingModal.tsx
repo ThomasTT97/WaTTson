@@ -17,6 +17,8 @@ interface WeeklyBriefingModalProps {
   weeklyBriefing: WeeklyBriefing | null;
   weeklyBriefingError?: string | null;
   loadingWeeklyBriefing: boolean;
+  planMode?: 'power' | 'hr';
+  onPlanModeChange?: (mode: 'power' | 'hr') => void;
   onResetPlanContext?: () => void;
   onUpdatePlanContext?: (context: string) => void;
   onForceRefresh?: () => void;
@@ -28,7 +30,8 @@ const toLocalDateStr = (d: Date) => {
 
 export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({ 
   activities, wellness, userGoal, onClose, todaySuggestion, creds, ftp, powerCurves, planContext, onResetPlanContext, onUpdatePlanContext,
-  weeklyBriefing, weeklyBriefingError, loadingWeeklyBriefing, onForceRefresh
+  weeklyBriefing, weeklyBriefingError, loadingWeeklyBriefing, onForceRefresh,
+  planMode = 'power', onPlanModeChange
 }) => {
   const [selectedDay, setSelectedDay] = useState<WeeklyBriefing['days'][0] | null>(null);
   const [syncingDay, setSyncingDay] = useState<string | null>(null);
@@ -254,6 +257,36 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
               <RefreshCw size={12} /> Optimal
             </button>
           )}
+        </div>
+
+        {/* Plan Intensity Basis Switch */}
+        <div className="flex items-center justify-between bg-white/5 border border-white/5 rounded-xl px-3.5 py-1.5">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+            <Zap size={11} className={planMode === 'power' ? "text-emerald-400 animate-pulse" : "text-rose-400 animate-pulse"} />
+            Plan basis
+          </span>
+          <div className="flex bg-slate-950 p-0.5 rounded-lg border border-white/5">
+            <button
+              onClick={() => onPlanModeChange?.('power')}
+              className={`px-3 py-1 text-[9px] font-black uppercase tracking-wider rounded-md transition-all ${
+                planMode === 'power'
+                  ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Power
+            </button>
+            <button
+              onClick={() => onPlanModeChange?.('hr')}
+              className={`px-3 py-1 text-[9px] font-black uppercase tracking-wider rounded-md transition-all ${
+                planMode === 'hr'
+                  ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              HR Data
+            </button>
+          </div>
         </div>
 
         {/* Week tab selectors (used as jump-to-week anchors) */}

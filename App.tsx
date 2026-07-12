@@ -142,6 +142,9 @@ const App: React.FC = () => {
   const [weeklyBriefing, setWeeklyBriefing] = useState<WeeklyBriefing | null>(null);
   const [weeklyBriefingError, setWeeklyBriefingError] = useState<string | null>(null);
   const [loadingWeeklyBriefing, setLoadingWeeklyBriefing] = useState(false);
+  const [planMode, setPlanMode] = useState<'power' | 'hr'>(() => {
+    return (localStorage.getItem('wattson_plan_mode') as 'power' | 'hr') || 'power';
+  });
   
   const [suggestion, setSuggestion] = useState<DailySuggestion | null>(() => {
     try {
@@ -356,7 +359,7 @@ const App: React.FC = () => {
     }
   }, [activities, userGoal, hasRideToday]);
 
-  const fetchWeeklyBriefingData = useCallback(async (customPlanContext?: string, force = false) => {
+  const fetchWeeklyBriefingData = useCallback(async (customPlanContext?: string, force = false, mode?: 'power' | 'hr') => {
     if (!activities || activities.length === 0) return;
     setLoadingWeeklyBriefing(true);
     setWeeklyBriefingError(null);
@@ -382,8 +385,9 @@ const App: React.FC = () => {
       }
 
       const ctxToUse = customPlanContext !== undefined ? customPlanContext : (planContext || undefined);
+      const activeMode = mode || planMode;
 
-      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force);
+      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode);
       setWeeklyBriefing(data);
     } catch (err: any) {
       console.error("Failed to load weekly briefing:", err);
@@ -391,7 +395,7 @@ const App: React.FC = () => {
     } finally {
       setLoadingWeeklyBriefing(false);
     }
-  }, [activities, wellnessData, userGoal, suggestion, ftp, powerCurves, planContext]);
+  }, [activities, wellnessData, userGoal, suggestion, ftp, powerCurves, planContext, planMode]);
 
   useEffect(() => {
     if (activities && activities.length > 0) {
@@ -1629,6 +1633,12 @@ const App: React.FC = () => {
           weeklyBriefing={weeklyBriefing}
           weeklyBriefingError={weeklyBriefingError}
           loadingWeeklyBriefing={loadingWeeklyBriefing}
+          planMode={planMode}
+          onPlanModeChange={(newMode) => {
+            setPlanMode(newMode);
+            localStorage.setItem('wattson_plan_mode', newMode);
+            fetchWeeklyBriefingData(undefined, true, newMode);
+          }}
           onResetPlanContext={() => {
             setPlanContext(null);
             localStorage.removeItem('wattson_plan_context');

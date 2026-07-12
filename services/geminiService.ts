@@ -153,8 +153,6 @@ export const getRideFeedback = async (
     ? `Planned Workout: "${plannedWorkout.name}". Description: "${plannedWorkout.description}".`
     : "No planned workout for this ride.";
 
-  const { hasPowerOnMostRides, hrStatsText } = checkHasPowerOnMostRides(allActivities || [activity]);
-
   const prompt = getRideFeedbackPrompt({
     activityName: activity.name || '',
     tss: activity.icu_training_load || activity.icu_tss || activity.training_load || 0,
@@ -167,8 +165,8 @@ export const getRideFeedback = async (
     userGoal: userGoal || 'Fitness',
     plannedWorkoutCtx,
     ftp,
-    hasPowerOnMostRides,
-    hrStatsText
+    hasPowerOnMostRides: true,
+    hrStatsText: ""
   });
 
   const response = await callGemini({
@@ -220,15 +218,13 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
     .map(a => `${a.start_date_local.split('T')[0]}: ${a.icu_training_load || a.icu_tss || 0} TSS (${a.type}), efTP: ${a.icu_eftp || 'N/A'}W`)
     .join(', ');
 
-  const { hasPowerOnMostRides, hrStatsText } = checkHasPowerOnMostRides(recentActivities);
-
   const prompt = getDailySuggestionPrompt({
     targetStr,
     history,
     userGoal: userGoal || '',
     ftp,
-    hasPowerOnMostRides,
-    hrStatsText
+    hasPowerOnMostRides: true,
+    hrStatsText: ""
   });
 
   const response = await callGemini({
@@ -311,7 +307,8 @@ export const getWeeklyBriefing = async (
   ftp?: number,
   powerCurves?: AnnualPowerCurve[],
   planContext?: string,
-  force?: boolean
+  force?: boolean,
+  planMode: 'power' | 'hr' = 'power'
 ): Promise<WeeklyBriefing> => {
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -330,7 +327,7 @@ export const getWeeklyBriefing = async (
     return Math.abs(hash).toString(36);
   };
 
-  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${contextHash ? safeHash(contextHash) : 'no-ctx'}`;
+  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${planMode}_${contextHash ? safeHash(contextHash) : 'no-ctx'}`;
   
   if (!force) {
     const cached = getCache(cacheKey);
@@ -366,7 +363,29 @@ export const getWeeklyBriefing = async (
     tempDate.setDate(tempDate.getDate() + 1);
   }
 
-  const { hasPowerOnMostRides, hrStatsText } = checkHasPowerOnMostRides(recentActivities);
+  const isHrBased = planMode === 'hr';
+  const hasPowerOnMostRides = !isHrBased;
+
+  let hrStatsText = "";
+  if (isHrBased) {
+    const rides = recentActivities.filter(a => a.type === 'Ride' || !a.type);
+    const hrValues = rides.map(a => a.average_heartrate || 0).filter(hr => hr > 40);
+    const maxHrValues = rides.map(a => a.max_heartrate || 0).filter(hr => hr > 40);
+
+    const avgHr = hrValues.length > 0 
+      ? Math.round(hrValues.reduce((sum, h) => sum + h, 0) / hrValues.length) 
+      : null;
+
+    const maxHr = maxHrValues.length > 0 
+      ? Math.max(...maxHrValues) 
+      : (hrValues.length > 0 ? Math.round(Math.max(...hrValues) * 1.1) : null);
+
+    const lthr = maxHr ? Math.round(maxHr * 0.88) : (avgHr ? Math.round(avgHr * 1.15) : null);
+
+    if (avgHr || maxHr) {
+      hrStatsText = `Athlete available HR statistics: ${avgHr ? `Average HR is ${avgHr} bpm. ` : ""}${maxHr ? `Max HR is ${maxHr} bpm. ` : ""}${lthr ? `Estimated Lactate Threshold HR (LTHR) is ${lthr} bpm. ` : ""}Use these numbers to target precise, realistic bpm ranges for each zone.`;
+    }
+  }
 
   const prompt = getWeeklyBriefingPrompt({
     userGoal: userGoal || 'Increase endurance',
