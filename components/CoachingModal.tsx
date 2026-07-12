@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Activity, IntervalsCredentials, CoachingFeedback } from '../types';
 import { getRideFeedback } from '../services/geminiService';
 import { fetchActivityIntervals, fetchPlannedWorkout } from '../services/intervalsService';
+import { StepLabel, getStepPhaseLabel } from './StepLabel';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Sparkles, 
@@ -23,9 +24,10 @@ interface CoachingModalProps {
   onClose: () => void;
   userGoal?: string;
   ftp?: number;
+  allActivities?: Activity[];
 }
 
-export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, onClose, userGoal, ftp }) => {
+export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, onClose, userGoal, ftp, allActivities }) => {
   const [feedback, setFeedback] = useState<CoachingFeedback | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +42,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
           fetchActivityIntervals(activity.id, creds),
           fetchPlannedWorkout(dateStr, creds)
         ]);
-        const data = await getRideFeedback(activity, intervals, plannedWorkout, userGoal, ftp);
+        const data = await getRideFeedback(activity, intervals, plannedWorkout, userGoal, ftp, allActivities);
         setFeedback(data);
       } catch (err: any) {
         setError(err.message || "Engine analysis failed.");
@@ -49,7 +51,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
       }
     };
     fetchFeedback();
-  }, [activity, creds, userGoal, ftp]);
+  }, [activity, creds, userGoal, ftp, allActivities]);
 
   const dateObj = new Date(activity.start_date_local);
   const formatDuration = (totalSeconds: number) => {
@@ -160,13 +162,17 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                 {feedback.workout_steps && feedback.workout_steps.length > 0 && (
                   <div className="flex-1 overflow-y-auto hide-scrollbar space-y-2 shrink-0">
                      {feedback.workout_steps.map((step, sIdx) => (
-                       <div key={sIdx} className="flex items-center justify-between gap-3 text-[11px] font-bold bg-white/[0.02] p-2.5 rounded-lg border border-white/[0.02]">
-                         <div className="flex items-center gap-2 text-slate-300">
-                           <div className="w-1 h-1 rounded-full bg-emerald-500/50" />
-                           <span className="truncate">{step.duration}m {step.label}</span>
+                       <div key={sIdx} className="flex items-start justify-between gap-3 text-[11px] font-bold bg-white/[0.02] p-2.5 rounded-lg border border-white/[0.02]">
+                         <div className="flex items-start gap-2 text-slate-300 min-w-0 flex-1">
+                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/50 mt-1.5 flex-shrink-0" />
+                           <div className="min-w-0 flex-1 text-left">
+                             <StepLabel label={step.label} />
+                           </div>
                          </div>
                          {step.target_watts && (
-                           <span className="text-emerald-400 font-black italic">{step.target_watts}W</span>
+                           <span className="text-emerald-400 font-extrabold uppercase tracking-wider text-[9px] bg-emerald-500/10 px-2 py-0.5 rounded flex-shrink-0">
+                             {getStepPhaseLabel(sIdx, feedback.workout_steps?.length || 0, step.label)}
+                           </span>
                          )}
                        </div>
                      ))}

@@ -96,10 +96,11 @@ export const RecoveryAdviceModal: React.FC<RecoveryAdviceModalProps> = ({
         ) : advice ? (
           <div className="space-y-4 animate-in fade-in duration-500">
             
-            {/* PMC Metrics Grid */}
+            {/* 3-column PMC metrics */}
             <div className="grid grid-cols-3 gap-2">
               {/* Fitness / CTL */}
-              <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px]">
+              <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px] group hover:border-white/10 transition-all">
+                <div className="absolute top-0 right-0 w-8 h-8 bg-blue-500/5 rounded-full blur-xl pointer-events-none"></div>
                 <div className="flex items-center gap-1 text-blue-400">
                   <TrendingUp size={9} strokeWidth={2.5} />
                   <span className="text-[7.5px] font-black uppercase tracking-widest text-slate-400">Fitness</span>
@@ -110,7 +111,8 @@ export const RecoveryAdviceModal: React.FC<RecoveryAdviceModalProps> = ({
               </div>
 
               {/* Fatigue / ATL */}
-              <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px]">
+              <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px] group hover:border-white/10 transition-all">
+                <div className="absolute top-0 right-0 w-8 h-8 bg-amber-500/5 rounded-full blur-xl pointer-events-none"></div>
                 <div className="flex items-center gap-1 text-amber-400">
                   <Zap size={9} strokeWidth={2.5} fill="currentColor" />
                   <span className="text-[7.5px] font-black uppercase tracking-widest text-slate-400">Fatigue</span>
@@ -121,117 +123,45 @@ export const RecoveryAdviceModal: React.FC<RecoveryAdviceModalProps> = ({
               </div>
 
               {/* Form / TSB */}
-              <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px]">
+              <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px] group hover:border-white/10 transition-all">
+                <div className="absolute top-0 right-0 w-8 h-8 bg-emerald-500/5 rounded-full blur-xl pointer-events-none"></div>
                 <div className="flex items-center gap-1 text-emerald-400">
                   <ActivityIcon size={9} strokeWidth={2.5} />
                   <span className="text-[7.5px] font-black uppercase tracking-widest text-slate-400">Form</span>
                 </div>
-                <div className="mt-0.5">
-                  <span className="text-xl font-black italic tracking-tight text-white font-mono">{stats.form}</span>
+                <div className="mt-0.5 flex flex-col items-center">
+                  <span className={`text-xl font-black italic tracking-tight font-mono leading-none ${stats.form >= 5 ? 'text-emerald-400' : stats.form < -25 ? 'text-rose-400' : stats.form < -10 ? 'text-amber-400' : 'text-slate-200'}`}>
+                    {stats.form > 0 ? `+${stats.form}` : stats.form}
+                  </span>
                 </div>
               </div>
             </div>
 
-            {/* Score Ring Hero */}
-            <div className="glass-card p-4 rounded-2xl border border-emerald-500/10 bg-gradient-to-r from-slate-950 via-slate-900/30 to-slate-950 relative overflow-hidden flex items-center gap-4">
-              <div className="relative w-16 h-16 flex-shrink-0 flex items-center justify-center">
-                {/* Outer ring */}
-                <svg className="w-full h-full transform -rotate-90">
-                  <circle
-                    cx="32"
-                    cy="32"
-                    r="28"
-                    stroke="rgba(255,255,255,0.05)"
-                    strokeWidth="4"
-                    fill="transparent"
-                  />
-                  <circle
-                    cx="32"
-                    cy="32"
-                    r="28"
-                    stroke="#10b981"
-                    strokeWidth="4"
-                    fill="transparent"
-                    strokeDasharray={175}
-                    strokeDashoffset={175 - (175 * advice.score) / 100}
-                    strokeLinecap="round"
-                    className="transition-all duration-1000"
-                  />
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-base font-black text-white italic font-mono">{advice.score}</span>
-                  <span className="text-[6px] font-black uppercase text-slate-500 tracking-wider">READINESS</span>
+            {/* Advice Sections */}
+            <div className="space-y-3 pt-2">
+              <div className="glass-card p-4 rounded-2xl border border-white/5 bg-slate-900/40">
+                <div className="flex items-center gap-2 mb-2 text-emerald-400">
+                  <Moon size={16} />
+                  <h3 className="font-bold text-sm uppercase tracking-wider">Sleep & Rest</h3>
                 </div>
+                <p className="text-sm text-slate-300 leading-relaxed">{advice.sleep_advice}</p>
               </div>
 
-              <div>
-                <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest block mb-0.5">
-                  Coach Summary
-                </span>
-                <p className="text-xs text-slate-300 font-medium leading-relaxed italic">
-                  "{advice.summary}"
-                </p>
-              </div>
-            </div>
-
-            {/* Key Metrics list */}
-            <div className="grid grid-cols-2 gap-2">
-              {advice.key_metrics.map((metric, idx) => {
-                const isGood = metric.status === 'good';
-                const isWarning = metric.status === 'warning';
-                
-                const statusColor = isGood 
-                  ? 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5' 
-                  : isWarning 
-                    ? 'text-amber-400 border-amber-500/20 bg-amber-500/5' 
-                    : 'text-slate-400 border-white/5 bg-white/5';
-
-                return (
-                  <div key={idx} className={`border p-3 rounded-2xl flex flex-col gap-0.5 min-h-[60px] ${statusColor} bg-black/40`}>
-                    <span className="text-[9px] font-black uppercase tracking-widest opacity-70">{metric.label}</span>
-                    <span className="text-sm font-black italic tracking-tight">{metric.value}</span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Section: Food & Hydration */}
-            <div className="glass-card p-3.5 rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/40 to-slate-950/20">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-6 h-6 rounded-lg bg-orange-500/10 flex items-center justify-center text-orange-400">
-                  <Utensils size={12} />
+              <div className="glass-card p-4 rounded-2xl border border-white/5 bg-slate-900/40">
+                <div className="flex items-center gap-2 mb-2 text-blue-400">
+                  <Utensils size={16} />
+                  <h3 className="font-bold text-sm uppercase tracking-wider">Food & Hydration</h3>
                 </div>
-                <h3 className="text-xs font-black text-white uppercase tracking-wider">Food & Hydration</h3>
+                <p className="text-sm text-slate-300 leading-relaxed">{advice.food_advice}</p>
               </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
-                {advice.food_advice}
-              </p>
-            </div>
 
-            {/* Section: Sleep & Rest */}
-            <div className="glass-card p-3.5 rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/40 to-slate-950/20">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-6 h-6 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400">
-                  <Moon size={12} />
+              <div className="glass-card p-4 rounded-2xl border border-white/5 bg-slate-900/40">
+                <div className="flex items-center gap-2 mb-2 text-rose-400">
+                  <Heart size={16} />
+                  <h3 className="font-bold text-sm uppercase tracking-wider">Recovery Protocols</h3>
                 </div>
-                <h3 className="text-xs font-black text-white uppercase tracking-wider">Sleep & Rest Guidelines</h3>
+                <p className="text-sm text-slate-300 leading-relaxed">{advice.activity_advice}</p>
               </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
-                {advice.sleep_advice}
-              </p>
-            </div>
-
-            {/* Section: Active Recovery Activities */}
-            <div className="glass-card p-3.5 rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/40 to-slate-950/20">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-6 h-6 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
-                  <ActivityIcon size={12} />
-                </div>
-                <h3 className="text-xs font-black text-white uppercase tracking-wider">Recovery Protocol</h3>
-              </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
-                {advice.activity_advice}
-              </p>
             </div>
 
           </div>

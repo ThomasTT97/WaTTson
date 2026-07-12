@@ -72,12 +72,9 @@ const callGemini = async (params: any): Promise<GenerateContentResponse> => {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   
   // Model fallback chain: 
-  // 1. gemini-2.5-flash (Incredibly fast, smart)
-  // 2. gemini-2.0-flash-lite (Very fast)
-  // 3. gemini-1.5-flash (Fallback)
-  // 4. gemini-1.5-pro (Robust)
-  // 5. gemini-pro (Legacy fallback)
-  const models = ['gemini-2.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
+  // 1. gemini-3.5-flash (Supported basic/general text model)
+  // 2. gemini-3.1-flash-lite (Supported lightweight model)
+  const models = ['gemini-3.5-flash', 'gemini-3.1-flash-lite'];
   
   let lastError: any = null;
   for (const model of models) {
@@ -97,6 +94,47 @@ const callGemini = async (params: any): Promise<GenerateContentResponse> => {
 };
 
 /**
+ * Helper to check if the athlete has power data on most of their rides and extract HR metrics.
+ */
+export const checkHasPowerOnMostRides = (activities: Activity[] | undefined): { 
+  hasPowerOnMostRides: boolean;
+  hrStatsText: string;
+} => {
+  if (!activities || activities.length === 0) {
+    return { hasPowerOnMostRides: true, hrStatsText: "" };
+  }
+  const rides = activities.filter(a => a.type === 'Ride' || !a.type);
+  const ridesCount = rides.length;
+  if (ridesCount === 0) {
+    return { hasPowerOnMostRides: true, hrStatsText: "" };
+  }
+
+  const ridesWithPower = rides.filter(a => a.has_power || (a.average_watts && a.average_watts > 0));
+  const ridesWithPowerCount = ridesWithPower.length;
+  const hasPowerOnMostRides = (ridesWithPowerCount / ridesCount) >= 0.5;
+
+  const hrValues = rides.map(a => a.average_heartrate || 0).filter(hr => hr > 40);
+  const maxHrValues = rides.map(a => a.max_heartrate || 0).filter(hr => hr > 40);
+
+  const avgHr = hrValues.length > 0 
+    ? Math.round(hrValues.reduce((sum, h) => sum + h, 0) / hrValues.length) 
+    : null;
+
+  const maxHr = maxHrValues.length > 0 
+    ? Math.max(...maxHrValues) 
+    : (hrValues.length > 0 ? Math.round(Math.max(...hrValues) * 1.1) : null);
+
+  const lthr = maxHr ? Math.round(maxHr * 0.88) : (avgHr ? Math.round(avgHr * 1.15) : null);
+
+  let hrStatsText = "";
+  if (!hasPowerOnMostRides && (avgHr || maxHr)) {
+    hrStatsText = `Athlete available HR statistics: ${avgHr ? `Average HR is ${avgHr} bpm. ` : ""}${maxHr ? `Max HR is ${maxHr} bpm. ` : ""}${lthr ? `Estimated Lactate Threshold HR (LTHR) is ${lthr} bpm. ` : ""}Use these numbers to target precise, realistic bpm ranges for each zone.`;
+  }
+
+  return { hasPowerOnMostRides, hrStatsText };
+};
+
+/**
  * Analyzes a specific cycling activity and provides coaching feedback.
  */
 export const getRideFeedback = async (
@@ -104,7 +142,8 @@ export const getRideFeedback = async (
   intervals: ActivityInterval[],
   plannedWorkout: PlannedWorkout | null,
   userGoal?: string,
-  ftp?: number
+  ftp?: number,
+  allActivities?: Activity[]
 ): Promise<CoachingFeedback> => {
   const cacheKey = `wattson_feedback_${activity.id}_${userGoal || 'default'}`;
   const cached = getCache(cacheKey);
@@ -113,6 +152,8 @@ export const getRideFeedback = async (
   const plannedWorkoutCtx = plannedWorkout 
     ? `Planned Workout: "${plannedWorkout.name}". Description: "${plannedWorkout.description}".`
     : "No planned workout for this ride.";
+
+  const { hasPowerOnMostRides, hrStatsText } = checkHasPowerOnMostRides(allActivities || [activity]);
 
   const prompt = getRideFeedbackPrompt({
     activityName: activity.name || '',
@@ -125,7 +166,9 @@ export const getRideFeedback = async (
     avgHr: Math.round(activity.average_heartrate || 0),
     userGoal: userGoal || 'Fitness',
     plannedWorkoutCtx,
-    ftp
+    ftp,
+    hasPowerOnMostRides,
+    hrStatsText
   });
 
   const response = await callGemini({
@@ -177,11 +220,15 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
     .map(a => `${a.start_date_local.split('T')[0]}: ${a.icu_training_load || a.icu_tss || 0} TSS (${a.type}), efTP: ${a.icu_eftp || 'N/A'}W`)
     .join(', ');
 
+  const { hasPowerOnMostRides, hrStatsText } = checkHasPowerOnMostRides(recentActivities);
+
   const prompt = getDailySuggestionPrompt({
     targetStr,
     history,
     userGoal: userGoal || '',
-    ftp
+    ftp,
+    hasPowerOnMostRides,
+    hrStatsText
   });
 
   const response = await callGemini({
@@ -319,6 +366,8 @@ export const getWeeklyBriefing = async (
     tempDate.setDate(tempDate.getDate() + 1);
   }
 
+  const { hasPowerOnMostRides, hrStatsText } = checkHasPowerOnMostRides(recentActivities);
+
   const prompt = getWeeklyBriefingPrompt({
     userGoal: userGoal || 'Increase endurance',
     stats,
@@ -326,7 +375,9 @@ export const getWeeklyBriefing = async (
     planContext,
     pcCtx,
     dayNames,
-    ftp
+    ftp,
+    hasPowerOnMostRides,
+    hrStatsText
   });
 
   const response = await callGemini({
@@ -397,7 +448,7 @@ export const sendChatMessage = async (
   const recentActivities = sortedActivities.slice(0, 5);
   
   const historySummary = recentActivities.map(a => 
-    `${a.start_date_local.split('T')[0]}: ${a.name}, ${Math.round((a.distance || 0)/1000)}km, TSS ${a.icu_training_load || a.icu_tss || 0}`
+    `${a.start_date_local.split('T')[0]}: ${a.name}, ${Math.round((a.distance || 0)/1000)}km, TSS ${a.icu_training_load || a.icu_tss || 0}, Avg Power ${Math.round(a.average_watts || a.icu_average_watts || 0)}W, NP ${Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0)}W`
   ).join('\n');
 
   // Format power curves for the coach
@@ -414,7 +465,7 @@ export const sendChatMessage = async (
     const olderPool = sortedActivities.slice(100);
     
     const recentStr = recentPool.map(a => 
-      `${a.start_date_local.split('T')[0]}|TSS:${a.icu_training_load || a.icu_tss || 0}|efTP:${a.icu_eftp || 'N/A'}W`
+      `${a.start_date_local.split('T')[0]}|TSS:${a.icu_training_load || a.icu_tss || 0}|NP:${Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0)}W`
     ).join(',');
 
     // Summarize older data by month or year to keep it useful but compact
@@ -431,7 +482,7 @@ export const sendChatMessage = async (
     fullHistoryCompact = `Recent: ${recentStr} | Older Summaries: ${summaryStr}`;
   } else {
     fullHistoryCompact = sortedActivities.map(a => 
-      `${a.start_date_local.split('T')[0]}|${a.type}|TSS:${a.icu_training_load || a.icu_tss || 0}|efTP:${a.icu_eftp || 'N/A'}W|${Math.round((a.distance || 0)/1000)}km`
+      `${a.start_date_local.split('T')[0]}|${a.type}|TSS:${a.icu_training_load || a.icu_tss || 0}|NP:${Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0)}W|${Math.round((a.distance || 0)/1000)}km`
     ).join(', ');
   }
 

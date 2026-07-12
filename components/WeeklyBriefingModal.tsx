@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Activity, Wellness, WeeklyBriefing, IntervalsCredentials, DailySuggestion, AnnualPowerCurve } from '../types';
 import { uploadWorkout } from '../services/intervalsService';
+import { StepLabel, getStepPhaseLabel } from './StepLabel';
 import { X, Sparkles, ChevronRight, Trophy, Clock, Zap, Info, Calendar as CalendarIcon, Check, Loader2, RefreshCw } from 'lucide-react';
 
 interface WeeklyBriefingModalProps {
@@ -14,6 +15,7 @@ interface WeeklyBriefingModalProps {
   powerCurves?: AnnualPowerCurve[];
   planContext?: string;
   weeklyBriefing: WeeklyBriefing | null;
+  weeklyBriefingError?: string | null;
   loadingWeeklyBriefing: boolean;
   onResetPlanContext?: () => void;
   onUpdatePlanContext?: (context: string) => void;
@@ -26,7 +28,7 @@ const toLocalDateStr = (d: Date) => {
 
 export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({ 
   activities, wellness, userGoal, onClose, todaySuggestion, creds, ftp, powerCurves, planContext, onResetPlanContext, onUpdatePlanContext,
-  weeklyBriefing, loadingWeeklyBriefing, onForceRefresh
+  weeklyBriefing, weeklyBriefingError, loadingWeeklyBriefing, onForceRefresh
 }) => {
   const [selectedDay, setSelectedDay] = useState<WeeklyBriefing['days'][0] | null>(null);
   const [syncingDay, setSyncingDay] = useState<string | null>(null);
@@ -380,8 +382,13 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
 
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-center py-12 opacity-30">
-            <p className="text-sm font-bold uppercase tracking-widest">Unable to generate trainings plan</p>
+          <div className="flex-1 flex flex-col items-center justify-center text-center py-12 px-6 space-y-3">
+            <p className="text-sm font-bold uppercase tracking-widest text-slate-500 opacity-60">Unable to generate training plan</p>
+            {weeklyBriefingError && (
+              <p className="text-[11px] text-rose-400 max-w-xs font-medium leading-relaxed bg-rose-500/10 border border-rose-500/20 rounded-xl p-3 shadow-inner">
+                {weeklyBriefingError}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -418,12 +425,16 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                       selectedDay.workout_steps.map((step, sIdx) => (
                         <div key={sIdx} className="flex flex-col gap-1 text-[13px] font-medium group">
                           <div className="flex items-start justify-between gap-3">
-                            <div className="flex items-start gap-2.5 text-slate-300">
+                            <div className="flex items-start gap-2.5 text-slate-300 min-w-0 flex-1">
                               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] mt-1.5 flex-shrink-0" />
-                              <span className="leading-tight">{step.duration}m {step.label}</span>
+                              <div className="min-w-0 flex-1 text-left">
+                                <StepLabel label={step.label} />
+                              </div>
                             </div>
                             {step.target_watts && (
-                              <span className="text-emerald-400 font-black italic tabular-nums flex-shrink-0 bg-emerald-500/10 px-2 py-0.5 rounded text-[12px]">{step.target_watts}W</span>
+                              <span className="text-emerald-400 font-extrabold uppercase tracking-wider text-[9px] bg-emerald-500/10 px-2 py-0.5 rounded flex-shrink-0 italic">
+                                {getStepPhaseLabel(sIdx, selectedDay.workout_steps?.length || 0, step.label)}
+                              </span>
                             )}
                           </div>
                         </div>

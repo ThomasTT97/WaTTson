@@ -17,6 +17,7 @@ import { CoachingModal } from './components/CoachingModal';
 import { WeeklyBriefingModal } from './components/WeeklyBriefingModal';
 import { RecoveryAdviceModal } from './components/RecoveryAdviceModal';
 import { ChangelogModal } from './components/ChangelogModal';
+import { StepLabel, getStepPhaseLabel } from './components/StepLabel';
 import { 
   LayoutDashboard, 
   Bike,
@@ -139,6 +140,7 @@ const App: React.FC = () => {
   const [showWeeklyBriefing, setShowWeeklyBriefing] = useState(false);
   const [showRecoveryAdvice, setShowRecoveryAdvice] = useState(false);
   const [weeklyBriefing, setWeeklyBriefing] = useState<WeeklyBriefing | null>(null);
+  const [weeklyBriefingError, setWeeklyBriefingError] = useState<string | null>(null);
   const [loadingWeeklyBriefing, setLoadingWeeklyBriefing] = useState(false);
   
   const [suggestion, setSuggestion] = useState<DailySuggestion | null>(() => {
@@ -357,6 +359,7 @@ const App: React.FC = () => {
   const fetchWeeklyBriefingData = useCallback(async (customPlanContext?: string, force = false) => {
     if (!activities || activities.length === 0) return;
     setLoadingWeeklyBriefing(true);
+    setWeeklyBriefingError(null);
     try {
       const now = new Date();
       const todayStr = toLocalDateStr(now);
@@ -382,8 +385,9 @@ const App: React.FC = () => {
 
       const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force);
       setWeeklyBriefing(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to load weekly briefing:", err);
+      setWeeklyBriefingError(err.message || String(err));
     } finally {
       setLoadingWeeklyBriefing(false);
     }
@@ -453,6 +457,16 @@ const App: React.FC = () => {
     }
 
     const total7DayLoad = last7Days.reduce((acc, d) => acc + d.load, 0);
+    const total7DayTimeSeconds = safeActivities
+        .filter(a => {
+            const d = new Date(a.start_date_local);
+            const now = new Date();
+            const sevenDaysAgo = new Date(now);
+            sevenDaysAgo.setDate(now.getDate() - 7);
+            return d >= sevenDaysAgo;
+        })
+        .reduce((acc, a) => acc + (a.moving_time ?? 0), 0);
+    const total7DayTime = Math.round(total7DayTimeSeconds / 3600 * 10) / 10;
 
     let ctl = 0, atl = 0;
     if (safeActivities.length > 0) {
@@ -476,7 +490,7 @@ const App: React.FC = () => {
     const recoveryProgress = form < 0 ? Math.max(10, 100 - (Math.abs(form) * 2)) : 100;
     const recoveryLabel = form < 0 ? `${Math.round(Math.abs(form) * 2.5)}h Recovery` : "Fully Primed";
 
-    return { last7Days, total7DayLoad, statusLabel, statusColor, statusBg, readiness, recoveryProgress, recoveryLabel, form: Math.round(form), ctl: Math.round(ctl), atl: Math.round(atl) };
+    return { last7Days, total7DayLoad, total7DayTime, statusLabel, statusColor, statusBg, readiness, recoveryProgress, recoveryLabel, form: Math.round(form), ctl: Math.round(ctl), atl: Math.round(atl) };
   }, [activities]);
 
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
@@ -858,24 +872,15 @@ const App: React.FC = () => {
 
               {/* 2-column secondary metrics */}
               <div className="grid grid-cols-2 gap-2">
-                {/* Readiness Score */}
+                {/* Total Time 7D */}
                 <div className="glass-card p-2 rounded-xl border border-white/5 bg-gradient-to-b from-slate-900/30 to-slate-950/20 hover:border-white/10 transition-all flex items-center justify-between min-h-[38px] px-3">
-                  <h4 className="text-[7.5px] font-bold text-slate-400 uppercase tracking-widest">Readiness</h4>
-                  {(() => {
-                    const displayScore = suggestion 
-                      ? Math.round(suggestion.readiness_score > 10 ? suggestion.readiness_score / 10 : suggestion.readiness_score)
-                      : stats.readiness;
-                    const displayColor = displayScore >= 7 ? 'text-emerald-400' : displayScore >= 4 ? 'text-amber-400' : 'text-rose-400';
-                    
-                    return (
-                      <div className="flex items-baseline gap-0.5">
-                        <span className={`text-base font-black italic tracking-tighter font-mono ${suggestion ? displayColor : stats.statusColor}`}>
-                          {displayScore}
-                        </span>
-                        <span className="text-[8px] font-bold text-slate-500">/10</span>
-                      </div>
-                    );
-                  })()}
+                  <h4 className="text-[7.5px] font-bold text-slate-400 uppercase tracking-widest">Total Time (7D)</h4>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className="text-base font-black italic tracking-tighter text-white font-mono">
+                      {stats.total7DayTime}
+                    </span>
+                    <span className="text-[8px] font-black text-slate-500 uppercase tracking-wider">h</span>
+                  </div>
                 </div>
                 
                 {/* 7-Day Load */}
@@ -903,6 +908,7 @@ const App: React.FC = () => {
                  onClose={() => setSelectedActivity(null)} 
                  userGoal={userGoal} 
                  ftp={ftp || undefined}
+                 allActivities={activities || undefined}
                />
              ) : (
                <div className="flex flex-col pt-1 pb-2 space-y-4">
@@ -1423,13 +1429,17 @@ const App: React.FC = () => {
                  <div className="space-y-5 py-1 max-h-[220px] overflow-y-auto custom-scrollbar px-1">
                    {currentWorkout.workout_steps && currentWorkout.workout_steps.length > 0 ? (
                       currentWorkout.workout_steps.map((step, sIdx) => (
-                        <div key={sIdx} className="flex items-center justify-between gap-4 text-[14px] font-bold group">
-                          <div className="flex items-center gap-3 text-slate-300">
-                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] flex-shrink-0" />
-                            <span className="truncate">{step.duration}m {step.label}</span>
+                        <div key={sIdx} className="flex items-start justify-between gap-4 text-[14px] font-bold group">
+                          <div className="flex items-start gap-3 text-slate-300 min-w-0 flex-1">
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] mt-1.5 flex-shrink-0" />
+                            <div className="min-w-0 flex-1 text-left">
+                              <StepLabel label={step.label} />
+                            </div>
                           </div>
                           {step.target_watts && (
-                            <span className="text-emerald-400 font-extrabold italic tabular-nums flex-shrink-0">{step.target_watts}W</span>
+                            <span className="text-emerald-400 font-extrabold uppercase tracking-wider text-[10px] bg-emerald-500/10 px-2 py-0.5 rounded flex-shrink-0 italic">
+                              {getStepPhaseLabel(sIdx, currentWorkout.workout_steps?.length || 0, step.label)}
+                            </span>
                           )}
                         </div>
                       ))
@@ -1570,13 +1580,17 @@ const App: React.FC = () => {
                  <div className="space-y-4 py-1 max-h-[180px] overflow-y-auto custom-scrollbar px-1">
                    {currentWorkout?.workout_steps && currentWorkout.workout_steps.length > 0 ? (
                       currentWorkout.workout_steps.map((step, sIdx) => (
-                        <div key={sIdx} className="flex items-center justify-between gap-4 text-[13px] font-bold group">
-                          <div className="flex items-center gap-2.5 text-slate-300">
-                            <div className="w-1 h-1 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] flex-shrink-0" />
-                            <span className="truncate">{step.duration}m {step.label}</span>
+                        <div key={sIdx} className="flex items-start justify-between gap-4 text-[13px] font-bold group">
+                          <div className="flex items-start gap-2.5 text-slate-300 min-w-0 flex-1">
+                            <div className="w-1 h-1 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] mt-1.5 flex-shrink-0" />
+                            <div className="min-w-0 flex-1 text-left">
+                              <StepLabel label={step.label} />
+                            </div>
                           </div>
                           {step.target_watts && (
-                            <span className="text-emerald-400 font-extrabold italic tabular-nums flex-shrink-0">{step.target_watts}W</span>
+                            <span className="text-emerald-400 font-extrabold uppercase tracking-wider text-[9px] bg-emerald-500/10 px-2 py-0.5 rounded flex-shrink-0 italic">
+                              {getStepPhaseLabel(sIdx, currentWorkout.workout_steps?.length || 0, step.label)}
+                            </span>
                           )}
                         </div>
                       ))
@@ -1613,6 +1627,7 @@ const App: React.FC = () => {
           powerCurves={powerCurves}
           planContext={planContext || undefined}
           weeklyBriefing={weeklyBriefing}
+          weeklyBriefingError={weeklyBriefingError}
           loadingWeeklyBriefing={loadingWeeklyBriefing}
           onResetPlanContext={() => {
             setPlanContext(null);
