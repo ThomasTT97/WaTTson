@@ -15,6 +15,7 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
   onClick,
   isToday = false
 }) => {
+  if (!day) return null;
   const getDayAbbr = (dayStr: string) => {
     const lower = dayStr.toLowerCase();
     if (lower.includes('mon')) return 'MON';

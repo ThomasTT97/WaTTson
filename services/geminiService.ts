@@ -9,7 +9,8 @@ import {
   WeeklyBriefing, 
   Wellness,
   AnnualPowerCurve,
-  RecoveryAdvice
+  RecoveryAdvice,
+  TrainingMode
 } from "../types";
 import {
   getRideFeedbackPrompt,
@@ -310,7 +311,8 @@ export const getWeeklyBriefing = async (
   planContext?: string,
   force?: boolean,
   planMode: 'power' | 'hr' = 'power',
-  triathlonMode?: boolean
+  trainingMode: TrainingMode = 'cycling',
+  weekIndex?: number
 ): Promise<WeeklyBriefing> => {
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -329,7 +331,7 @@ export const getWeeklyBriefing = async (
     return Math.abs(hash).toString(36);
   };
 
-  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${planMode}_${triathlonMode ? 'tri' : 'cyc'}_${contextHash ? safeHash(contextHash) : 'no-ctx'}`;
+  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${planMode}_${trainingMode}_${weekIndex || 'all'}_${contextHash ? safeHash(contextHash) : 'no-ctx'}`;
   
   if (!force) {
     const cached = getCache(cacheKey);
@@ -356,9 +358,21 @@ export const getWeeklyBriefing = async (
   // Compute Week 1 length based on start date (tempDate)
   const startDayOfWeek = tempDate.getDay() === 0 ? 7 : tempDate.getDay();
   const week1Length = 8 - startDayOfWeek;
-  const totalDays = week1Length + 21; // Week 1 (shorter) + 3 full weeks (21 days)
+  
+  // Define ranges for weeks
+  const weekRanges = [
+    { start: 0, end: week1Length },
+    { start: week1Length, end: week1Length + 7 },
+    { start: week1Length + 7, end: week1Length + 14 },
+    { start: week1Length + 14, end: week1Length + 21 }
+  ];
 
-  for (let i = 0; i < totalDays; i++) {
+  const range = weekIndex ? weekRanges[weekIndex - 1] : { start: 0, end: week1Length + 21 };
+  
+  // Shift tempDate to the start of the requested range
+  tempDate.setDate(tempDate.getDate() + range.start);
+
+  for (let i = range.start; i < range.end; i++) {
     const weekday = tempDate.toLocaleDateString('en-US', { weekday: 'short' });
     const monthDay = tempDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     dayNames.push(`${weekday} (${monthDay})`);
@@ -399,7 +413,7 @@ export const getWeeklyBriefing = async (
     ftp,
     hasPowerOnMostRides,
     hrStatsText,
-    triathlonMode
+    trainingMode
   });
 
   const response = await callGemini({

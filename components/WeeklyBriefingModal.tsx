@@ -17,7 +17,9 @@ interface WeeklyBriefingModalProps {
   planContext?: string;
   weeklyBriefing: WeeklyBriefing | null;
   weeklyBriefingError?: string | null;
-  loadingWeeklyBriefing: boolean;
+  loadingWeeks: { [week: number]: boolean };
+  generatedWeeks: number[];
+  onFetchWeek: (weekIndex: number) => void;
   planMode?: 'power' | 'hr';
   onPlanModeChange?: (mode: 'power' | 'hr') => void;
   onResetPlanContext?: () => void;
@@ -31,7 +33,7 @@ const toLocalDateStr = (d: Date) => {
 
 export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({ 
   activities, wellness, userGoal, onClose, todaySuggestion, creds, ftp, powerCurves, planContext, onResetPlanContext, onUpdatePlanContext,
-  weeklyBriefing, weeklyBriefingError, loadingWeeklyBriefing, onForceRefresh,
+  weeklyBriefing, weeklyBriefingError, loadingWeeks, generatedWeeks, onFetchWeek, onForceRefresh,
   planMode = 'power', onPlanModeChange
 }) => {
   const [selectedDay, setSelectedDay] = useState<WeeklyBriefing['days'][0] | null>(null);
@@ -40,22 +42,6 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
   const [activeWeek, setActiveWeek] = useState<1 | 2 | 3 | 4>(1);
   const [promptInput, setPromptInput] = useState('');
   const [showChangePlanPopup, setShowChangePlanPopup] = useState(false);
-  const [loadingProgress, setLoadingProgress] = useState(0);
-
-  // Simulated progress bar
-  React.useEffect(() => {
-    if (loadingWeeklyBriefing) {
-      setLoadingProgress(0);
-      const interval = setInterval(() => {
-        setLoadingProgress(prev => (prev < 99 ? prev + 1 : prev));
-      }, 100);
-      return () => clearInterval(interval);
-    } else {
-      setLoadingProgress(100);
-      const timeout = setTimeout(() => setLoadingProgress(0), 500);
-      return () => clearTimeout(timeout);
-    }
-  }, [loadingWeeklyBriefing]);
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isScrollingToRef = useRef<boolean>(false);
@@ -234,11 +220,11 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
         <div className="flex justify-end gap-3 items-center">
           <button 
             onClick={onForceRefresh}
-            disabled={loadingWeeklyBriefing}
+            disabled={Object.values(loadingWeeks).some(Boolean)}
             className="w-10 h-10 rounded-xl glass-card flex items-center justify-center text-emerald-400 border border-emerald-500/20 active:scale-95 transition-all shadow-[0_0_15px_rgba(34,211,238,0.15)] disabled:opacity-50"
             title="Refresh Plan"
           >
-            <RefreshCw size={16} className={loadingWeeklyBriefing ? "animate-spin text-emerald-400" : ""} />
+            <RefreshCw size={16} className={Object.values(loadingWeeks).some(Boolean) ? "animate-spin text-emerald-400" : ""} />
           </button>
           
           <button 
@@ -308,7 +294,13 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
           {([1, 2, 3, 4] as const).map((wk) => (
             <button
               key={wk}
-              onClick={() => scrollToWeekSection(wk)}
+              onClick={() => {
+                if (!generatedWeeks.includes(wk)) {
+                  onFetchWeek(wk);
+                } else {
+                  scrollToWeekSection(wk);
+                }
+              }}
               className={`py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all text-center ${
                 activeWeek === wk
                   ? 'bg-emerald-500 text-slate-950 shadow'
@@ -328,24 +320,20 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 flex flex-col gap-5 relative scroll-smooth"
       >
-        {loadingWeeklyBriefing ? (
-          <div className="flex-1 flex flex-col items-center justify-center space-y-6 py-12 px-8 w-full">
-            <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-white/5">
-              <div 
-                className="bg-emerald-500 h-full transition-all duration-300 ease-out shadow-[0_0_10px_rgba(16,185,129,0.5)]" 
-                style={{ width: `${loadingProgress}%` }}
-              />
-            </div>
-            <div className="flex flex-col items-center gap-1">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Calculating Trajectory...</p>
-              <p className="text-[10px] font-bold text-emerald-400">{Math.round(loadingProgress)}%</p>
-            </div>
-          </div>
-        ) : weeklyBriefing ? (
+        {Object.values(loadingWeeks).some(Boolean) || weeklyBriefing ? (
           <div className="flex flex-col gap-6 animate-in fade-in duration-500 pb-12">
             
-            {/* continuous 4-week render */}
             {([1, 2, 3, 4] as const).map((wk) => {
+              if (loadingWeeks[wk]) {
+                 return (
+                  <div key={wk} className="flex items-center justify-center py-12">
+                    <Loader2 size={24} className="animate-spin text-emerald-500" />
+                  </div>
+                 )
+              }
+              if (!generatedWeeks.includes(wk)) {
+                return null;
+              }
               const weekDays = getDaysForWeek(wk);
               return (
                 <div 

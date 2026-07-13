@@ -8,7 +8,8 @@ import {
   Wellness,
   UserProfileAnalysis,
   AnnualPowerCurve,
-  WeeklyBriefing
+  WeeklyBriefing,
+  TrainingMode
 } from './types';
 import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile, getAnnualPowerCurves, uploadWorkout } from './services/intervalsService';
 import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile } from './services/geminiService';
@@ -161,11 +162,14 @@ const App: React.FC = () => {
   const [weeklyBriefing, setWeeklyBriefing] = useState<WeeklyBriefing | null>(null);
   const [weeklyBriefingError, setWeeklyBriefingError] = useState<string | null>(null);
   const [loadingWeeklyBriefing, setLoadingWeeklyBriefing] = useState(false);
+  const [generatedWeeks, setGeneratedWeeks] = useState<number[]>([]);
+  const [loadingWeeks, setLoadingWeeks] = useState<{ [week: number]: boolean }>({});
+
   const [planMode, setPlanMode] = useState<'power' | 'hr'>(() => {
     return (localStorage.getItem('wattson_plan_mode') as 'power' | 'hr') || 'power';
   });
-  const [triathlonMode, setTriathlonMode] = useState<boolean>(() => {
-    return localStorage.getItem('wattson_triathlon_mode') === 'true';
+  const [trainingMode, setTrainingMode] = useState<TrainingMode>(() => {
+    return (localStorage.getItem('wattson_training_mode') as TrainingMode) || 'cycling';
   });
   
   const [suggestion, setSuggestion] = useState<DailySuggestion | null>(() => {
@@ -364,7 +368,7 @@ const App: React.FC = () => {
     
     const targetStr = hasRideToday ? tomorrowStr : todayStr;
     const shouldFetch = !loadingSuggestion && 
-                        (!suggestion || suggestion.date !== targetStr || (suggestion.primary.intensity !== 'Rest' && !suggestion.primary.workout_steps));
+                        (!suggestion || suggestion.date !== targetStr || (suggestion.primary?.intensity !== 'Rest' && !suggestion.primary?.workout_steps));
 
     if (shouldFetch) {
       const fetchNewSuggestion = async () => {
@@ -383,9 +387,14 @@ const App: React.FC = () => {
     }
   }, [activities, userGoal, hasRideToday]);
 
-  const fetchWeeklyBriefingData = useCallback(async (customPlanContext?: string, force = false, mode?: 'power' | 'hr', triMode?: boolean) => {
+  const fetchWeeklyBriefingData = useCallback(async (customPlanContext?: string, force = false, mode?: 'power' | 'hr', trainingModeArg?: TrainingMode, weekIndex?: number) => {
     if (!activities || activities.length === 0) return;
-    setLoadingWeeklyBriefing(true);
+    
+    if (weekIndex) {
+      setLoadingWeeks(prev => ({ ...prev, [weekIndex]: true }));
+    } else {
+      setLoadingWeeklyBriefing(true);
+    }
     setWeeklyBriefingError(null);
     try {
       const now = new Date();
@@ -398,7 +407,7 @@ const App: React.FC = () => {
       const tomorrowName = tomorrow.toLocaleDateString('en-US', { weekday: 'long' });
 
       const todaySuggestionText = suggestion 
-        ? `The primary suggested workout is: "${suggestion.primary.title}" (${suggestion.primary.duration_minutes} min, ${suggestion.primary.intensity} intensity). `
+        ? `The primary suggested workout is: "${suggestion.primary?.title}" (${suggestion.primary?.duration_minutes} min, ${suggestion.primary?.intensity} intensity). `
         : "";
         
       let startContext = `CURRENT DATE: ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}. `;
@@ -410,21 +419,56 @@ const App: React.FC = () => {
 
       const ctxToUse = customPlanContext !== undefined ? customPlanContext : (planContext || undefined);
       const activeMode = mode || planMode;
-      const activeTriMode = triMode !== undefined ? triMode : triathlonMode;
+      const activeTrainingMode = trainingModeArg || trainingMode;
 
-      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode, activeTriMode);
-      setWeeklyBriefing(data);
+      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode, activeTrainingMode, weekIndex);
+      setWeeklyBriefing(prev => {
+        if (!prev) return data;
+        
+        if (weekIndex) {
+          const now = new Date();
+          const startDayOfWeek = now.getDay() === 0 ? 7 : now.getDay();
+          const week1Length = 8 - startDayOfWeek;
+
+          const weekRanges = [
+            { start: 0, end: week1Length },
+            { start: week1Length, end: week1Length + 7 },
+            { start: week1Length + 7, end: week1Length + 14 },
+            { start: week1Length + 14, end: week1Length + 21 }
+          ];
+
+          const range = weekRanges[weekIndex - 1];
+          
+          // Reconstruct the days array: [days before week] + [new week days] + [days after week]
+          const daysBefore = prev.days.slice(0, range.start);
+          const daysAfter = prev.days.slice(range.start + (weekRanges[weekIndex - 1].end - weekRanges[weekIndex - 1].start));
+          
+          const newDays = [...daysBefore, ...data.days, ...daysAfter];
+          
+          return { ...prev, days: newDays };
+        }
+        return data;
+      });
+      if (weekIndex) {
+        setGeneratedWeeks(prev => [...new Set([...prev, weekIndex])]);
+      } else {
+        setGeneratedWeeks([1, 2, 3, 4]);
+      }
     } catch (err: any) {
       console.error("Failed to load weekly briefing:", err);
       setWeeklyBriefingError(err.message || String(err));
     } finally {
-      setLoadingWeeklyBriefing(false);
+      if (weekIndex) {
+        setLoadingWeeks(prev => ({ ...prev, [weekIndex]: false }));
+      } else {
+        setLoadingWeeklyBriefing(false);
+      }
     }
-  }, [activities, wellnessData, userGoal, suggestion, ftp, powerCurves, planContext, planMode, triathlonMode]);
+  }, [activities, wellnessData, userGoal, suggestion, ftp, powerCurves, planContext, planMode, trainingMode]);
 
   useEffect(() => {
     if (activities && activities.length > 0) {
-      fetchWeeklyBriefingData(undefined, false);
+      fetchWeeklyBriefingData(undefined, false, undefined, undefined, 1);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activities]);
@@ -713,7 +757,7 @@ const App: React.FC = () => {
     const daysWithDates = weeklyBriefing.days.map((day, idx) => {
       const targetDate = new Date(today);
       targetDate.setDate(today.getDate() + idx + offset);
-      const isRest = day.intensity === 'Rest' || day.focus.toLowerCase().includes('rest') || day.load_target === 0;
+      const isRest = day?.intensity === 'Rest' || day?.focus.toLowerCase().includes('rest') || day?.load_target === 0;
       return {
         day,
         date: targetDate,
@@ -785,22 +829,22 @@ const App: React.FC = () => {
             </div>
           )}
           <input 
-            type="password" 
-            placeholder="Intervals.icu API Key" 
-            className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-base outline-none focus:border-emerald-500/50 transition-colors" 
-            value={formKey}
-            onChange={(e) => {
-              setFormKey(e.target.value);
-              if (syncError) setSyncError(null);
-            }}
-          />
-          <input 
             type="text" 
             placeholder="Athlete ID (e.g. i12345)" 
             className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-base outline-none focus:border-emerald-500/50 transition-colors" 
             value={formId}
             onChange={(e) => {
               setFormId(e.target.value);
+              if (syncError) setSyncError(null);
+            }}
+          />
+          <input 
+            type="password" 
+            placeholder="Intervals.icu API Key" 
+            className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white text-base outline-none focus:border-emerald-500/50 transition-colors" 
+            value={formKey}
+            onChange={(e) => {
+              setFormKey(e.target.value);
               if (syncError) setSyncError(null);
             }}
           />
@@ -1441,35 +1485,46 @@ const App: React.FC = () => {
                      </button>
                    
 
-                      <div className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between border border-blue-500/10 shadow-sm transition-all hover:border-blue-500/20">
-                        <div className="flex items-center gap-4">
+                      <div className="glass-card p-4 rounded-[1.3rem] border border-blue-500/10 shadow-sm transition-all hover:border-blue-500/20">
+                        <div className="flex items-center gap-4 mb-4">
                           <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400">
                             <Trophy size={20} />
                           </div>
                           <div className="text-left">
-                            <p className="text-[11px] font-black text-white uppercase tracking-widest">Triathlon Mode</p>
+                            <p className="text-[11px] font-black text-white uppercase tracking-widest">Training Mode</p>
                             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
-                              {triathlonMode ? 'Enabled (Run & Swim)' : 'Disabled (Cycling Only)'}
+                              {trainingMode === 'cycling' ? 'Cycling Only' : 
+                               trainingMode === 'triathlon' ? 'Triathlon (Swim, Cycle, Run)' : 'Running Only'}
                             </p>
                           </div>
                         </div>
-                        <button
-                          onClick={() => {
-                            const newMode = !triathlonMode;
-                            setTriathlonMode(newMode);
-                            localStorage.setItem('wattson_triathlon_mode', newMode ? 'true' : 'false');
-                            fetchWeeklyBriefingData(undefined, true, undefined, newMode);
-                          }}
-                          className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 focus:outline-none flex items-center ${
-                            triathlonMode ? 'bg-emerald-500 justify-end' : 'bg-slate-800 justify-start'
-                          }`}
-                        >
+                        
+                        <div className="relative flex bg-slate-950 rounded-xl p-1 w-full border border-white/5">
                           <motion.div 
-                            layout 
-                            className="w-4 h-4 rounded-full bg-slate-950 shadow-md"
+                            className="absolute top-1 bottom-1 rounded-lg bg-emerald-500 shadow-md"
+                            initial={false}
+                            animate={{
+                              x: trainingMode === 'cycling' ? '0%' : trainingMode === 'triathlon' ? '100%' : '200%',
+                            }}
+                            style={{ width: 'calc(33.33% - 4px)' }}
                             transition={{ type: 'spring', stiffness: 500, damping: 30 }}
                           />
-                        </button>
+                          {(['cycling', 'triathlon', 'running'] as TrainingMode[]).map((mode) => (
+                            <button
+                              key={mode}
+                              onClick={() => {
+                                setTrainingMode(mode);
+                                localStorage.setItem('wattson_training_mode', mode);
+                                fetchWeeklyBriefingData(undefined, true, undefined, mode);
+                              }}
+                              className={`flex-1 relative z-10 py-2 text-[10px] font-black uppercase tracking-widest transition-colors duration-300 ${
+                                trainingMode === mode ? 'text-slate-950' : 'text-slate-400'
+                              }`}
+                            >
+                              {mode === 'cycling' ? 'CYC' : mode === 'triathlon' ? 'TRI' : 'RUN'}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
                    
@@ -2019,7 +2074,9 @@ const App: React.FC = () => {
           planContext={planContext || undefined}
           weeklyBriefing={weeklyBriefing}
           weeklyBriefingError={weeklyBriefingError}
-          loadingWeeklyBriefing={loadingWeeklyBriefing}
+          loadingWeeks={loadingWeeks}
+          generatedWeeks={generatedWeeks}
+          onFetchWeek={(wk) => fetchWeeklyBriefingData(undefined, false, planMode, trainingMode, wk)}
           planMode={planMode}
           onPlanModeChange={(newMode) => {
             setPlanMode(newMode);

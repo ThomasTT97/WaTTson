@@ -1,4 +1,6 @@
 
+export type TrainingMode = 'cycling' | 'triathlon' | 'running';
+
 export interface Activity {
   id: string;
   name: string;

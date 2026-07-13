@@ -3,6 +3,8 @@
  * This file provides a clear overview of what is asked of the Gemini models.
  */
 
+import { TrainingMode } from '../types';
+
 interface RideFeedbackParams {
   activityName: string;
   tss: number;
@@ -38,7 +40,7 @@ interface WeeklyBriefingParams {
   ftp?: number;
   hasPowerOnMostRides?: boolean;
   hrStatsText?: string;
-  triathlonMode?: boolean;
+  trainingMode: TrainingMode;
 }
 
 interface ChatMessageParams {
@@ -147,7 +149,7 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
     : `${ftpText}
        For the 'label', use a descriptive format: e.g. "5 min 180w", or "3 times: 5 min 300w + 2 min 180w". Always use "min" consistently!`;
 
-  const triathlonGuideline = p.triathlonMode
+   const triathlonGuideline = p.trainingMode === 'triathlon'
     ? `TRIATHLON MODE ENABLED (RUNNING & SWIMMING SESSIONS GENERATION REQUIRED):
        The athlete is in Triathlon training. You MUST generate a balanced training plan containing a mix of Cycling (2-3 sessions per week), Running (2 sessions per week), and Swimming (1-2 sessions per week).
        1. Interperse run and swim sessions logically among ride sessions to allow proper recovery.
@@ -155,7 +157,10 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
        3. In 'workout_steps' for Runs and Swims, set 'target_watts' to 0 and 'target_pct' to 0.
        4. In 'workout_steps' for Runs, specify duration/intervals in the 'label' with focus on pace, reps, or heart rate (e.g., '10 min warm-up jog', '4x800m at 5k pace with 2 min jog recovery', '15 min cool-down').
        5. In 'workout_steps' for Swims, specify reps, distance, and intensity in the 'label' (e.g., '200m easy warm-up', '10x50m moderate interval pace with 15s rest', '100m easy swim cool-down').`
-    : "";
+    : p.trainingMode === 'running' 
+      ? `RUNNING ONLY MODE ENABLED:
+         Generate a training plan focusing exclusively on running sessions. No cycling or swimming.`
+      : "";
 
   return `Plan ${totalDays} days training. Goal: ${p.userGoal || 'Endurance'}. Physiology: ${p.stats}. ${p.startContext || ''}. 
     ${p.planContext || ''}
@@ -168,9 +173,10 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
     4. Suggest "workout_steps" for ALL workouts EXCEPT Rest days.
     5. INTERVAL TRAINING BIAS: Never recommend continuous, uninterrupted high-intensity blocks (Sweet Spot, Threshold, VO2Max, i.e., >85% FTP) exceeding 15-20 minutes. It is extremely unrealistic to do 30 or 45 mins of continuous solid work at threshold or FTP. You MUST structure these as intervals with recovery periods! (e.g., Warmup, Interval 1, Recovery, Interval 2, Cooldown).
     6. "workout_steps" max 6 steps to accommodate warmups, interval sets, and cooldowns: duration (number of minutes), target_watts, target_pct (decimal representation of FTP percentage, e.g., 0.72), and label.
-    7. ${hrGuideline}
-    8. ${triathlonGuideline}
-    9. Return JSON with phase, focus, outlook_summary, days[].`;
+    7. COMMUTE DAYS: If the user indicates they have a commute on a specific day, you ARE ALLOWED to schedule TWO separate workout sessions for that day (e.g. "Commute to work" and "Commute from work"). Return these as two separate day objects in the "days" array with identical date strings.
+    8. ${hrGuideline}
+    9. ${triathlonGuideline}
+    10. Return JSON with phase, focus, outlook_summary, days[].`;
 };
 
 export const getChatMessagePrompt = (p: ChatMessageParams): string => {

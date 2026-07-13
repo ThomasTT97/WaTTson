@@ -17,6 +17,9 @@ const formatLabel = (str: string): string => {
   // and handle things like "5 min 150w recovery" -> "5 min 150w"
   cleaned = cleaned.replace(/\s*\brecovery\b/gi, "").trim();
   
+  // Remove "Warmup:", "Cooldown:", "Intervals:" labels
+  cleaned = cleaned.replace(/\b(warmup|cooldown|intervals):\s*/gi, "").trim();
+
   // Ensure we collapse multiple spaces
   cleaned = cleaned.replace(/\s+/g, " ");
 
@@ -95,19 +98,7 @@ export const StepLabel: React.FC<StepLabelProps> = ({ label, target_pct, target_
 };
 
 export const getStepPhaseLabel = (sIdx: number, totalSteps: number, label: string): string => {
-  if (totalSteps <= 1) {
-    const isInterval = /times|x:|\+|interval/i.test(label);
-    return isInterval ? "Intervals" : "Main set";
-  }
-  if (sIdx === 0) {
-    return "Warm up";
-  }
-  if (sIdx === totalSteps - 1) {
-    return "Cool down";
-  }
-  // Middle steps
-  const isInterval = /times|x:|\+|interval/i.test(label);
-  return isInterval ? "Intervals" : "Main set";
+  return "";
 };
 
 export interface GroupedStep {
@@ -286,7 +277,7 @@ export const GroupedWorkoutStepsList: React.FC<GroupedWorkoutStepsListProps> = (
                         </div>
                       </div>
                       {step.target_watts && (
-                        <span className="text-emerald-500/60 font-extrabold uppercase tracking-wider text-[8px] bg-emerald-500/5 px-1.5 py-0.5 rounded flex-shrink-0 italic group-hover/item:text-emerald-400 group-hover/item:bg-emerald-500/10 transition-colors">
+                        <span className="text-emerald-500/60 font-extrabold uppercase tracking-wider text-[8px] bg-emerald-500/5 px-1.5 py-0.5 rounded flex-shrink-0 italic group-hover/item:text-emerald-400 group-hover/item:bg-emerald-500/10 transition-colors hidden">
                           Interval
                         </span>
                       )}
@@ -317,7 +308,7 @@ export const GroupedWorkoutStepsList: React.FC<GroupedWorkoutStepsListProps> = (
                 </div>
               </div>
               {step.target_watts && (
-                <span className="text-emerald-400 font-extrabold uppercase tracking-wider text-[9px] bg-emerald-500/10 px-2 py-0.5 rounded flex-shrink-0 italic">
+                <span className="text-emerald-400 font-extrabold uppercase tracking-wider text-[9px] bg-emerald-500/10 px-2 py-0.5 rounded flex-shrink-0 italic hidden">
                   {getStepPhaseLabel(absoluteIndex, steps.length, step.label)}
                 </span>
               )}
