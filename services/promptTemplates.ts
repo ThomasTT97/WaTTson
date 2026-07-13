@@ -38,6 +38,7 @@ interface WeeklyBriefingParams {
   ftp?: number;
   hasPowerOnMostRides?: boolean;
   hrStatsText?: string;
+  triathlonMode?: boolean;
 }
 
 interface ChatMessageParams {
@@ -89,6 +90,7 @@ export const getRideFeedbackPrompt = (p: RideFeedbackParams): string => {
     Return JSON with:
     summary: A 1-sentence punchy coaching summary.
     goal_contribution: A clear explanation of how this session contributes to ${p.userGoal}.
+    one_thing_to_improve: Exactly 1 action-oriented, helpful conclusion of something they could do better on their next training session based on this ride's data (e.g. "Focus on keeping your cadence above 85 rpm on climbs", "Make sure to fuel with 60g carbs per hour for rides over 90 min", "Control your heart rate during recovery intervals to maximize adaptation").
     workout_steps: If a planned workout exists, provide the structured steps intended for this workout. 
       Steps should include duration (mins), target_watts (W), and label.
       ${hrGuideline}`;
@@ -130,31 +132,45 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
   const isHrBased = p.hasPowerOnMostRides === false;
 
   const ftpText = p.ftp 
-    ? `The athlete's FTP is ${p.ftp}W. You MUST scale all recommended workout step power levels (target_watts) and interval details in labels precisely as percentages of ${p.ftp}W. For example: Easy/Recovery should be 50-60% FTP (~${Math.round(p.ftp * 0.55)}W), Zone 2 Aerobic should be 60-75% FTP (~${Math.round(p.ftp * 0.68)}W), Tempo should be 75-90% FTP (~${Math.round(p.ftp * 0.82)}W), Threshold should be 90-105% FTP (~${Math.round(p.ftp * 0.98)}W), and Intervals/VO2max should be >105% FTP (~${Math.round(p.ftp * 1.2)}W).`
-    : `The athlete's FTP is not specified. Assume a standard baseline FTP of 250W and scale all power/wattages relative to that baseline.`;
+    ? `The athlete's FTP is ${p.ftp}W. You MUST scale all recommended workout step power levels (target_watts) and interval details in labels precisely as percentages of ${p.ftp}W. For example: Easy/Recovery should be 50-60% FTP (~${Math.round(p.ftp * 0.55)}W), Zone 2 Aerobic should be 60-75% FTP (~${Math.round(p.ftp * 0.68)}W), Tempo should be 75-90% FTP (~${Math.round(p.ftp * 0.82)}W), Threshold should be 90-105% FTP (~${Math.round(p.ftp * 0.98)}W), and Intervals/VO2max should be >105% FTP (~${Math.round(p.ftp * 1.2)}W).
+       In "workout_steps", ALWAYS set "target_pct" to the target intensity as a decimal of FTP (e.g., 0.55, 0.68, 0.82, 0.98, 1.20).`
+    : `The athlete's FTP is not specified. Assume a standard baseline FTP of 250W. Scale power/wattages relative to that baseline. Set "target_pct" as decimal of FTP (e.g., 0.70).`;
 
   const hrGuideline = isHrBased
     ? `CRITICAL - ATHLETE HAS NO POWER METER (HR-BASED INTENSITIES & TSS):
-       The athlete does not have power data (watts) on most of their rides. Therefore, you MUST base all recommended intensities and stress scores (TSS / load targets) on the available heart rate (HR) data.
-       1. Estimate all Training Stress Scores (TSS / load targets) using heart rate-based training stress score (hrTSS / HRSS) instead of power (TSS).
-       2. The 'label' for each workout step MUST specify HR-focused intensity targets or HR zones (e.g. "15 min Zone 2 HR (135-145 bpm)" or "10 min Threshold HR (155-165 bpm)") instead of power (e.g. NO "190w"). 
-       3. Always use "min" for minutes consistently (e.g. "15 min", "5 min").
-       4. Fill in 'target_watts' as a fallback estimated reference, but make sure the label is completely HR-focused.
+       The athlete does not have power data (watts) on most of their rides. Base all recommended intensities on heart rate (HR) data.
+       1. Estimate stress scores using hrTSS instead of power TSS.
+       2. The 'label' for each step MUST specify HR zones (e.g. "15 min Zone 2 HR (135-145 bpm)" or "10 min Threshold HR (155-165 bpm)"). No watts in labels.
+       3. Always use "min" for minutes consistently.
+       4. Fill in 'target_watts' as an estimated reference, and set 'target_pct' to 0.
        ${p.hrStatsText || ''}`
     : `${ftpText}
-       For the 'label', use a descriptive format: for stable rides e.g. "5 min 180w", for intervals e.g. "3 times: 5 min 300w + 2 min 180w". Always use "min" for minutes consistently!`;
+       For the 'label', use a descriptive format: e.g. "5 min 180w", or "3 times: 5 min 300w + 2 min 180w". Always use "min" consistently!`;
+
+  const triathlonGuideline = p.triathlonMode
+    ? `TRIATHLON MODE ENABLED (RUNNING & SWIMMING SESSIONS GENERATION REQUIRED):
+       The athlete is in Triathlon training. You MUST generate a balanced training plan containing a mix of Cycling (2-3 sessions per week), Running (2 sessions per week), and Swimming (1-2 sessions per week).
+       1. Interperse run and swim sessions logically among ride sessions to allow proper recovery.
+       2. The 'focus' and 'why' fields for runs and swims must clearly state they are Run/Swim workouts (e.g. 'focus': 'Interval Run', 'Tempo Run', 'Aerobic Swim Technique', 'Threshold Swim').
+       3. In 'workout_steps' for Runs and Swims, set 'target_watts' to 0 and 'target_pct' to 0.
+       4. In 'workout_steps' for Runs, specify duration/intervals in the 'label' with focus on pace, reps, or heart rate (e.g., '10 min warm-up jog', '4x800m at 5k pace with 2 min jog recovery', '15 min cool-down').
+       5. In 'workout_steps' for Swims, specify reps, distance, and intensity in the 'label' (e.g., '200m easy warm-up', '10x50m moderate interval pace with 15s rest', '100m easy swim cool-down').`
+    : "";
 
   return `Plan ${totalDays} days training. Goal: ${p.userGoal || 'Endurance'}. Physiology: ${p.stats}. ${p.startContext || ''}. 
     ${p.planContext || ''}
     ${p.pcCtx}
     
-    CRITICAL:
+    CRITICAL PERFORMANCE RULES FOR HIGH-SPEED GENERATION AND REALISTIC COACHING:
     1. Plan exactly ${totalDays} days: ${p.dayNames.join(', ')}.
-    2. "why" < 12 words.
-    3. Suggest "workout_steps" for ALL workouts EXCEPT Rest days.
-    4. "workout_steps" max 3 steps: duration(m), target_watts(W), label.
-    5. ${hrGuideline}
-    6. Return JSON with phase, focus, outlook_summary, days[].`;
+    2. "why" MUST be extremely concise, less than 6 words (e.g. "Active recovery spin" or "VO2 Max aerobic development").
+    3. "outlook_summary" MUST be less than 25 words. Keep it ultra-concise and high density.
+    4. Suggest "workout_steps" for ALL workouts EXCEPT Rest days.
+    5. INTERVAL TRAINING BIAS: Never recommend continuous, uninterrupted high-intensity blocks (Sweet Spot, Threshold, VO2Max, i.e., >85% FTP) exceeding 15-20 minutes. It is extremely unrealistic to do 30 or 45 mins of continuous solid work at threshold or FTP. You MUST structure these as intervals with recovery periods! (e.g., Warmup, Interval 1, Recovery, Interval 2, Cooldown).
+    6. "workout_steps" max 6 steps to accommodate warmups, interval sets, and cooldowns: duration (number of minutes), target_watts, target_pct (decimal representation of FTP percentage, e.g., 0.72), and label.
+    7. ${hrGuideline}
+    8. ${triathlonGuideline}
+    9. Return JSON with phase, focus, outlook_summary, days[].`;
 };
 
 export const getChatMessagePrompt = (p: ChatMessageParams): string => {
@@ -182,7 +198,7 @@ export const getChatMessagePrompt = (p: ChatMessageParams): string => {
 };
 
 export const getUserProfilePrompt = (p: UserProfileParams): string => {
-  return `You are waTTson, an elite cycling coach. Analyze this athlete's data and create a profile.
+  return `You are waTTson, an elite cycling coach. Analyze this athlete's data and create an incredibly rich, personalized profile.
     Goal: ${p.userGoal}
     
     Athlete Annual Power Bests:
@@ -192,11 +208,15 @@ export const getUserProfilePrompt = (p: UserProfileParams): string => {
     ${p.historySummary}
     
     Return JSON with:
-    athlete_type: e.g. "Sprint Specialist", "Endurance Diesel", etc.
-    strengths: array of 2-3 strings describing what they are good at.
-    areas_for_improvement: array of 2-3 strings.
-    training_response: String explaining how this user reacts to past training methods (e.g. "You adapt well to high volume but struggle with back-to-back VO2max sessions").
-    effective_methods: array of 2 strings of methods that worked well (e.g. "Long Z2 rides", "Polarized training").
-    ineffective_methods: array of 2 strings of methods that caused stagnation or excessive fatigue.
-    recommended_focus: 1-sentence recommendation going forward.`;
+    athlete_type: e.g. "Sprint Specialist", "Endurance Diesel / Gran Fondo Rider", "All-Rounder", "Puncheur", etc.
+    strengths: array of 3 descriptive strings outlining precise physiological strengths.
+    areas_for_improvement: array of 3 descriptive strings outlining precise physiological limiters.
+    training_response: String explaining how this user reacts to past training methods.
+    effective_methods: array of 2-3 strings of methods that worked well (e.g. "Long Z2 rides", "Polarized training", "Sweet Spot progression").
+    ineffective_methods: array of 2-3 strings of methods that caused stagnation or excessive fatigue (e.g. "Excessive Zone 3 junk miles", "Back-to-back VO2 max days").
+    recommended_focus: 1-sentence recommendation going forward.
+    rider_story: A compelling 3-4 sentence storytelling narrative explaining their specific rider type, their physiological DNA, and how their recent efforts paint a clear picture of their riding style.
+    effective_training_history: A compelling 3-4 sentence storytelling narrative outlining which types of training have been highly effective in the past, referencing actual patterns or adaptations seen in their power bests or recent ride history.
+    recommended_approach: A detailed 3-4 sentence storytelling narrative presenting the ultimate recommended training approach/philosophy for the future to maximize gains.
+    what_can_be_improved: A deep, supportive 3-4 sentence storytelling narrative about what specifically can be improved, highlighting their limiters and explaining the exact physiological reasoning behind prioritizing these areas.`;
 };

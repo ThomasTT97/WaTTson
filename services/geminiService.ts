@@ -145,7 +145,7 @@ export const getRideFeedback = async (
   ftp?: number,
   allActivities?: Activity[]
 ): Promise<CoachingFeedback> => {
-  const cacheKey = `wattson_feedback_${activity.id}_${userGoal || 'default'}`;
+  const cacheKey = `wattson_feedback_v2_${activity.id}_${userGoal || 'default'}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
@@ -178,6 +178,7 @@ export const getRideFeedback = async (
         properties: {
           summary: { type: Type.STRING },
           goal_contribution: { type: Type.STRING },
+          one_thing_to_improve: { type: Type.STRING },
           workout_steps: {
             type: Type.ARRAY,
             items: {
@@ -191,7 +192,7 @@ export const getRideFeedback = async (
             }
           }
         },
-        required: ['summary', 'goal_contribution']
+        required: ['summary', 'goal_contribution', 'one_thing_to_improve']
       }
     }
   });
@@ -308,7 +309,8 @@ export const getWeeklyBriefing = async (
   powerCurves?: AnnualPowerCurve[],
   planContext?: string,
   force?: boolean,
-  planMode: 'power' | 'hr' = 'power'
+  planMode: 'power' | 'hr' = 'power',
+  triathlonMode?: boolean
 ): Promise<WeeklyBriefing> => {
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -327,7 +329,7 @@ export const getWeeklyBriefing = async (
     return Math.abs(hash).toString(36);
   };
 
-  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${planMode}_${contextHash ? safeHash(contextHash) : 'no-ctx'}`;
+  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${planMode}_${triathlonMode ? 'tri' : 'cyc'}_${contextHash ? safeHash(contextHash) : 'no-ctx'}`;
   
   if (!force) {
     const cached = getCache(cacheKey);
@@ -396,14 +398,15 @@ export const getWeeklyBriefing = async (
     dayNames,
     ftp,
     hasPowerOnMostRides,
-    hrStatsText
+    hrStatsText,
+    triathlonMode
   });
 
   const response = await callGemini({
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
       responseMimeType: 'application/json',
-      temperature: 0.2,
+      temperature: 0.1,
       responseSchema: {
         type: Type.OBJECT,
         properties: {
@@ -428,6 +431,7 @@ export const getWeeklyBriefing = async (
                     properties: {
                       duration: { type: Type.NUMBER },
                       target_watts: { type: Type.NUMBER },
+                      target_pct: { type: Type.NUMBER },
                       label: { type: Type.STRING }
                     },
                     required: ['duration', 'target_watts', 'label']
@@ -442,7 +446,8 @@ export const getWeeklyBriefing = async (
       }
     }
   });
-  const result = safeParseJSON(response.text);
+  const result = safeParseJSON(response.text) as WeeklyBriefing;
+  result.ftp = ftp || 250;
   setCache(cacheKey, result);
   return result;
 };
@@ -543,7 +548,7 @@ export const analyzeUserProfile = async (
   userGoal: string,
   powerCurves: AnnualPowerCurve[]
 ): Promise<import('../types').UserProfileAnalysis> => {
-  const cacheKey = `wattson_user_profile_${userGoal}`;
+  const cacheKey = `wattson_user_profile_v2_${userGoal}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
@@ -578,9 +583,17 @@ export const analyzeUserProfile = async (
           training_response: { type: Type.STRING },
           effective_methods: { type: Type.ARRAY, items: { type: Type.STRING } },
           ineffective_methods: { type: Type.ARRAY, items: { type: Type.STRING } },
-          recommended_focus: { type: Type.STRING }
+          recommended_focus: { type: Type.STRING },
+          rider_story: { type: Type.STRING },
+          effective_training_history: { type: Type.STRING },
+          recommended_approach: { type: Type.STRING },
+          what_can_be_improved: { type: Type.STRING }
         },
-        required: ['athlete_type', 'strengths', 'areas_for_improvement', 'training_response', 'effective_methods', 'ineffective_methods', 'recommended_focus']
+        required: [
+          'athlete_type', 'strengths', 'areas_for_improvement', 'training_response', 
+          'effective_methods', 'ineffective_methods', 'recommended_focus',
+          'rider_story', 'effective_training_history', 'recommended_approach', 'what_can_be_improved'
+        ]
       }
     }
   });

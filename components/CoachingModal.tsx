@@ -4,6 +4,7 @@ import { getRideFeedback } from '../services/geminiService';
 import { fetchActivityIntervals, fetchPlannedWorkout } from '../services/intervalsService';
 import { StepLabel, getStepPhaseLabel } from './StepLabel';
 import { motion, AnimatePresence } from 'motion/react';
+import { getRideType } from './ActivityCard';
 import { 
   Sparkles, 
   ArrowLeft, 
@@ -84,10 +85,10 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
         </button>
         <div>
           <h2 className="text-lg font-black text-white italic tracking-tight leading-none uppercase truncate max-w-[250px]">
-            {activity.name}
+            {getRideType(activity)}
           </h2>
           <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-1">
-            {dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} • {activity.type}
+            {dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} • {activity.type} • {activity.name}
           </p>
         </div>
       </div>
@@ -149,6 +150,19 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                    "{feedback.summary}"
                  </p>
               </div>
+
+              {/* One thing to improve block */}
+              {feedback.one_thing_to_improve && (
+                <div className="glass-card p-5 rounded-[1.5rem] relative overflow-hidden bg-rose-500/5 border-rose-500/10 shrink-0">
+                  <div className="flex items-center gap-2 mb-2">
+                    <TrendingUp size={12} className="text-rose-400" />
+                    <h3 className="text-[9px] font-black text-rose-400 uppercase tracking-widest">One Thing to Improve</h3>
+                  </div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed font-semibold">
+                    {feedback.one_thing_to_improve}
+                  </p>
+                </div>
+              )}
 
               {/* Action block */}
               <div className="glass-card flex-1 p-5 rounded-[1.5rem] border-white/5 bg-slate-950/40 flex flex-col overflow-hidden">

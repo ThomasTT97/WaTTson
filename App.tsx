@@ -13,11 +13,11 @@ import {
 import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile, getAnnualPowerCurves, uploadWorkout } from './services/intervalsService';
 import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile } from './services/geminiService';
 import { ActivityCard } from './components/ActivityCard';
+import { SuggestedWorkoutCard } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
 import { WeeklyBriefingModal } from './components/WeeklyBriefingModal';
-import { RecoveryAdviceModal } from './components/RecoveryAdviceModal';
 import { ChangelogModal } from './components/ChangelogModal';
-import { StepLabel, getStepPhaseLabel } from './components/StepLabel';
+import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList } from './components/StepLabel';
 import { 
   LayoutDashboard, 
   Bike,
@@ -44,6 +44,7 @@ import {
   Activity as ActivityIcon,
   History,
   MoreVertical,
+  MoreHorizontal,
   Check,
   Menu,
   X,
@@ -73,6 +74,24 @@ const CyclistIcon = ({ size = 24, className = "" }: { size?: number, className?:
 
 const toLocalDateStr = (d: Date) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const getFriendlyNextRideDay = (targetDate: Date) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  
+  const target = new Date(targetDate);
+  target.setHours(0, 0, 0, 0);
+  
+  if (target.getTime() === today.getTime()) {
+    return 'Today';
+  } else if (target.getTime() === tomorrow.getTime()) {
+    return 'Tomorrow';
+  } else {
+    return target.toLocaleDateString('en-US', { weekday: 'long' });
+  }
 };
 
 const CHAT_SUGGESTIONS: string[] = [
@@ -137,13 +156,16 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
+  const [selectedSuggestedDay, setSelectedSuggestedDay] = useState<WeeklyBriefing['days'][0] | null>(null);
   const [showWeeklyBriefing, setShowWeeklyBriefing] = useState(false);
-  const [showRecoveryAdvice, setShowRecoveryAdvice] = useState(false);
   const [weeklyBriefing, setWeeklyBriefing] = useState<WeeklyBriefing | null>(null);
   const [weeklyBriefingError, setWeeklyBriefingError] = useState<string | null>(null);
   const [loadingWeeklyBriefing, setLoadingWeeklyBriefing] = useState(false);
   const [planMode, setPlanMode] = useState<'power' | 'hr'>(() => {
     return (localStorage.getItem('wattson_plan_mode') as 'power' | 'hr') || 'power';
+  });
+  const [triathlonMode, setTriathlonMode] = useState<boolean>(() => {
+    return localStorage.getItem('wattson_triathlon_mode') === 'true';
   });
   
   const [suggestion, setSuggestion] = useState<DailySuggestion | null>(() => {
@@ -160,6 +182,7 @@ const App: React.FC = () => {
   const [showAlternative, setShowAlternative] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'rides' | 'chat' | 'settings'>('dashboard');
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'methodology' | 'ftp'>('main');
   const [userProfile, setUserProfile] = useState<UserProfileAnalysis | null>(null);
@@ -212,6 +235,7 @@ const App: React.FC = () => {
   const [planContext, setPlanContext] = useState<string | null>(() => localStorage.getItem('wattson_plan_context'));
   const [showSuggestionDetail, setShowSuggestionDetail] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const todayElementRef = useRef<HTMLDivElement>(null);
   
   const [userGoal, setUserGoal] = useState<string>(() => localStorage.getItem('wattson_goal') || 'Improve cycling performance');
   const [showGoalEditor, setShowGoalEditor] = useState(false);
@@ -359,7 +383,7 @@ const App: React.FC = () => {
     }
   }, [activities, userGoal, hasRideToday]);
 
-  const fetchWeeklyBriefingData = useCallback(async (customPlanContext?: string, force = false, mode?: 'power' | 'hr') => {
+  const fetchWeeklyBriefingData = useCallback(async (customPlanContext?: string, force = false, mode?: 'power' | 'hr', triMode?: boolean) => {
     if (!activities || activities.length === 0) return;
     setLoadingWeeklyBriefing(true);
     setWeeklyBriefingError(null);
@@ -386,8 +410,9 @@ const App: React.FC = () => {
 
       const ctxToUse = customPlanContext !== undefined ? customPlanContext : (planContext || undefined);
       const activeMode = mode || planMode;
+      const activeTriMode = triMode !== undefined ? triMode : triathlonMode;
 
-      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode);
+      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode, activeTriMode);
       setWeeklyBriefing(data);
     } catch (err: any) {
       console.error("Failed to load weekly briefing:", err);
@@ -395,7 +420,7 @@ const App: React.FC = () => {
     } finally {
       setLoadingWeeklyBriefing(false);
     }
-  }, [activities, wellnessData, userGoal, suggestion, ftp, powerCurves, planContext, planMode]);
+  }, [activities, wellnessData, userGoal, suggestion, ftp, powerCurves, planContext, planMode, triathlonMode]);
 
   useEffect(() => {
     if (activities && activities.length > 0) {
@@ -579,7 +604,9 @@ const App: React.FC = () => {
 
   const groupedActivities = useMemo(() => {
     const safeActivities = activities || [];
-    const sorted = [...safeActivities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local));
+    const recognizedTypes = ['Ride', 'VirtualRide', 'Run', 'VirtualRun', 'Swim'];
+    const filtered = safeActivities.filter(a => !a.type || recognizedTypes.includes(a.type));
+    const sorted = [...filtered].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local));
     const groups: Record<string, Activity[]> = {};
     sorted.forEach(a => {
       const d = new Date(a.start_date_local);
@@ -589,6 +616,143 @@ const App: React.FC = () => {
     });
     return groups;
   }, [activities]);
+
+  const timelineItems = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = toLocalDateStr(today);
+
+    const items: {
+      type: 'past' | 'today_actual' | 'today_suggested' | 'future_suggested';
+      key: string;
+      date: Date;
+      label: string;
+      dayData?: WeeklyBriefing['days'][0];
+      activityData?: Activity;
+      absoluteIndex?: number;
+    }[] = [];
+
+    // 1. Process suggested workouts from weekly briefing
+    if (weeklyBriefing && weeklyBriefing.days) {
+      const hasActivityToday = (activities || []).some(a => a.start_date_local.startsWith(todayStr));
+      const offset = hasActivityToday ? 1 : 0;
+
+      weeklyBriefing.days.forEach((day, idx) => {
+        const targetDate = new Date(today);
+        targetDate.setDate(today.getDate() + idx + offset);
+        
+        const dateStr = toLocalDateStr(targetDate);
+        const isTodayDay = dateStr === todayStr;
+
+        if (isTodayDay) {
+          items.push({
+            type: 'today_suggested',
+            key: `suggested-today-${idx}`,
+            date: targetDate,
+            label: "Today's Target Workout",
+            dayData: day,
+            absoluteIndex: idx
+          });
+        } else if (targetDate > today) {
+          items.push({
+            type: 'future_suggested',
+            key: `suggested-future-${idx}`,
+            date: targetDate,
+            label: "Suggested Workout",
+            dayData: day,
+            absoluteIndex: idx
+          });
+        }
+      });
+    }
+
+    // 2. Process actual activities
+    const safeActivities = activities || [];
+    const recognizedTypes = ['Ride', 'VirtualRide', 'Run', 'VirtualRun', 'Swim'];
+    const filtered = safeActivities.filter(a => !a.type || recognizedTypes.includes(a.type));
+
+    filtered.forEach(a => {
+      const activityDate = new Date(a.start_date_local);
+      const dateOnlyStr = a.start_date_local.split('T')[0];
+      
+      if (dateOnlyStr === todayStr) {
+        items.push({
+          type: 'today_actual',
+          key: `actual-today-${a.id}`,
+          date: activityDate,
+          label: "Today's Activity",
+          activityData: a
+        });
+      } else if (activityDate < today) {
+        items.push({
+          type: 'past',
+          key: `actual-past-${a.id}`,
+          date: activityDate,
+          label: "Completed Ride",
+          activityData: a
+        });
+      }
+    });
+
+    return items;
+  }, [activities, weeklyBriefing]);
+
+  const sortedTimelineItems = useMemo(() => {
+    // Sort so future workouts are at the top (furthest future at top, ending with Tomorrow just above Today),
+    // and past rides are at the bottom (Yesterday just below Today, oldest at the very bottom).
+    return [...timelineItems].sort((a, b) => b.date.getTime() - a.date.getTime());
+  }, [timelineItems]);
+
+  const nextRideFromPlan = useMemo(() => {
+    if (!weeklyBriefing || !weeklyBriefing.days) return null;
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = toLocalDateStr(today);
+    const hasActivityToday = (activities || []).some(a => a.start_date_local.startsWith(todayStr));
+    const offset = hasActivityToday ? 1 : 0;
+
+    const daysWithDates = weeklyBriefing.days.map((day, idx) => {
+      const targetDate = new Date(today);
+      targetDate.setDate(today.getDate() + idx + offset);
+      const isRest = day.intensity === 'Rest' || day.focus.toLowerCase().includes('rest') || day.load_target === 0;
+      return {
+        day,
+        date: targetDate,
+        isRest,
+        absoluteIndex: idx
+      };
+    });
+
+    const upcomingRides = daysWithDates.filter(d => {
+      if (d.isRest) return false;
+      if (toLocalDateStr(d.date) === todayStr) {
+        return !hasActivityToday;
+      }
+      return d.date > today;
+    });
+
+    return upcomingRides[0] || null;
+  }, [weeklyBriefing, activities]);
+
+  useEffect(() => {
+    if (activeTab === 'rides') {
+      const scrollToday = () => {
+        if (todayElementRef.current) {
+          todayElementRef.current.scrollIntoView({ behavior: 'auto', block: 'start' });
+        }
+      };
+      scrollToday();
+      const t1 = setTimeout(scrollToday, 50);
+      const t2 = setTimeout(scrollToday, 150);
+      const t3 = setTimeout(scrollToday, 400);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
+    }
+  }, [activeTab, sortedTimelineItems]);
 
   useEffect(() => {
     if (chatEndRef.current) {
@@ -724,7 +888,7 @@ const App: React.FC = () => {
 
       {/* Scrollable View Area */}
       <div 
-        className={`flex-1 hide-scrollbar scroll-smooth flex flex-col relative ${activeTab === 'chat' ? 'p-0 overflow-hidden' : 'px-4 pt-4 pb-24 overflow-y-auto'}`}
+        className={`flex-1 hide-scrollbar scroll-smooth flex flex-col relative ${activeTab === 'chat' ? 'p-0 overflow-hidden' : 'px-4 pt-4 pb-16 overflow-y-auto'}`}
       >
 
         {activeTab === 'dashboard' && (
@@ -786,21 +950,44 @@ const App: React.FC = () => {
                   <ChevronRight size={12} className="text-slate-500 group-hover:text-emerald-400 group-hover:translate-x-0.5 transition-all shrink-0" />
                 </div>
 
-                {/* Recovery Advice Card */}
-                <div 
-                  onClick={() => setShowRecoveryAdvice(true)}
-                  className="glass-card p-2.5 rounded-xl border border-white/5 hover:border-emerald-500/20 flex items-center gap-2.5 bg-gradient-to-r from-slate-950 via-slate-900/20 to-slate-950 active:scale-[0.99] transition-all duration-300 cursor-pointer group"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500/20 group-hover:scale-105 transition-all shrink-0">
-                    <ActivityIcon size={14} className="text-emerald-400 animate-pulse" />
+                {/* Next Ride Card */}
+                {nextRideFromPlan ? (
+                  <div 
+                    onClick={() => setSelectedSuggestedDay(nextRideFromPlan.day)}
+                    className="glass-card p-2.5 rounded-xl border border-white/5 hover:border-emerald-500/20 flex items-center gap-2.5 bg-gradient-to-r from-slate-950 via-slate-900/20 to-slate-950 active:scale-[0.99] transition-all duration-300 cursor-pointer group relative overflow-hidden"
+                  >
+                    <div className="absolute top-0 right-0 px-2 py-0.5 bg-emerald-500/10 border-l border-b border-emerald-500/10 rounded-bl-lg text-[7px] font-black uppercase tracking-wider text-emerald-400">
+                      {getFriendlyNextRideDay(nextRideFromPlan.date)}
+                    </div>
+
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500/20 group-hover:scale-105 transition-all shrink-0">
+                      <Bike size={14} className="text-emerald-400" />
+                    </div>
+                    <div className="flex-1 min-w-0 pr-8">
+                      <span className="block text-[8px] font-black text-slate-500 uppercase tracking-widest mb-0.5">
+                        Next Scheduled Ride
+                      </span>
+                      <h3 className="text-[11px] font-black text-white group-hover:text-emerald-400 transition-colors truncate">
+                        {nextRideFromPlan.day.focus}
+                      </h3>
+                    </div>
+                    <ChevronRight size={12} className="text-slate-500 group-hover:text-emerald-400 group-hover:translate-x-0.5 transition-all shrink-0" />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-[11px] font-black uppercase tracking-wider text-white">
-                      Recovery Advice
-                    </h3>
+                ) : (
+                  <div className="glass-card p-2.5 rounded-xl border border-white/5 flex items-center gap-2.5 bg-gradient-to-r from-slate-950 via-slate-900/20 to-slate-950 opacity-60">
+                    <div className="w-8 h-8 rounded-lg bg-slate-900/50 border border-white/5 flex items-center justify-center text-slate-500 shrink-0">
+                      <Bike size={14} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="block text-[8px] font-black text-slate-500 uppercase tracking-widest mb-0.5">
+                        Next Scheduled Ride
+                      </span>
+                      <h3 className="text-[11px] font-bold text-slate-400 truncate">
+                        No upcoming ride planned
+                      </h3>
+                    </div>
                   </div>
-                  <ChevronRight size={12} className="text-slate-500 group-hover:text-emerald-400 group-hover:translate-x-0.5 transition-all shrink-0" />
-                </div>
+                )}
               </div>
             </div>
 
@@ -915,16 +1102,89 @@ const App: React.FC = () => {
                  allActivities={activities || undefined}
                />
              ) : (
-               <div className="flex flex-col pt-1 pb-2 space-y-4">
-                 {Object.entries(groupedActivities).map(([month, monthRides]) => (
-                   <div key={month} className="space-y-1.5">
-                     <div className="flex items-center gap-3 px-1 mb-1">
-                       <span className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">{month}</span>
-                       <div className="flex-1 h-px bg-white/5" />
-                     </div>
-                     {(monthRides as Activity[]).map(a => <ActivityCard key={a.id} activity={a} onClick={setSelectedActivity} />)}
-                   </div>
-                 ))}
+               <div className="flex flex-col pt-1 pb-2 space-y-3.5">
+                 {sortedTimelineItems.map((item, idx) => {
+                   const prevItem = idx > 0 ? sortedTimelineItems[idx - 1] : null;
+                   
+                   const showFutureHeader = item.type === 'future_suggested' && (!prevItem || prevItem.type !== 'future_suggested');
+                   const showTodayHeader = (item.type === 'today_suggested' || item.type === 'today_actual') && 
+                                           (!prevItem || (prevItem.type !== 'today_suggested' && prevItem.type !== 'today_actual'));
+                   const showPastHeader = item.type === 'past' && (!prevItem || prevItem.type !== 'past');
+
+                   let showMonthHeader = false;
+                   let monthLabel = '';
+                   if (item.type === 'past' && item.activityData) {
+                     const itemMonth = new Date(item.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' });
+                     const prevMonth = prevItem && prevItem.activityData 
+                       ? new Date(prevItem.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' })
+                       : '';
+                     if (itemMonth !== prevMonth) {
+                       showMonthHeader = true;
+                       monthLabel = itemMonth.toUpperCase();
+                     }
+                   }
+
+                   return (
+                     <React.Fragment key={item.key}>
+                       {showFutureHeader && (
+                         <div className="flex items-center gap-3 px-1 pt-4 pb-2">
+                           <span className="inline-block px-3 py-1 bg-blue-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.4)]">
+                             Plan
+                           </span>
+                           <div className="flex-1 h-px bg-gradient-to-r from-blue-500/40 to-transparent" />
+                         </div>
+                       )}
+
+                       {showTodayHeader && (
+                         <div 
+                           ref={todayElementRef} 
+                           className="flex items-center gap-3 px-1 py-4 scroll-mt-24"
+                         >
+                           <span className="inline-block px-3 py-1 bg-emerald-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse">
+                             Today
+                           </span>
+                           <div className="flex-1 h-px bg-gradient-to-r from-emerald-500/40 to-transparent" />
+                         </div>
+                       )}
+
+                       {showPastHeader && (
+                         <div className="flex items-center gap-3 px-1 pt-6 pb-2">
+                           <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
+                             Training History
+                           </span>
+                           <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
+                         </div>
+                       )}
+
+                       {showMonthHeader && !showPastHeader && (
+                         <div className="flex items-center gap-3 px-1 pt-6 pb-2">
+                           <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
+                             {monthLabel}
+                           </span>
+                           <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
+                         </div>
+                       )}
+
+                       {item.type === 'past' || item.type === 'today_actual' ? (
+                         item.activityData && (
+                           <ActivityCard 
+                             activity={item.activityData} 
+                             onClick={setSelectedActivity} 
+                           />
+                         )
+                       ) : (
+                         item.dayData && (
+                           <SuggestedWorkoutCard 
+                             day={item.dayData}
+                             absoluteIndex={item.absoluteIndex ?? 0}
+                             onClick={(day) => setSelectedSuggestedDay(day)}
+                             isToday={item.type === 'today_suggested'}
+                           />
+                         )
+                       )}
+                     </React.Fragment>
+                   );
+                 })}
                </div>
              )}
           </div>
@@ -1034,7 +1294,7 @@ const App: React.FC = () => {
                )}
              </div>
 
-             <div className="sticky bottom-0 shrink-0 px-4 pt-3 bg-slate-950/80 backdrop-blur-md border-t border-white/5 z-20" style={{ paddingBottom: isKeyboardOpen ? '12px' : 'calc(max(16px, env(safe-area-inset-bottom)) + 64px)' }}>
+             <div className="sticky bottom-0 shrink-0 px-4 pt-3 bg-slate-950/80 backdrop-blur-md border-t border-white/5 z-20" style={{ paddingBottom: isKeyboardOpen ? '12px' : 'calc(max(16px, env(safe-area-inset-bottom)) + 12px)' }}>
                <form 
                  onSubmit={(e) => { e.preventDefault(); handleSendMessage(chatInput); }} 
                  className="relative max-w-full"
@@ -1143,7 +1403,39 @@ const App: React.FC = () => {
                        </div>
                        <ChevronRight size={16} className="text-slate-600 group-hover:text-purple-400 transition-colors" />
                      </button>
-                   </div>
+                   
+
+                      <div className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between border border-blue-500/10 shadow-sm transition-all hover:border-blue-500/20">
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400">
+                            <Trophy size={20} />
+                          </div>
+                          <div className="text-left">
+                            <p className="text-[11px] font-black text-white uppercase tracking-widest">Triathlon Mode</p>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                              {triathlonMode ? 'Enabled (Run & Swim)' : 'Disabled (Cycling Only)'}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            const newMode = !triathlonMode;
+                            setTriathlonMode(newMode);
+                            localStorage.setItem('wattson_triathlon_mode', newMode ? 'true' : 'false');
+                            fetchWeeklyBriefingData(undefined, true, undefined, newMode);
+                          }}
+                          className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 focus:outline-none flex items-center ${
+                            triathlonMode ? 'bg-emerald-500 justify-end' : 'bg-slate-800 justify-start'
+                          }`}
+                        >
+                          <motion.div 
+                            layout 
+                            className="w-4 h-4 rounded-full bg-slate-950 shadow-md"
+                            transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                          />
+                        </button>
+                      </div>
+                    </div>
                    
                    <div className="grid grid-cols-2 gap-2 mt-auto pt-4">
                      <button onClick={() => { setSuggestion(null); loadData(creds!); }} className="p-3.5 bg-white/5 rounded-[1.3rem] border border-white/5 text-[9px] font-black uppercase tracking-widest text-slate-500 flex flex-col items-center gap-2 active:scale-95 transition-all">
@@ -1289,66 +1581,111 @@ const App: React.FC = () => {
                )}
 
                {settingsView === 'methodology' && (
-                 <div className="glass-card p-4 rounded-[1.5rem] space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                 <div className="glass-card p-5 rounded-[1.8rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     {isLoadingProfile ? (
-                      <div className="flex flex-col items-center justify-center py-6 text-center">
-                        <div className="w-8 h-8 rounded-full border-t-2 border-emerald-500 animate-spin mb-4" />
-                        <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Analyzing Data...</p>
+                      <div className="flex flex-col items-center justify-center py-10 text-center">
+                        <div className="w-10 h-10 rounded-full border-t-2 border-emerald-500 animate-spin mb-4" />
+                        <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Generating Profile...</p>
+                        <p className="text-[9px] text-slate-500 font-medium mt-1">Analyzing power curve and last 30 activities</p>
                       </div>
                     ) : userProfile ? (
-                      <div className="space-y-4">
-                        <div className="text-center mb-4">
-                          <h3 className="text-xl font-black text-emerald-400 italic uppercase tracking-tight">{userProfile.athlete_type}</h3>
-                          <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Based on recent 30-day performance trends</p>
-                        </div>
-                        
-                        <div className="relative">
-                          <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-emerald-500/30"></div>
-                          <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">Areas of Strength</h4>
-                          <ul className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3 list-none space-y-1">
-                            {userProfile.strengths.map((s, i) => (
-                              <li key={i}>• {s}</li>
-                            ))}
-                          </ul>
-                        </div>
-
-                        <div className="relative">
-                          <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-rose-500/30"></div>
-                          <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">Limiters to Improve</h4>
-                          <ul className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3 list-none space-y-1">
-                            {userProfile.areas_for_improvement.map((a, i) => (
-                              <li key={i}>• {a}</li>
-                            ))}
-                          </ul>
-                        </div>
-
-                        <div className="relative">
-                          <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-amber-500/30"></div>
-                          <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">Training Response</h4>
-                          <p className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3 mb-4">
-                            {userProfile.training_response}
+                      <div className="space-y-6">
+                        {/* Rider Type Header */}
+                        <div className="text-center pb-4 border-b border-white/5">
+                          <h3 className="text-xl font-black text-emerald-400 italic uppercase tracking-tight leading-tight">
+                            {userProfile.athlete_type}
+                          </h3>
+                          <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1.5">
+                            Based on recent 30-day performance trends
                           </p>
-                          
-                          <div className="grid grid-cols-2 gap-3 pl-3">
+                        </div>
+
+                        {/* Rider Story Narrative */}
+                        {userProfile.rider_story && (
+                          <div className="space-y-2">
+                            <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Rider Story</h4>
+                            <p className="text-[12px] text-slate-300 leading-relaxed font-medium bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl italic">
+                              "{userProfile.rider_story}"
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Strengths and Limiters */}
+                        <div className="grid grid-cols-1 gap-5">
+                          {/* Strengths */}
+                          <div className="relative pl-3">
+                            <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-emerald-500/40 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.3)]"></div>
+                            <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2">Areas of Strength</h4>
+                            <ul className="text-[11px] text-slate-400 leading-relaxed font-semibold space-y-1.5">
+                              {userProfile.strengths.map((s, i) => (
+                                <li key={i} className="flex items-start gap-1.5">
+                                  <span className="text-emerald-400 font-bold">✓</span>
+                                  <span>{s}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          {/* Limiters */}
+                          <div className="relative pl-3">
+                            <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-rose-500/40 rounded-full"></div>
+                            <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2">Limiters to Improve</h4>
+                            <ul className="text-[11px] text-slate-400 leading-relaxed font-semibold space-y-1.5">
+                              {userProfile.areas_for_improvement.map((a, i) => (
+                                <li key={i} className="flex items-start gap-1.5">
+                                  <span className="text-rose-400 font-bold">!</span>
+                                  <span>{a}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+
+                        {/* What Can Be Improved Narrative */}
+                        {userProfile.what_can_be_improved && (
+                          <div className="space-y-2 pt-2 border-t border-white/5">
+                            <h4 className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Physiological Focus</h4>
+                            <p className="text-[12px] text-slate-300 leading-relaxed font-medium">
+                              {userProfile.what_can_be_improved}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Training Effectiveness & History */}
+                        <div className="space-y-4 pt-4 border-t border-white/5">
+                          <div className="space-y-2">
+                            <h4 className="text-[10px] font-black text-white uppercase tracking-widest">Training History & Response</h4>
+                            {userProfile.effective_training_history ? (
+                              <p className="text-[12px] text-slate-300 leading-relaxed font-medium">
+                                {userProfile.effective_training_history}
+                              </p>
+                            ) : (
+                              <p className="text-[12px] text-slate-300 leading-relaxed font-medium">
+                                {userProfile.training_response}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3 bg-slate-950/40 p-3 rounded-2xl border border-white/5">
                             <div>
-                               <p className="text-[8px] font-black text-emerald-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                               <p className="text-[8px] font-black text-emerald-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
                                  <Check size={10} className="stroke-[3]" /> Effective
                                </p>
                                <ul className="text-[10px] text-slate-300 font-bold space-y-1">
                                  {userProfile.effective_methods.map((m, i) => (
-                                   <li key={i} className="flex items-start gap-1.5">
+                                   <li key={i} className="flex items-start gap-1">
                                      <span className="text-emerald-500/50">•</span> {m}
                                    </li>
                                  ))}
                                </ul>
                             </div>
                             <div>
-                               <p className="text-[8px] font-black text-rose-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                               <p className="text-[8px] font-black text-rose-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
                                  <X size={10} className="stroke-[3]" /> Ineffective
                                </p>
                                <ul className="text-[10px] text-slate-300 font-bold space-y-1">
                                  {userProfile.ineffective_methods.map((m, i) => (
-                                   <li key={i} className="flex items-start gap-1.5">
+                                   <li key={i} className="flex items-start gap-1">
                                      <span className="text-rose-500/50">•</span> {m}
                                    </li>
                                  ))}
@@ -1356,17 +1693,24 @@ const App: React.FC = () => {
                             </div>
                           </div>
                         </div>
-                        
-                        <div className="relative">
-                          <div className="absolute -left-2 top-0 bottom-0 w-0.5 bg-purple-500/30"></div>
-                          <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 pl-3">waTTson's Focus</h4>
-                          <p className="text-[11px] text-slate-400 leading-relaxed font-medium pl-3">
+
+                        {/* Recommended Training Approach */}
+                        <div className="space-y-2 pt-4 border-t border-white/5 relative pl-3">
+                          <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-purple-500/40 rounded-full"></div>
+                          <h4 className="text-[11px] font-black text-white uppercase tracking-widest pl-1">Recommended Approach</h4>
+                          {userProfile.recommended_approach && (
+                            <p className="text-[12px] text-slate-300 leading-relaxed font-medium pl-1 mb-2">
+                              {userProfile.recommended_approach}
+                            </p>
+                          )}
+                          <p className="text-[11px] text-slate-400 font-bold leading-relaxed pl-1">
+                            <span className="text-purple-400 uppercase tracking-widest text-[9px] font-extrabold block mb-0.5">waTTson's Focus:</span>
                             {userProfile.recommended_focus}
                           </p>
                         </div>
                       </div>
                     ) : (
-                      <div className="text-center py-4">
+                      <div className="text-center py-6">
                          <p className="text-[11px] text-slate-400">Not enough data to form an assessment yet.</p>
                       </div>
                     )}
@@ -1432,21 +1776,12 @@ const App: React.FC = () => {
 
                  <div className="space-y-5 py-1 max-h-[220px] overflow-y-auto custom-scrollbar px-1">
                    {currentWorkout.workout_steps && currentWorkout.workout_steps.length > 0 ? (
-                      currentWorkout.workout_steps.map((step, sIdx) => (
-                        <div key={sIdx} className="flex items-start justify-between gap-4 text-[14px] font-bold group">
-                          <div className="flex items-start gap-3 text-slate-300 min-w-0 flex-1">
-                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] mt-1.5 flex-shrink-0" />
-                            <div className="min-w-0 flex-1 text-left">
-                              <StepLabel label={step.label} />
-                            </div>
-                          </div>
-                          {step.target_watts && (
-                            <span className="text-emerald-400 font-extrabold uppercase tracking-wider text-[10px] bg-emerald-500/10 px-2 py-0.5 rounded flex-shrink-0 italic">
-                              {getStepPhaseLabel(sIdx, currentWorkout.workout_steps?.length || 0, step.label)}
-                            </span>
-                          )}
-                        </div>
-                      ))
+                     <GroupedWorkoutStepsList 
+                       steps={currentWorkout.workout_steps}
+                       currentFtp={ftp || undefined}
+                       originalFtp={weeklyBriefing?.ftp}
+                       fontSize="base"
+                     />
                    ) : (
                       <p className="text-[14px] text-slate-400 leading-relaxed italic text-center px-4 font-medium opacity-80">
                         {currentWorkout.description}
@@ -1512,6 +1847,142 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Suggested Day Workout Detail Popup */}
+      {selectedSuggestedDay && (() => {
+          const index = weeklyBriefing ? weeklyBriefing.days.indexOf(selectedSuggestedDay) : -1;
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const todayStr = toLocalDateStr(today);
+          const hasActivityToday = (activities || []).some(a => a.start_date_local.startsWith(todayStr));
+          const offset = hasActivityToday ? 1 : 0;
+
+          const targetDate = new Date(today);
+          if (index !== -1) {
+            targetDate.setDate(today.getDate() + index + offset);
+          }
+          const weekday = targetDate.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase();
+          const dayNum = targetDate.getDate();
+
+          return (
+            <div className="fixed inset-0 z-[220] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedSuggestedDay(null)}>
+              <div className="bg-slate-950/80 w-full max-w-sm rounded-[2.5rem] p-6 pb-6 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
+                <button onClick={() => setSelectedSuggestedDay(null)} className="absolute top-5 right-5 text-slate-500 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full">
+                  <X size={18} />
+                </button>
+                <div className="flex flex-col items-center">
+                  <div className="w-10 h-10 rounded-xl bg-slate-900/50 flex flex-col items-center justify-center shrink-0 border border-white/5 shadow-inner mb-5">
+                    <span className="text-[7.5px] font-black text-slate-500 uppercase leading-none mb-0.5 tracking-tighter">{weekday}</span>
+                    <span className="text-base font-black text-white italic leading-none">{dayNum}</span>
+                  </div>
+                  
+                  <h3 className="text-lg font-black text-white italic tracking-tighter mb-1 uppercase text-center leading-tight px-4">
+                    {selectedSuggestedDay.focus}
+                  </h3>
+                  <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.2em] mb-6 text-center">
+                    {selectedSuggestedDay.day.toUpperCase()} FOCUS
+                  </p>
+                  
+                  <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-left space-y-4 relative overflow-hidden">
+                 <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-4">
+                    <div className="flex items-center gap-2 text-sm font-black text-white tracking-tighter">
+                       <Clock size={16} className="text-blue-400" /> {selectedSuggestedDay.duration_target} MIN
+                    </div>
+                    <div className="flex items-center gap-2 text-sm font-black text-amber-400 italic">
+                       <Zap size={16} fill="currentColor" className="text-amber-400" /> {selectedSuggestedDay.load_target} TSS
+                    </div>
+                 </div>
+
+                 <div className="space-y-3 py-2 max-h-[220px] overflow-y-auto custom-scrollbar px-1">
+                   {selectedSuggestedDay.workout_steps && selectedSuggestedDay.workout_steps.length > 0 ? (
+                     <GroupedWorkoutStepsList 
+                       steps={selectedSuggestedDay.workout_steps}
+                       currentFtp={ftp || undefined}
+                       originalFtp={weeklyBriefing?.ftp}
+                       fontSize="sm"
+                     />
+                   ) : (
+                      <p className="text-[13px] text-slate-400 leading-relaxed text-center px-2 font-medium opacity-80">
+                        {selectedSuggestedDay.why}
+                      </p>
+                   )}
+                 </div>
+              </div>
+
+              <div className="mt-6 flex flex-col gap-3 w-full">
+                {creds && (
+                  <button 
+                    onClick={async () => {
+                      if (!creds || !selectedSuggestedDay) return;
+                      const index = weeklyBriefing ? weeklyBriefing.days.indexOf(selectedSuggestedDay) : 0;
+                      
+                      setSyncingWorkout(true);
+                      try {
+                        const todayStr = toLocalDateStr(new Date());
+                        const hasActivityToday = (activities || []).some(a => a.start_date_local.startsWith(todayStr));
+                        const offset = hasActivityToday ? 1 : 0;
+
+                        const targetDate = new Date();
+                        targetDate.setDate(targetDate.getDate() + index + offset);
+                        const dateStr = toLocalDateStr(targetDate);
+                        
+                        const effOriginalFtp = weeklyBriefing?.ftp || 250;
+                        const scalingRatio = ftp && effOriginalFtp ? (ftp / effOriginalFtp) : 1;
+
+                        const workoutText = selectedSuggestedDay.workout_steps?.map(s => {
+                          const scaledWatts = s.target_pct 
+                            ? Math.round(s.target_pct * (ftp || 250)) 
+                            : (s.target_watts ? Math.round(s.target_watts * scalingRatio) : null);
+                          return `- ${s.label} ${s.duration}m ${scaledWatts ? `${scaledWatts}w` : ''}`;
+                        }).join('\n') || selectedSuggestedDay.why;
+
+                        await uploadWorkout(creds, {
+                          name: selectedSuggestedDay.focus,
+                          description: selectedSuggestedDay.why,
+                          date: dateStr,
+                          moving_time: selectedSuggestedDay.duration_target * 60,
+                          icu_training_load: selectedSuggestedDay.load_target,
+                          workout_text: workoutText
+                        });
+                        setSyncSuccess(true);
+                        setTimeout(() => setSyncSuccess(false), 3000);
+                      } catch (err) {
+                        console.error("Sync failed:", err);
+                      } finally {
+                        setSyncingWorkout(false);
+                      }
+                    }}
+                    disabled={syncingWorkout || syncSuccess || selectedSuggestedDay.intensity === 'Rest'}
+                    className={`w-full py-4 rounded-2xl text-[12px] font-black uppercase tracking-[0.14em] flex items-center justify-center gap-3 transition-all shadow-xl active:scale-95 ${
+                      syncSuccess 
+                        ? 'bg-emerald-500 text-white' 
+                        : selectedSuggestedDay.intensity === 'Rest'
+                        ? 'bg-[#1a1c22] text-slate-600 border border-white/5 opacity-50 cursor-not-allowed'
+                        : 'bg-emerald-500 text-slate-950 hover:bg-emerald-400 shadow-emerald-500/20'
+                    }`}
+                  >
+                    {syncingWorkout ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : syncSuccess ? (
+                      <>SYNCED <Check size={16} strokeWidth={3} /></>
+                    ) : (
+                      <>SYNC TO CALENDAR <Calendar size={16} strokeWidth={2.5} /></>
+                    )}
+                  </button>
+                )}
+
+                <button 
+                  onClick={() => setSelectedSuggestedDay(null)}
+                  className="w-full py-4 bg-[#1a1c22] rounded-2xl text-[11px] font-black text-slate-300 hover:text-white hover:bg-slate-800 transition-all uppercase tracking-[0.2em] active:scale-95"
+                >
+                  CLOSE
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    })()}
 
       {reasoningPopup && (
         <div className="absolute inset-0 z-[220] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setReasoningPopup(null)}>
@@ -1583,21 +2054,12 @@ const App: React.FC = () => {
 
                  <div className="space-y-4 py-1 max-h-[180px] overflow-y-auto custom-scrollbar px-1">
                    {currentWorkout?.workout_steps && currentWorkout.workout_steps.length > 0 ? (
-                      currentWorkout.workout_steps.map((step, sIdx) => (
-                        <div key={sIdx} className="flex items-start justify-between gap-4 text-[13px] font-bold group">
-                          <div className="flex items-start gap-2.5 text-slate-300 min-w-0 flex-1">
-                            <div className="w-1 h-1 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] mt-1.5 flex-shrink-0" />
-                            <div className="min-w-0 flex-1 text-left">
-                              <StepLabel label={step.label} />
-                            </div>
-                          </div>
-                          {step.target_watts && (
-                            <span className="text-emerald-400 font-extrabold uppercase tracking-wider text-[9px] bg-emerald-500/10 px-2 py-0.5 rounded flex-shrink-0 italic">
-                              {getStepPhaseLabel(sIdx, currentWorkout.workout_steps?.length || 0, step.label)}
-                            </span>
-                          )}
-                        </div>
-                      ))
+                     <GroupedWorkoutStepsList 
+                       steps={currentWorkout.workout_steps}
+                       currentFtp={ftp || undefined}
+                       originalFtp={weeklyBriefing?.ftp}
+                       fontSize="sm"
+                     />
                    ) : (
                       <p className="text-[13px] text-slate-400 leading-relaxed italic text-center px-4 font-medium opacity-80">
                         {suggestion.reasoning}
@@ -1655,17 +2117,6 @@ const App: React.FC = () => {
         />
       )}
 
-      {showRecoveryAdvice && (
-        <RecoveryAdviceModal
-          activities={activities || []}
-          wellness={wellnessData}
-          userGoal={userGoal}
-          weeklyBriefing={weeklyBriefing}
-          stats={stats}
-          onClose={() => setShowRecoveryAdvice(false)}
-        />
-      )}
-
       <ChangelogModal 
         isOpen={showChangelog}
         onClose={() => setShowChangelog(false)}
@@ -1673,42 +2124,77 @@ const App: React.FC = () => {
         changes={APP_CHANGELOG}
       />
 
-      {/* Dynamic Floating Bottom Bar */}
+      {/* Floating 3-Dot Options Menu & Button */}
       {!isKeyboardOpen && (
-        <div className="absolute bottom-0 left-0 right-0 bg-slate-950/85 backdrop-blur-3xl border-t border-white/5 z-40" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))', paddingTop: '12px' }}>
-          <div className="max-w-[450px] mx-auto px-6 flex justify-around items-center">
-            {[
-              { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
-              { id: 'rides', icon: Bike, label: 'Rides' },
-              { id: 'chat', icon: MessageSquare, label: 'waTTson' },
-              { id: 'settings', icon: Settings, label: 'Profile' }
-            ].map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id as any)}
-                  className="flex flex-col items-center justify-center py-1 flex-1 relative transition-all duration-300 active:scale-90"
-                >
-                  <div className={`p-1.5 rounded-xl transition-all duration-300 ${isActive ? 'text-emerald-400 bg-emerald-500/10' : 'text-slate-500 hover:text-slate-300'}`}>
-                    <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
-                  </div>
-                  <span className={`text-[9px] font-bold mt-1 tracking-wider uppercase transition-colors duration-300 ${isActive ? 'text-emerald-400 font-black' : 'text-slate-600'}`}>
-                    {item.label}
-                  </span>
-                  {isActive && (
-                    <motion.div
-                      layoutId="activeTabIndicator"
-                      className="absolute bottom-0 w-1.5 h-1.5 bg-emerald-400 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)]"
-                      transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-                    />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <>
+          {/* Menu Backdrop for clicking outside */}
+          <AnimatePresence>
+            {showOptionsMenu && (
+              <div 
+                className="absolute inset-0 bg-slate-950/20 backdrop-blur-[2px] z-45"
+                onClick={() => setShowOptionsMenu(false)}
+              />
+            )}
+          </AnimatePresence>
+
+          {/* Floating Action Menu */}
+          <AnimatePresence>
+            {showOptionsMenu && (
+              <motion.div
+                initial={{ opacity: 0, y: 15, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                transition={{ type: 'spring', duration: 0.25 }}
+                className="absolute bottom-20 right-6 z-50 bg-slate-950/95 border border-white/10 rounded-[1.8rem] shadow-[0_12px_40px_rgba(0,0,0,0.85)] p-3 min-w-[160px] backdrop-blur-2xl flex flex-col gap-1.5"
+              >
+                <div className="px-2.5 pb-1.5 mb-1 border-b border-white/5 flex flex-col">
+                  <span className="text-[8px] font-black tracking-[0.25em] text-slate-500 uppercase">Navigation</span>
+                </div>
+                {[
+                  { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
+                  { id: 'rides', icon: Bike, label: 'Rides' },
+                  { id: 'chat', icon: MessageSquare, label: 'waTTson' },
+                  { id: 'settings', icon: Settings, label: 'Profile' }
+                ].map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setActiveTab(item.id as any);
+                        setShowOptionsMenu(false);
+                      }}
+                      className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl transition-all duration-200 active:scale-95 text-left ${
+                        isActive 
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10' 
+                          : 'text-slate-400 hover:text-white border border-transparent'
+                      }`}
+                    >
+                      <Icon size={16} className={isActive ? 'text-emerald-400' : 'text-slate-500'} />
+                      <span className={`text-[12px] uppercase tracking-wider ${isActive ? 'font-black' : 'font-bold'}`}>
+                        {item.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Floating Options Trigger Button */}
+          <button
+            onClick={() => setShowOptionsMenu(!showOptionsMenu)}
+            className={`absolute bottom-6 right-6 z-50 w-12 h-12 rounded-full bg-slate-950/90 border border-white/10 text-emerald-400 flex items-center justify-center shadow-[0_8px_24px_rgba(0,0,0,0.6)] hover:border-emerald-500/30 active:scale-90 transition-all duration-300 backdrop-blur-xl`}
+            aria-label="Toggle navigation menu"
+          >
+            {showOptionsMenu ? (
+              <X size={20} className="text-emerald-400 animate-in spin-in-90 duration-200" />
+            ) : (
+              <MoreHorizontal size={20} className="text-emerald-400 animate-in fade-in duration-200" />
+            )}
+          </button>
+        </>
       )}
     </div>
   );

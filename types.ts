@@ -76,6 +76,7 @@ export interface Wellness {
 export interface CoachingFeedback {
   summary: string;
   goal_contribution: string;
+  one_thing_to_improve?: string;
   workout_steps?: {
     duration: number;
     target_watts?: number;
@@ -110,6 +111,7 @@ export interface WeeklyBriefing {
   phase: string;
   focus: string;
   outlook_summary: string;
+  ftp?: number; // Store the FTP at generation time for dynamic calculations
   days: {
     day: string;
     focus: string;
@@ -120,6 +122,7 @@ export interface WeeklyBriefing {
     workout_steps?: {
       duration: number; // minutes
       target_watts?: number;
+      target_pct?: number; // percentage of FTP as decimal, e.g. 0.75
       label: string;
     }[];
   }[];
@@ -143,6 +146,10 @@ export interface UserProfileAnalysis {
   effective_methods: string[];
   ineffective_methods: string[];
   recommended_focus: string;
+  rider_story?: string;
+  effective_training_history?: string;
+  recommended_approach?: string;
+  what_can_be_improved?: string;
 }
 
 export interface PowerBest {

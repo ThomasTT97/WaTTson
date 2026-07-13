@@ -7,6 +7,88 @@ interface ActivityCardProps {
   onClick: (activity: Activity) => void;
 }
 
+export const getRideType = (activity: Activity): string => {
+  let baseType = 'Endurance';
+
+  // 1. Check if the activity name itself contains clear indications of the target types
+  const nameLower = (activity.name || '').toLowerCase();
+  if (nameLower.includes('recovery')) {
+    baseType = 'Recovery';
+  } else if (nameLower.includes('endurance')) {
+    baseType = 'Endurance';
+  } else if (nameLower.includes('sweet spot') || nameLower.includes('sweetspot')) {
+    baseType = 'Sweet Spot';
+  } else if (nameLower.includes('threshold')) {
+    baseType = 'Threshold';
+  } else if (nameLower.includes('vo2')) {
+    baseType = 'VO2 Max';
+  } else {
+    // 2. Get intensity
+    let intensity = activity.icu_intensity;
+    
+    // If intensity is a percentage (e.g. 75.5 instead of 0.755), convert to fraction
+    if (intensity !== undefined && intensity !== null && intensity > 2.0) {
+      intensity = intensity / 100;
+    }
+
+    // Calculate if not present or invalid
+    if (intensity === undefined || intensity === null || intensity <= 0 || intensity > 2.0) {
+      const power = activity.weighted_average_watts ?? activity.icu_weighted_average_watts ?? activity.average_watts ?? activity.icu_average_watts;
+      let ftp = activity.icu_eftp;
+      if (!ftp || ftp <= 0) {
+        try {
+          const savedFtp = localStorage.getItem('wattson_ftp');
+          if (savedFtp) {
+            ftp = parseInt(savedFtp, 10);
+          }
+        } catch {}
+      }
+      if (!ftp || ftp <= 0) {
+        ftp = 250; // Fallback
+      }
+      if (power && ftp && ftp > 0) {
+        intensity = power / ftp;
+      }
+    }
+
+    // Calculate from TSS and moving time if intensity is still missing or invalid
+    if (intensity === undefined || intensity === null || intensity <= 0 || intensity > 2.0) {
+      const load = activity.icu_training_load ?? activity.icu_tss ?? activity.training_load ?? (activity as any).load ?? (activity as any).tss ?? 0;
+      const movingTime = activity.moving_time || activity.elapsed_time || (activity as any).time || (activity as any).duration;
+      if (load > 0 && movingTime && movingTime > 0) {
+        const durationHours = movingTime / 3600;
+        intensity = Math.sqrt(load / (100 * durationHours));
+      }
+    }
+
+    // Map intensity to zones
+    if (intensity !== undefined && intensity !== null && intensity > 0 && !isNaN(intensity)) {
+      if (intensity < 0.60) {
+        baseType = 'Recovery';
+      } else if (intensity < 0.75) {
+        baseType = 'Endurance';
+      } else if (intensity < 0.88) {
+        baseType = 'Sweet Spot';
+      } else if (intensity < 1.05) {
+        baseType = 'Threshold';
+      } else {
+        baseType = 'VO2 Max';
+      }
+    } else {
+      // 3. Fallback name cues
+      if (nameLower.includes('easy') || nameLower.includes('spin') || nameLower.includes('rec')) {
+        baseType = 'Recovery';
+      } else if (nameLower.includes('tempo')) {
+        baseType = 'Sweet Spot';
+      } else if (nameLower.includes('interval') || nameLower.includes('hiit')) {
+        baseType = 'VO2 Max';
+      }
+    }
+  }
+
+  return `${baseType} Ride`;
+};
+
 export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onClick }) => {
   const dateObj = new Date(activity.start_date_local);
   const weekday = dateObj.toLocaleDateString(undefined, { weekday: 'short' });
@@ -29,9 +111,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
     ? `${Math.floor(1000 / (activity as any).average_speed / 60)}:${Math.floor((1000 / (activity as any).average_speed) % 60).toString().padStart(2, '0')}/km`
     : null;
 
-  const displayName = (activity.name && activity.name.toLowerCase() !== 'workout' && activity.name.toLowerCase() !== 'activity') 
-    ? activity.name 
-    : (activity.type || 'Workout');
+  const displayName = getRideType(activity);
     
   const displayDistance = activity.distance || (activity as any).icu_distance || 0;
   load = Math.round(activity.icu_training_load ?? activity.icu_tss ?? activity.training_load ?? (activity as any).load ?? (activity as any).tss ?? 0);

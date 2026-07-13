@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { Activity, Wellness, WeeklyBriefing, IntervalsCredentials, DailySuggestion, AnnualPowerCurve } from '../types';
 import { uploadWorkout } from '../services/intervalsService';
-import { StepLabel, getStepPhaseLabel } from './StepLabel';
+import { StepLabel, getStepPhaseLabel, scaleLabelWatts } from './StepLabel';
+import { SuggestedWorkoutCard } from './SuggestedWorkoutCard';
 import { X, Sparkles, ChevronRight, Trophy, Clock, Zap, Info, Calendar as CalendarIcon, Check, Loader2, RefreshCw } from 'lucide-react';
 
 interface WeeklyBriefingModalProps {
@@ -70,7 +71,20 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
       targetDate.setDate(targetDate.getDate() + absoluteIndex + offset);
       const dateStr = toLocalDateStr(targetDate);
       
-      const workoutText = day.workout_steps?.map(s => `- ${s.label || 'Step'} ${s.duration}m ${s.target_watts ? `${s.target_watts}w` : ''}`).join('\n') || day.why;
+      const effOriginalFtp = weeklyBriefing?.ftp || 250;
+      const scalingRatio = ftp && effOriginalFtp ? (ftp / effOriginalFtp) : 1;
+
+      const workoutText = day.workout_steps?.map(s => {
+        const scaledWatts = s.target_pct 
+          ? Math.round(s.target_pct * (ftp || 250)) 
+          : (s.target_watts ? Math.round(s.target_watts * scalingRatio) : null);
+        
+        const scaledLabel = s.target_pct && s.target_pct > 0
+          ? scaleLabelWatts(s.label, ftp || 250, effOriginalFtp)
+          : (ftp && effOriginalFtp ? scaleLabelWatts(s.label, ftp, effOriginalFtp) : s.label);
+
+        return `- ${scaledLabel || 'Step'} ${s.duration}m ${scaledWatts ? `${scaledWatts}w` : ''}`;
+      }).join('\n') || day.why;
 
       await uploadWorkout(creds, {
         name: day.focus,
@@ -354,48 +368,19 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                   <div className="flex flex-col gap-2">
                     {weekDays.map((day, idx) => {
                       const absoluteIdx = weeklyBriefing ? weeklyBriefing.days.indexOf(day) : idx;
+                      const today = new Date();
+                      const dayNum = today.getDate();
+                      const monthStr = today.toLocaleDateString('en-US', { month: 'short' });
+                      const isToday = day.day.includes(`(${monthStr} ${dayNum})`);
+
                       return (
-                        <button 
-                          key={idx} 
-                          onClick={() => setSelectedDay(day)}
-                          className={`w-full text-left py-2.5 px-3 rounded-xl border flex items-center gap-3 hover:brightness-110 active:scale-[0.99] transition-all shadow ${intensityRowStyles[day.intensity] || intensityRowStyles['Medium']}`}
-                        >
-                          {/* Day Box */}
-                          <div className="w-9 h-9 rounded-lg bg-black/40 flex flex-col items-center justify-center shrink-0 border border-white/5">
-                            <span className="text-[10px] font-black text-slate-300 uppercase leading-none tracking-tighter">{getDayAbbr(day.day)}</span>
-                            {getDayLabel(day.day) && (
-                              <span className="text-[7px] font-bold text-slate-500 mt-0.5 uppercase tracking-tighter">{getDayLabel(day.day)}</span>
-                            )}
-                          </div>
-
-                          {/* Info Column */}
-                          <div className="flex-1 min-w-0 flex flex-col justify-center">
-                            <div className="flex items-baseline gap-1">
-                              <span className="text-xl font-black text-white leading-none tracking-tighter italic">
-                                {day.duration_target > 0 ? day.duration_target : '--'}
-                              </span>
-                              <span className="text-[8px] font-black text-slate-600 uppercase tracking-tighter leading-none">MIN</span>
-                            </div>
-
-                            <div className="flex items-center gap-1.5 mt-0.5 opacity-90">
-                              {day.load_target > 0 ? (
-                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-tighter flex items-center gap-1 leading-none">
-                                  <Zap size={9} className="text-amber-500/80" fill="currentColor" /> Target {day.load_target} TSS
-                                </span>
-                              ) : (
-                                <span className="text-[9px] font-bold text-slate-600 uppercase tracking-tighter leading-none">Full Recovery</span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Badge */}
-                          <div className="flex items-center gap-1.5">
-                            <span className={`text-[8px] font-black px-2 py-0.5 rounded-md border uppercase tracking-wider min-w-[55px] text-center ${intensityColors[day.intensity] || intensityColors['Medium']}`}>
-                              {day.intensity}
-                            </span>
-                            <ChevronRight size={12} className="text-slate-700" />
-                          </div>
-                        </button>
+                        <SuggestedWorkoutCard 
+                          key={idx}
+                          day={day}
+                          absoluteIndex={absoluteIdx}
+                          onClick={setSelectedDay}
+                          isToday={isToday}
+                        />
                       );
                     })}
                   </div>
@@ -461,7 +446,13 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                             <div className="flex items-start gap-2.5 text-slate-300 min-w-0 flex-1">
                               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] mt-1.5 flex-shrink-0" />
                               <div className="min-w-0 flex-1 text-left">
-                                <StepLabel label={step.label} />
+                                <StepLabel 
+                                  label={step.label}
+                                  target_pct={step.target_pct}
+                                  target_watts={step.target_watts}
+                                  currentFtp={ftp}
+                                  originalFtp={weeklyBriefing?.ftp}
+                                />
                               </div>
                             </div>
                             {step.target_watts && (
