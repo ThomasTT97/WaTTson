@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Activity, IntervalsCredentials, CoachingFeedback } from '../types';
 import { getRideFeedback } from '../services/geminiService';
 import { fetchActivityIntervals, fetchPlannedWorkout } from '../services/intervalsService';
-import { StepLabel, getStepPhaseLabel } from './StepLabel';
+import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList } from './StepLabel';
 import { motion, AnimatePresence } from 'motion/react';
 import { getRideType } from './ActivityCard';
 import { 
@@ -175,21 +175,12 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                 
                 {feedback.workout_steps && feedback.workout_steps.length > 0 && (
                   <div className="flex-1 overflow-y-auto hide-scrollbar space-y-2 shrink-0">
-                     {feedback.workout_steps.map((step, sIdx) => (
-                       <div key={sIdx} className="flex items-start justify-between gap-3 text-[11px] font-bold bg-white/[0.02] p-2.5 rounded-lg border border-white/[0.02]">
-                         <div className="flex items-start gap-2 text-slate-300 min-w-0 flex-1">
-                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/50 mt-1.5 flex-shrink-0" />
-                           <div className="min-w-0 flex-1 text-left">
-                             <StepLabel label={step.label} />
-                           </div>
-                         </div>
-                         {step.target_watts && (
-                           <span className="text-emerald-400 font-extrabold uppercase tracking-wider text-[9px] bg-emerald-500/10 px-2 py-0.5 rounded flex-shrink-0">
-                             {getStepPhaseLabel(sIdx, feedback.workout_steps?.length || 0, step.label)}
-                           </span>
-                         )}
-                       </div>
-                     ))}
+                     <GroupedWorkoutStepsList 
+                       steps={feedback.workout_steps}
+                       currentFtp={ftp || undefined}
+                       originalFtp={ftp}
+                       fontSize="sm"
+                     />
                   </div>
                 )}
               </div>

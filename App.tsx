@@ -698,8 +698,6 @@ const App: React.FC = () => {
   }, [activities, weeklyBriefing]);
 
   const sortedTimelineItems = useMemo(() => {
-    // Sort so future workouts are at the top (furthest future at top, ending with Tomorrow just above Today),
-    // and past rides are at the bottom (Yesterday just below Today, oldest at the very bottom).
     return [...timelineItems].sort((a, b) => b.date.getTime() - a.date.getTime());
   }, [timelineItems]);
 
@@ -1102,91 +1100,129 @@ const App: React.FC = () => {
                  allActivities={activities || undefined}
                />
              ) : (
-               <div className="flex flex-col pt-1 pb-2 space-y-3.5">
-                 {sortedTimelineItems.map((item, idx) => {
-                   const prevItem = idx > 0 ? sortedTimelineItems[idx - 1] : null;
-                   
-                   const showFutureHeader = item.type === 'future_suggested' && (!prevItem || prevItem.type !== 'future_suggested');
-                   const showTodayHeader = (item.type === 'today_suggested' || item.type === 'today_actual') && 
-                                           (!prevItem || (prevItem.type !== 'today_suggested' && prevItem.type !== 'today_actual'));
-                   const showPastHeader = item.type === 'past' && (!prevItem || prevItem.type !== 'past');
+                <div className="flex flex-col pt-1 pb-2 space-y-3.5">
+                  {(() => {
+                    const futureItems = sortedTimelineItems.filter(i => i.type === 'future_suggested');
+                    const todayItems = sortedTimelineItems.filter(i => i.type === 'today_suggested' || i.type === 'today_actual');
+                    const pastItems = sortedTimelineItems.filter(i => i.type === 'past');
+                    
+                    return (
+                      <>
+                        {/* Future Rides Section */}
+                        {futureItems.length > 0 && (
+                          <div className="flex flex-col space-y-3.5 relative">
+                            <div className="z-10 bg-slate-950 pt-4 pb-2 px-1 -mx-1 border-b border-white/5 shadow-md">
+                              <div className="flex items-center gap-3">
+                                <span className="inline-block px-3 py-1 bg-blue-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.4)]">
+                                  Plan
+                                </span>
+                                <div className="flex-1 h-px bg-gradient-to-r from-blue-500/40 to-transparent" />
+                              </div>
+                            </div>
+                            {futureItems.map((item, idx, arr) => (
+                              <React.Fragment key={item.key}>
+                                {item.dayData && (
+                                  <div ref={idx === arr.length - 1 ? todayElementRef : null} className="scroll-mt-[112px]">
+                                    <SuggestedWorkoutCard 
+                                      day={item.dayData}
+                                      absoluteIndex={item.absoluteIndex ?? 0}
+                                      onClick={(day) => setSelectedSuggestedDay(day)}
+                                      isToday={false}
+                                    />
+                                  </div>
+                                )}
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        )}
 
-                   let showMonthHeader = false;
-                   let monthLabel = '';
-                   if (item.type === 'past' && item.activityData) {
-                     const itemMonth = new Date(item.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' });
-                     const prevMonth = prevItem && prevItem.activityData 
-                       ? new Date(prevItem.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' })
-                       : '';
-                     if (itemMonth !== prevMonth) {
-                       showMonthHeader = true;
-                       monthLabel = itemMonth.toUpperCase();
-                     }
-                   }
+                        {/* Today Section */}
+                        {todayItems.length > 0 && (
+                          <div className="flex flex-col space-y-3.5 pt-2">
+                            <div 
+                              className="flex items-center gap-3 px-1"
+                              ref={futureItems.length === 0 ? todayElementRef : null}
+                            >
+                              <span className="inline-block px-3 py-1 bg-emerald-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse">
+                                Today
+                              </span>
+                              <div className="flex-1 h-px bg-gradient-to-r from-emerald-500/40 to-transparent" />
+                            </div>
+                            {todayItems.map(item => (
+                              <React.Fragment key={item.key}>
+                                {item.type === 'today_actual' ? (
+                                  item.activityData && (
+                                    <ActivityCard 
+                                      activity={item.activityData} 
+                                      onClick={setSelectedActivity} 
+                                    />
+                                  )
+                                ) : (
+                                  item.dayData && (
+                                    <div className="scroll-mt-[120px]">
+                                      <SuggestedWorkoutCard 
+                                        day={item.dayData}
+                                        absoluteIndex={item.absoluteIndex ?? 0}
+                                        onClick={(day) => setSelectedSuggestedDay(day)}
+                                        isToday={true}
+                                      />
+                                    </div>
+                                  )
+                                )}
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        )}
 
-                   return (
-                     <React.Fragment key={item.key}>
-                       {showFutureHeader && (
-                         <div className="flex items-center gap-3 px-1 pt-4 pb-2">
-                           <span className="inline-block px-3 py-1 bg-blue-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.4)]">
-                             Plan
-                           </span>
-                           <div className="flex-1 h-px bg-gradient-to-r from-blue-500/40 to-transparent" />
-                         </div>
-                       )}
-
-                       {showTodayHeader && (
-                         <div 
-                           ref={todayElementRef} 
-                           className="flex items-center gap-3 px-1 py-4 scroll-mt-24"
-                         >
-                           <span className="inline-block px-3 py-1 bg-emerald-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse">
-                             Today
-                           </span>
-                           <div className="flex-1 h-px bg-gradient-to-r from-emerald-500/40 to-transparent" />
-                         </div>
-                       )}
-
-                       {showPastHeader && (
-                         <div className="flex items-center gap-3 px-1 pt-6 pb-2">
-                           <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
-                             Training History
-                           </span>
-                           <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
-                         </div>
-                       )}
-
-                       {showMonthHeader && !showPastHeader && (
-                         <div className="flex items-center gap-3 px-1 pt-6 pb-2">
-                           <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
-                             {monthLabel}
-                           </span>
-                           <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
-                         </div>
-                       )}
-
-                       {item.type === 'past' || item.type === 'today_actual' ? (
-                         item.activityData && (
-                           <ActivityCard 
-                             activity={item.activityData} 
-                             onClick={setSelectedActivity} 
-                           />
-                         )
-                       ) : (
-                         item.dayData && (
-                           <SuggestedWorkoutCard 
-                             day={item.dayData}
-                             absoluteIndex={item.absoluteIndex ?? 0}
-                             onClick={(day) => setSelectedSuggestedDay(day)}
-                             isToday={item.type === 'today_suggested'}
-                           />
-                         )
-                       )}
-                     </React.Fragment>
-                   );
-                 })}
-               </div>
-             )}
+                        {/* Past Section */}
+                        {pastItems.length > 0 && (
+                          <div className="flex flex-col space-y-3.5 pt-4">
+                            <div className="flex items-center gap-3 px-1 pb-2">
+                              <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
+                                Training History
+                              </span>
+                              <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
+                            </div>
+                            {pastItems.map((item, idx, arr) => {
+                              const prevItem = idx > 0 ? arr[idx - 1] : null;
+                              let showMonthHeader = false;
+                              let monthLabel = '';
+                              if (item.activityData) {
+                                const itemMonth = new Date(item.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' });
+                                const prevMonth = prevItem && prevItem.activityData 
+                                  ? new Date(prevItem.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' })
+                                  : '';
+                                if (itemMonth !== prevMonth && idx > 0) { 
+                                  showMonthHeader = true;
+                                  monthLabel = itemMonth.toUpperCase();
+                                }
+                              }
+                              
+                              return (
+                                <React.Fragment key={item.key}>
+                                  {showMonthHeader && (
+                                    <div className="flex items-center gap-3 px-1 pt-4 pb-2">
+                                      <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
+                                        {monthLabel}
+                                      </span>
+                                      <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
+                                    </div>
+                                  )}
+                                  {item.activityData && (
+                                    <ActivityCard 
+                                      activity={item.activityData} 
+                                      onClick={setSelectedActivity} 
+                                    />
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>             )}
           </div>
         )}
 
@@ -1754,15 +1790,14 @@ const App: React.FC = () => {
               <X size={22} />
             </button>
             <div className="flex flex-col items-center">
-              <div className="w-24 h-24 rounded-full bg-emerald-500/10 flex items-center justify-center mb-8 border border-emerald-500/20 shadow-[0_0_50px_rgba(16,185,129,0.1)] relative">
-                <div className="absolute inset-2 border border-emerald-500/30 rounded-full" />
-                <Trophy size={36} className="text-emerald-400" />
+              <div className="w-10 h-10 rounded-xl bg-slate-900/50 flex flex-col items-center justify-center shrink-0 border border-white/5 shadow-inner mb-8">
+                <span className="text-[7.5px] font-black text-slate-500 uppercase leading-none mb-0.5 tracking-tighter">WRK</span>
+                <span className="text-base font-black text-white italic leading-none">OUT</span>
               </div>
               
-              <h3 className="text-3xl font-black text-white italic tracking-tighter mb-2 uppercase text-center">
-                {hasRideToday ? "TOMORROW'S" : "TODAY'S"} FOCUS
+              <h3 className="text-3xl font-black text-white italic tracking-tighter mb-10 uppercase text-center">
+                {currentWorkout.title}
               </h3>
-              <p className="text-[13px] font-black text-emerald-500 uppercase tracking-[0.25em] mb-10 text-center">{currentWorkout.title}</p>
               
               <div className="bg-[#0a0c10] p-8 rounded-[3rem] border border-white/5 w-full text-left space-y-6 shadow-inner relative overflow-hidden">
                  <div className="flex items-center justify-between border-b border-white/5 pb-5 mx-1">
@@ -1791,51 +1826,6 @@ const App: React.FC = () => {
               </div>
 
               <div className="mt-10 flex flex-col gap-4 w-full">
-                <button 
-                  onClick={async () => {
-                    if (!creds || !currentWorkout) return;
-                    setSyncingWorkout(true);
-                    try {
-                      const targetDate = new Date();
-                      if (hasRideToday) targetDate.setDate(targetDate.getDate() + 1);
-                      const dateStr = toLocalDateStr(targetDate);
-                      
-                      const workoutText = currentWorkout.workout_steps?.map(s => `- ${s.label} ${s.duration}m ${s.target_watts ? `${s.target_watts}w` : ''}`).join('\n') || currentWorkout.description;
-
-                      await uploadWorkout(creds, {
-                        name: currentWorkout.title,
-                        description: currentWorkout.description,
-                        date: dateStr,
-                        moving_time: currentWorkout.duration_minutes * 60,
-                        icu_training_load: currentWorkout.tss || 0,
-                        workout_text: workoutText
-                      });
-                      setSyncSuccess(true);
-                      setTimeout(() => setSyncSuccess(false), 3000);
-                    } catch (err) {
-                      console.error("Sync failed:", err);
-                    } finally {
-                      setSyncingWorkout(false);
-                    }
-                  }}
-                  disabled={syncingWorkout || syncSuccess || currentWorkout.intensity === 'Rest'}
-                  className={`w-full py-5 rounded-full text-[13px] font-black uppercase tracking-[0.14em] flex items-center justify-center gap-3 transition-all shadow-xl active:scale-95 ${
-                    syncSuccess 
-                      ? 'bg-emerald-500 text-white' 
-                      : currentWorkout.intensity === 'Rest'
-                      ? 'bg-slate-900 text-slate-600 border border-white/5 opacity-50 cursor-not-allowed'
-                      : 'bg-[#40e0a0] text-slate-950 hover:bg-[#38d090] shadow-emerald-400/20'
-                  }`}
-                >
-                  {syncingWorkout ? (
-                    <Loader2 size={20} className="animate-spin" />
-                  ) : syncSuccess ? (
-                    <>SYNCED <Check size={20} strokeWidth={3} /></>
-                  ) : (
-                    <>SYNC TO CALENDAR <Calendar size={20} strokeWidth={2.5} /></>
-                  )}
-                </button>
-
                 <button 
                   onClick={() => setShowWorkoutDetail(false)}
                   className="w-full py-5 bg-[#1a1c22] rounded-full text-[12px] font-black text-slate-400 hover:text-white transition-all uppercase tracking-[0.2em] active:scale-95"
@@ -1876,12 +1866,9 @@ const App: React.FC = () => {
                     <span className="text-base font-black text-white italic leading-none">{dayNum}</span>
                   </div>
                   
-                  <h3 className="text-lg font-black text-white italic tracking-tighter mb-1 uppercase text-center leading-tight px-4">
+                  <h3 className="text-lg font-black text-white italic tracking-tighter mb-6 uppercase text-center leading-tight px-4">
                     {selectedSuggestedDay.focus}
                   </h3>
-                  <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.2em] mb-6 text-center">
-                    {selectedSuggestedDay.day.toUpperCase()} FOCUS
-                  </p>
                   
                   <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-left space-y-4 relative overflow-hidden">
                  <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-4">
@@ -1910,67 +1897,6 @@ const App: React.FC = () => {
               </div>
 
               <div className="mt-6 flex flex-col gap-3 w-full">
-                {creds && (
-                  <button 
-                    onClick={async () => {
-                      if (!creds || !selectedSuggestedDay) return;
-                      const index = weeklyBriefing ? weeklyBriefing.days.indexOf(selectedSuggestedDay) : 0;
-                      
-                      setSyncingWorkout(true);
-                      try {
-                        const todayStr = toLocalDateStr(new Date());
-                        const hasActivityToday = (activities || []).some(a => a.start_date_local.startsWith(todayStr));
-                        const offset = hasActivityToday ? 1 : 0;
-
-                        const targetDate = new Date();
-                        targetDate.setDate(targetDate.getDate() + index + offset);
-                        const dateStr = toLocalDateStr(targetDate);
-                        
-                        const effOriginalFtp = weeklyBriefing?.ftp || 250;
-                        const scalingRatio = ftp && effOriginalFtp ? (ftp / effOriginalFtp) : 1;
-
-                        const workoutText = selectedSuggestedDay.workout_steps?.map(s => {
-                          const scaledWatts = s.target_pct 
-                            ? Math.round(s.target_pct * (ftp || 250)) 
-                            : (s.target_watts ? Math.round(s.target_watts * scalingRatio) : null);
-                          return `- ${s.label} ${s.duration}m ${scaledWatts ? `${scaledWatts}w` : ''}`;
-                        }).join('\n') || selectedSuggestedDay.why;
-
-                        await uploadWorkout(creds, {
-                          name: selectedSuggestedDay.focus,
-                          description: selectedSuggestedDay.why,
-                          date: dateStr,
-                          moving_time: selectedSuggestedDay.duration_target * 60,
-                          icu_training_load: selectedSuggestedDay.load_target,
-                          workout_text: workoutText
-                        });
-                        setSyncSuccess(true);
-                        setTimeout(() => setSyncSuccess(false), 3000);
-                      } catch (err) {
-                        console.error("Sync failed:", err);
-                      } finally {
-                        setSyncingWorkout(false);
-                      }
-                    }}
-                    disabled={syncingWorkout || syncSuccess || selectedSuggestedDay.intensity === 'Rest'}
-                    className={`w-full py-4 rounded-2xl text-[12px] font-black uppercase tracking-[0.14em] flex items-center justify-center gap-3 transition-all shadow-xl active:scale-95 ${
-                      syncSuccess 
-                        ? 'bg-emerald-500 text-white' 
-                        : selectedSuggestedDay.intensity === 'Rest'
-                        ? 'bg-[#1a1c22] text-slate-600 border border-white/5 opacity-50 cursor-not-allowed'
-                        : 'bg-emerald-500 text-slate-950 hover:bg-emerald-400 shadow-emerald-500/20'
-                    }`}
-                  >
-                    {syncingWorkout ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : syncSuccess ? (
-                      <>SYNCED <Check size={16} strokeWidth={3} /></>
-                    ) : (
-                      <>SYNC TO CALENDAR <Calendar size={16} strokeWidth={2.5} /></>
-                    )}
-                  </button>
-                )}
-
                 <button 
                   onClick={() => setSelectedSuggestedDay(null)}
                   className="w-full py-4 bg-[#1a1c22] rounded-2xl text-[11px] font-black text-slate-300 hover:text-white hover:bg-slate-800 transition-all uppercase tracking-[0.2em] active:scale-95"
@@ -2037,10 +1963,9 @@ const App: React.FC = () => {
                 <Trophy size={32} className="text-emerald-400" />
               </div>
               
-              <h3 className="text-2xl font-black text-white italic tracking-tighter mb-1.5 uppercase text-center leading-tight">
+              <h3 className="text-2xl font-black text-white italic tracking-tighter mb-8 uppercase text-center leading-tight">
                 {hasRideToday ? "(TOMORROW'S) " : "(TODAY'S) "} {currentWorkout?.title.toUpperCase()}
               </h3>
-              <p className="text-[11px] font-black text-emerald-500 uppercase tracking-[0.25em] mb-8 text-center">{suggestion.reasoning.slice(0, 50)}...</p>
               
               <div className="bg-[#0a0c10] p-6 rounded-[2.5rem] border border-white/5 w-full text-left space-y-5 shadow-inner relative overflow-hidden">
                  <div className="flex items-center justify-between border-b border-white/5 pb-4 mx-1">
@@ -2185,13 +2110,13 @@ const App: React.FC = () => {
           {/* Floating Options Trigger Button */}
           <button
             onClick={() => setShowOptionsMenu(!showOptionsMenu)}
-            className={`absolute bottom-6 right-6 z-50 w-12 h-12 rounded-full bg-slate-950/90 border border-white/10 text-emerald-400 flex items-center justify-center shadow-[0_8px_24px_rgba(0,0,0,0.6)] hover:border-emerald-500/30 active:scale-90 transition-all duration-300 backdrop-blur-xl`}
+            className={`absolute bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center shadow-[0_8px_24px_rgba(16,185,129,0.3)] hover:bg-emerald-400 active:scale-90 transition-all duration-300`}
             aria-label="Toggle navigation menu"
           >
             {showOptionsMenu ? (
-              <X size={20} className="text-emerald-400 animate-in spin-in-90 duration-200" />
+              <X size={24} className="animate-in spin-in-90 duration-200" />
             ) : (
-              <MoreHorizontal size={20} className="text-emerald-400 animate-in fade-in duration-200" />
+              <MoreHorizontal size={24} className="animate-in fade-in duration-200" />
             )}
           </button>
         </>

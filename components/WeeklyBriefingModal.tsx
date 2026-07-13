@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Activity, Wellness, WeeklyBriefing, IntervalsCredentials, DailySuggestion, AnnualPowerCurve } from '../types';
 import { uploadWorkout } from '../services/intervalsService';
-import { StepLabel, getStepPhaseLabel, scaleLabelWatts } from './StepLabel';
+import { StepLabel, getStepPhaseLabel, scaleLabelWatts, GroupedWorkoutStepsList } from './StepLabel';
 import { SuggestedWorkoutCard } from './SuggestedWorkoutCard';
 import { X, Sparkles, ChevronRight, Trophy, Clock, Zap, Info, Calendar as CalendarIcon, Check, Loader2, RefreshCw } from 'lucide-react';
 
@@ -423,10 +423,9 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                 <Trophy size={28} className="text-emerald-400" />
               </div>
               
-              <h3 className="text-xl font-black text-white italic tracking-tighter mb-1 uppercase text-center leading-tight">
-                {selectedDay.day.toUpperCase()} FOCUS
+              <h3 className="text-xl font-black text-white italic tracking-tighter mb-6 uppercase text-center leading-tight">
+                {selectedDay.focus}
               </h3>
-              <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.2em] mb-6 text-center">{selectedDay.focus}</p>
               
               <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-left space-y-4 relative overflow-hidden">
                  <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-4">
@@ -440,29 +439,12 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
 
                  <div className="space-y-3 py-2 max-h-[220px] overflow-y-auto custom-scrollbar px-1">
                    {selectedDay.workout_steps && selectedDay.workout_steps.length > 0 ? (
-                      selectedDay.workout_steps.map((step, sIdx) => (
-                        <div key={sIdx} className="flex flex-col gap-1 text-[13px] font-medium group">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex items-start gap-2.5 text-slate-300 min-w-0 flex-1">
-                              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] mt-1.5 flex-shrink-0" />
-                              <div className="min-w-0 flex-1 text-left">
-                                <StepLabel 
-                                  label={step.label}
-                                  target_pct={step.target_pct}
-                                  target_watts={step.target_watts}
-                                  currentFtp={ftp}
-                                  originalFtp={weeklyBriefing?.ftp}
-                                />
-                              </div>
-                            </div>
-                            {step.target_watts && (
-                              <span className="text-emerald-400 font-extrabold uppercase tracking-wider text-[9px] bg-emerald-500/10 px-2 py-0.5 rounded flex-shrink-0 italic">
-                                {getStepPhaseLabel(sIdx, selectedDay.workout_steps?.length || 0, step.label)}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ))
+                      <GroupedWorkoutStepsList 
+                        steps={selectedDay.workout_steps}
+                        currentFtp={ftp || undefined}
+                        originalFtp={weeklyBriefing?.ftp}
+                        fontSize="sm"
+                      />
                    ) : (
                       <p className="text-[13px] text-slate-400 leading-relaxed text-center px-2 font-medium opacity-80">
                         {selectedDay.why}
