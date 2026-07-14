@@ -166,17 +166,19 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
     ${p.planContext || ''}
     ${p.pcCtx}
     
-    CRITICAL PERFORMANCE RULES FOR HIGH-SPEED GENERATION AND REALISTIC COACHING:
+    CRITICAL PERFORMANCE RULES FOR HIGH-SPEED GENERATION AND REALISTIC COACHING (MAXIMIZE SPEED):
     1. Plan exactly ${totalDays} days: ${p.dayNames.join(', ')}.
-    2. "why" MUST be extremely concise, less than 6 words (e.g. "Active recovery spin" or "VO2 Max aerobic development").
-    3. "outlook_summary" MUST be less than 25 words. Keep it ultra-concise and high density.
-    4. Suggest "workout_steps" for ALL workouts EXCEPT Rest days.
-    5. INTERVAL TRAINING BIAS: Never recommend continuous, uninterrupted high-intensity blocks (Sweet Spot, Threshold, VO2Max, i.e., >85% FTP) exceeding 15-20 minutes. It is extremely unrealistic to do 30 or 45 mins of continuous solid work at threshold or FTP. You MUST structure these as intervals with recovery periods! (e.g., Warmup, Interval 1, Recovery, Interval 2, Cooldown).
-    6. "workout_steps" max 6 steps to accommodate warmups, interval sets, and cooldowns: duration (number of minutes), target_watts, target_pct (decimal representation of FTP percentage, e.g., 0.72), and label.
-    7. COMMUTE DAYS: If the user indicates they have a commute on a specific day, you ARE ALLOWED to schedule TWO separate workout sessions for that day (e.g. "Commute to work" and "Commute from work"). Return these as two separate day objects in the "days" array with identical date strings.
-    8. ${hrGuideline}
-    9. ${triathlonGuideline}
-    10. Return JSON with phase, focus, outlook_summary, days[].`;
+    2. "why" MUST be extremely concise, less than 5 words (e.g., "Active recovery spin"). Keep it as short as possible to minimize generation tokens and reduce latency!
+    3. "outlook_summary" MUST be less than 15 words. Describe the week focus in 1 ultra-concise sentence. 
+    4. "phase" and "focus" fields should be 1-3 words maximum.
+    5. Suggest "workout_steps" for ALL workouts EXCEPT Rest days.
+    6. Keep all workout step "label" text under 4-5 words (e.g., "5m Warm-up 130w", "3x5m VO2 300w"). Do not write long sentences in labels.
+    7. INTERVAL TRAINING BIAS: Never recommend continuous, uninterrupted high-intensity blocks (Sweet Spot, Threshold, VO2Max, i.e., >85% FTP) exceeding 15-20 minutes. Structure as intervals with recovery periods.
+    8. "workout_steps" max 5 steps (e.g. Warmup, Main set, Recovery, Cooldown) to drastically speed up response times.
+    9. COMMUTE DAYS: If the user indicates they have a commute on a specific day, you ARE ALLOWED to schedule TWO separate workout sessions for that day (e.g. "Commute to work" and "Commute from work"). Return these as two separate day objects in the "days" array with identical date strings. INTEGRATE any planned intensity or interval training for that day DIRECTLY into the commute sessions rather than scheduling a third, separate workout.
+    10. ${hrGuideline}
+    11. ${triathlonGuideline}
+    12. Return JSON with phase, focus, outlook_summary, days[].`;
 };
 
 export const getChatMessagePrompt = (p: ChatMessageParams): string => {

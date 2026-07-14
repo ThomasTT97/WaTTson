@@ -1,9 +1,13 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Activity, Wellness, WeeklyBriefing, IntervalsCredentials, DailySuggestion, AnnualPowerCurve } from '../types';
 import { uploadWorkout } from '../services/intervalsService';
-import { StepLabel, getStepPhaseLabel, scaleLabelWatts, GroupedWorkoutStepsList } from './StepLabel';
+import { scaleLabelWatts, GroupedWorkoutStepsList } from './StepLabel';
 import { SuggestedWorkoutCard } from './SuggestedWorkoutCard';
-import { X, Sparkles, ChevronRight, Trophy, Clock, Zap, Info, Calendar as CalendarIcon, Check, Loader2, RefreshCw } from 'lucide-react';
+import { 
+  X, Sparkles, Trophy, Clock, Zap, Info, 
+  Calendar as CalendarIcon, Check, Loader2, RefreshCw,
+  Sliders, CheckCircle
+} from 'lucide-react';
 
 interface WeeklyBriefingModalProps {
   activities: Activity[];
@@ -18,12 +22,13 @@ interface WeeklyBriefingModalProps {
   weeklyBriefing: WeeklyBriefing | null;
   weeklyBriefingError?: string | null;
   loadingWeeks: { [week: number]: boolean };
+  reworkingWeeks: number[];
   generatedWeeks: number[];
   onFetchWeek: (weekIndex: number) => void;
   planMode?: 'power' | 'hr';
   onPlanModeChange?: (mode: 'power' | 'hr') => void;
   onResetPlanContext?: () => void;
-  onUpdatePlanContext?: (context: string) => void;
+  onUpdatePlanContext?: (context: string, weekIndex?: number) => void;
   onForceRefresh?: () => void;
 }
 
@@ -31,98 +36,75 @@ const toLocalDateStr = (d: Date) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+const formatTweakForDisplay = (directive: string) => {
+  return directive
+    .replace(/^Modify Entire Plan: /, 'Plan: ')
+    .replace(/^Modify Week (\d+): /, 'Week $1: ')
+    .replace(/^Modify /, '')
+    .replace(/\. Please regenerate.*$/, '')
+    .replace(/\. Please focus.*$/, '');
+};
+
 export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({ 
-  activities, wellness, userGoal, onClose, todaySuggestion, creds, ftp, powerCurves, planContext, onResetPlanContext, onUpdatePlanContext,
-  weeklyBriefing, weeklyBriefingError, loadingWeeks, generatedWeeks, onFetchWeek, onForceRefresh,
+  activities, userGoal, onClose, creds, ftp, planContext, onResetPlanContext, onUpdatePlanContext,
+  weeklyBriefing, weeklyBriefingError, loadingWeeks, reworkingWeeks, generatedWeeks, onFetchWeek, onForceRefresh,
   planMode = 'power', onPlanModeChange
 }) => {
   const [selectedDay, setSelectedDay] = useState<WeeklyBriefing['days'][0] | null>(null);
-  const [syncingDay, setSyncingDay] = useState<string | null>(null);
-  const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
-  const [activeWeek, setActiveWeek] = useState<1 | 2 | 3 | 4>(1);
-  const [promptInput, setPromptInput] = useState('');
-  const [showChangePlanPopup, setShowChangePlanPopup] = useState(false);
   
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const isScrollingToRef = useRef<boolean>(false);
+  // DRIVER: activeWeek is selected via a simple tab bar at the top!
+  const [activeWeek, setActiveWeek] = useState<1 | 2 | 3 | 4>(1);
 
-  const handleSyncToIntervals = async (day: WeeklyBriefing['days'][0], absoluteIndex: number) => {
-    setSyncingDay(day.day);
-    try {
-      const todayStr = toLocalDateStr(new Date());
-      const hasActivityToday = activities.some(a => a.start_date_local.startsWith(todayStr));
-      const offset = hasActivityToday ? 1 : 0;
+  // Unified tweak states
+  const [tweakText, setTweakText] = useState('');
+  const [tweakTarget, setTweakTarget] = useState<'week' | 'plan'>('week'); // target week or whole plan
 
-      const targetDate = new Date();
-      targetDate.setDate(targetDate.getDate() + absoluteIndex + offset);
-      const dateStr = toLocalDateStr(targetDate);
-      
-      const effOriginalFtp = weeklyBriefing?.ftp || 250;
-      const scalingRatio = ftp && effOriginalFtp ? (ftp / effOriginalFtp) : 1;
+  useEffect(() => {
+    [2, 3, 4].forEach(wk => {
+      if (!generatedWeeks.includes(wk) && !loadingWeeks[wk]) {
+        onFetchWeek(wk);
+      }
+    });
+  }, [generatedWeeks, loadingWeeks, onFetchWeek]);
 
-      const workoutText = day.workout_steps?.map(s => {
-        const scaledWatts = s.target_pct 
-          ? Math.round(s.target_pct * (ftp || 250)) 
-          : (s.target_watts ? Math.round(s.target_watts * scalingRatio) : null);
-        
-        const scaledLabel = s.target_pct && s.target_pct > 0
-          ? scaleLabelWatts(s.label, ftp || 250, effOriginalFtp)
-          : (ftp && effOriginalFtp ? scaleLabelWatts(s.label, ftp, effOriginalFtp) : s.label);
-
-        return `- ${scaledLabel || 'Step'} ${s.duration}m ${scaledWatts ? `${scaledWatts}w` : ''}`;
-      }).join('\n') || day.why;
-
-      await uploadWorkout(creds, {
-        name: day.focus,
-        description: day.why,
-        date: dateStr,
-        moving_time: day.duration_target * 60,
-        icu_training_load: day.load_target,
-        workout_text: workoutText
-      });
-      
-      setSyncSuccess(day.day);
-      setTimeout(() => setSyncSuccess(null), 3000);
-    } catch (err) {
-      console.error("Sync failed:", err);
-      alert("Failed to sync workout to Intervals.icu calendar.");
-    } finally {
-      setSyncingDay(null);
+  const handleClearAllTweaks = () => {
+    localStorage.removeItem('wattson_plan_tweaks');
+    if (onResetPlanContext) {
+      onResetPlanContext();
     }
   };
 
-  const intensityColors = {
-    'Hard': 'text-red-400 bg-red-500/20 border-red-500/30',
-    'Medium': 'text-orange-400 bg-orange-500/20 border-orange-500/30',
-    'Easy': 'text-emerald-400 bg-emerald-500/20 border-emerald-500/30',
-    'Rest': 'text-slate-400 bg-slate-500/10 border-slate-500/20'
+  const handleRemoveTweak = (index: number) => {
+    if (!planContext) return;
+    let currentTweaks = planContext.split(' ; ').filter(Boolean);
+    currentTweaks.splice(index, 1);
+    
+    if (currentTweaks.length === 0) {
+      localStorage.removeItem('wattson_plan_tweaks');
+      if (onResetPlanContext) {
+        onResetPlanContext();
+      }
+    } else {
+      const newContext = currentTweaks.join(' ; ');
+      localStorage.setItem('wattson_plan_tweaks', JSON.stringify(currentTweaks));
+      if (onUpdatePlanContext) {
+        onUpdatePlanContext(newContext, undefined);
+      }
+    }
   };
 
-  const intensityRowStyles = {
-    'Hard': 'bg-gradient-to-r from-red-500/15 to-transparent border-red-500/20 shadow-red-950/20',
-    'Medium': 'bg-gradient-to-r from-orange-500/15 to-transparent border-orange-500/20 shadow-orange-950/20',
-    'Easy': 'bg-gradient-to-r from-emerald-500/15 to-transparent border-emerald-500/20 shadow-emerald-950/20',
-    'Rest': 'bg-slate-900/40 border-white/5 opacity-80'
-  };
-
-  const getDayAbbr = (dayStr: string) => {
-    const lower = dayStr.toLowerCase();
-    if (lower.includes('mon')) return 'MON';
-    if (lower.includes('tue')) return 'TUE';
-    if (lower.includes('wed')) return 'WED';
-    if (lower.includes('thu')) return 'THU';
-    if (lower.includes('fri')) return 'FRI';
-    if (lower.includes('sat')) return 'SAT';
-    if (lower.includes('sun')) return 'SUN';
-    const match = dayStr.match(/^([A-Za-z]{3})/);
-    if (match) return match[1].toUpperCase();
-    return dayStr.slice(0, 3).toUpperCase();
-  };
-
-  const getDayLabel = (dayStr: string) => {
-    const match = dayStr.match(/\(([^)]+)\)/);
-    if (match) return match[1];
-    return '';
+  const handleAddTweak = (newTweakDirective: string, weekIndex?: number) => {
+    let currentTweaks: string[] = [];
+    if (planContext) {
+      currentTweaks = planContext.split(' ; ').filter(Boolean);
+    }
+    currentTweaks.push(newTweakDirective);
+    const newContext = currentTweaks.join(' ; ');
+    
+    localStorage.setItem('wattson_plan_tweaks', JSON.stringify(currentTweaks));
+    if (onUpdatePlanContext) {
+      onUpdatePlanContext(newContext, weekIndex);
+    }
   };
 
   const getDayOfWeekFromAbbr = (abbr: string): number => {
@@ -156,37 +138,36 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
     return weeklyBriefing.days.slice(startIndex, startIndex + 7);
   };
 
-  const scrollToWeekSection = (wk: 1 | 2 | 3 | 4) => {
-    isScrollingToRef.current = true;
-    setActiveWeek(wk);
-    const container = scrollContainerRef.current;
-    const element = document.getElementById(`week-section-${wk}`);
-    if (container && element) {
-      container.scrollTo({
-        top: element.offsetTop - 12,
-        behavior: 'smooth'
-      });
+  const getWeekForDay = (dayObj: WeeklyBriefing['days'][0]) => {
+    if (!weeklyBriefing) return 1;
+    for (let wk = 1; wk <= 4; wk++) {
+      const days = getDaysForWeek(wk as any);
+      if (days.some(d => d.day === dayObj.day)) {
+        return wk;
+      }
     }
-    setTimeout(() => {
-      isScrollingToRef.current = false;
-    }, 800);
+    return 1;
   };
 
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    if (isScrollingToRef.current) return;
-    const container = e.currentTarget;
-    const scrollPositions = ([1, 2, 3, 4] as const).map(wk => {
-      const el = document.getElementById(`week-section-${wk}`);
-      if (!el) return { wk, distance: Infinity };
-      // Measure offset relative to container scroll top
-      const distance = Math.abs(el.offsetTop - container.scrollTop - 20);
-      return { wk, distance };
-    });
+  const getWeekSummaryStats = (wk: 1 | 2 | 3 | 4) => {
+    const days = getDaysForWeek(wk);
+    if (!days || days.length === 0) return null;
     
-    const closest = scrollPositions.reduce((min, curr) => curr.distance < min.distance ? curr : min, { wk: 1 as any, distance: Infinity });
-    if (closest.wk !== activeWeek) {
-      setActiveWeek(closest.wk);
-    }
+    const totalTss = days.reduce((sum, d) => sum + d.load_target, 0);
+    const totalDuration = days.reduce((sum, d) => sum + d.duration_target, 0);
+    const restDays = days.filter(d => d.intensity === 'Rest' || d.load_target === 0).length;
+    const workDays = days.length - restDays;
+    
+    const primaryFocuses = Array.from(new Set(days.filter(d => d.intensity !== 'Rest' && d.focus).map(d => d.focus)));
+    
+    return {
+      totalTss,
+      totalDuration,
+      restDays,
+      workDays,
+      days,
+      primaryFocuses
+    };
   };
 
   const weekPhaseNames = {
@@ -196,12 +177,29 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
     4: "Recovery & Test"
   };
 
+  const selectedWeekStats = getWeekSummaryStats(activeWeek);
+  const isWeekLoading = loadingWeeks[activeWeek];
+
+  // Quick preset tweak options
+  const weekPresets = [
+    { label: '🛌 Deload', value: 'make this week active recovery/deload' },
+    { label: '🚀 Peak Build', value: 'progress to peak intensity and higher TSS' },
+    { label: '🏔️ Base Focus', value: 'focus heavily on aerobic base endurance' },
+    { label: '⏱️ Sweet Spot', value: 'focus on sweet spot tempo work' }
+  ];
+
+  const planPresets = [
+    { label: '🛌 Deload Block', value: 'make the entire plan an active recovery/deload focus' },
+    { label: '🚀 Progress Plan', value: 'progress the entire plan with higher TSS targets' },
+    { label: '⏱️ Time-Crunched', value: 'shorten midweek workouts but keep intensity' }
+  ];
+
   return (
     <div className="fixed inset-0 z-[100] bg-[#05070a]/95 backdrop-blur-3xl flex flex-col animate-in slide-in-from-bottom duration-300 md:max-w-[480px] md:mx-auto md:shadow-2xl overflow-hidden">
       
-      {/* Header - Matches the Look and Feel of Global Top Bar */}
+      {/* Header */}
       <div 
-        className="flex-none flex items-center justify-between pb-3 px-6 border-b border-white/5 bg-transparent"
+        className="flex-none flex items-center justify-between pb-3 px-6 border-b border-white/5 bg-transparent animate-in fade-in"
         style={{ paddingTop: 'calc(env(safe-area-inset-top) + 16px)' }}
       >
         <div className="flex items-center gap-4">
@@ -213,6 +211,7 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
               <h2 className="text-2xl font-black text-white italic tracking-tight leading-none">
                 wa<span className="text-emerald-400">TT</span>son
               </h2>
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-slate-900 px-1.5 py-0.5 rounded border border-white/5 font-mono">PLAN</span>
             </div>
           </div>
         </div>
@@ -236,196 +235,244 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
         </div>
       </div>
 
-      {/* PINNED CONTROLS AREA ON TOP - Option to change via prompt */}
-      <div className="flex-none px-5 py-3 border-b border-white/5 bg-slate-950/20 flex flex-col gap-2.5">
-        
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowChangePlanPopup(true)}
-            className="flex-1 py-2.5 bg-white/5 border border-white/10 hover:border-emerald-500/30 hover:bg-white/10 text-white font-black text-[11px] uppercase tracking-widest rounded-xl transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-          >
-            <Sparkles size={12} className="text-emerald-400 animate-pulse" /> Change plan
-          </button>
-          {planContext && (
-            <button
-              onClick={() => {
-                if (onResetPlanContext) onResetPlanContext();
-              }}
-              className="px-4 py-2.5 bg-white/5 border border-white/10 hover:border-amber-500/30 hover:bg-white/10 text-slate-400 hover:text-amber-400 font-black text-[11px] uppercase tracking-widest rounded-xl transition-all active:scale-[0.98] flex items-center justify-center"
-              title="Revert to Optimal Plan"
-            >
-              <RefreshCw size={12} /> Optimal
-            </button>
-          )}
-        </div>
-
-        {/* Plan Intensity Basis Switch */}
-        <div className="flex items-center justify-between bg-white/5 border border-white/5 rounded-xl px-3.5 py-1.5">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <Zap size={11} className={planMode === 'power' ? "text-emerald-400 animate-pulse" : "text-rose-400 animate-pulse"} />
-            Plan basis
-          </span>
-          <div className="flex bg-slate-950 p-0.5 rounded-lg border border-white/5">
-            <button
-              onClick={() => onPlanModeChange?.('power')}
-              className={`px-3 py-1 text-[9px] font-black uppercase tracking-wider rounded-md transition-all ${
-                planMode === 'power'
-                  ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Power
-            </button>
-            <button
-              onClick={() => onPlanModeChange?.('hr')}
-              className={`px-3 py-1 text-[9px] font-black uppercase tracking-wider rounded-md transition-all ${
-                planMode === 'hr'
-                  ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              HR Data
-            </button>
-          </div>
-        </div>
-
-        {/* Week tab selectors (used as jump-to-week anchors) */}
-        <div className="grid grid-cols-4 gap-1 p-1 bg-slate-950/60 border border-white/5 rounded-xl">
+      {/* Week Segmented Tab switcher */}
+      <div className="flex-none px-5 py-3 border-b border-white/5 bg-slate-950/25">
+        <div className="flex gap-1.5 p-1 bg-[#090d14]/85 rounded-xl border border-white/5">
           {([1, 2, 3, 4] as const).map((wk) => (
             <button
               key={wk}
-              onClick={() => {
-                if (!generatedWeeks.includes(wk)) {
-                  onFetchWeek(wk);
-                } else {
-                  scrollToWeekSection(wk);
-                }
-              }}
-              className={`py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all text-center ${
-                activeWeek === wk
-                  ? 'bg-emerald-500 text-slate-950 shadow'
-                  : 'text-slate-500 hover:text-white hover:bg-white/5'
+              onClick={() => setActiveWeek(wk)}
+              className={`flex-1 py-2 rounded-lg text-xs font-black uppercase transition-all tracking-wider relative ${
+                activeWeek === wk 
+                  ? 'bg-emerald-500 text-slate-950 font-extrabold shadow-md scale-[1.02]' 
+                  : 'text-slate-400 hover:text-white hover:bg-white/[0.02]'
               }`}
             >
-              W{wk}
+              <span>W{wk}</span>
+              {loadingWeeks[wk] && (
+                <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-sky-400 rounded-full animate-ping" />
+              )}
             </button>
           ))}
         </div>
       </div>
 
-      {/* CONTINUOUS DAY-BY-DAY SCROLL CONTAINER */}
-      <div 
-        id="trainings-plan-scroll-container" 
-        ref={scrollContainerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 flex flex-col gap-5 relative scroll-smooth"
-      >
-        {Object.values(loadingWeeks).some(Boolean) || weeklyBriefing ? (
-          <div className="flex flex-col gap-6 animate-in fade-in duration-500 pb-12">
-            
-            {([1, 2, 3, 4] as const).map((wk) => {
-              if (loadingWeeks[wk]) {
-                 return (
-                  <div key={wk} className="flex items-center justify-center py-12">
-                    <Loader2 size={24} className="animate-spin text-emerald-500" />
-                  </div>
-                 )
-              }
-              if (!generatedWeeks.includes(wk)) {
-                return null;
-              }
-              const weekDays = getDaysForWeek(wk);
-              return (
-                <div 
-                  key={wk} 
-                  id={`week-section-${wk}`}
-                  className="scroll-mt-3 flex flex-col gap-2 border-l border-white/5 pl-4 ml-2 relative"
-                >
-                  {/* Decorative timeline node */}
-                  <div className="absolute -left-[5px] top-2.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#05070a] shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
-                  
-                  <div className="flex items-baseline justify-between mb-1">
-                    <h3 className="text-xs font-black text-white uppercase tracking-wider">
-                      Week {wk} • <span className="text-emerald-400">{weekPhaseNames[wk]}</span>
-                    </h3>
-                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
-                      {weekDays[0] && getDayLabel(weekDays[0].day)} — {weekDays[weekDays.length - 1] && getDayLabel(weekDays[weekDays.length - 1].day)}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    {weekDays.map((day, idx) => {
-                      const absoluteIdx = weeklyBriefing ? weeklyBriefing.days.indexOf(day) : idx;
-                      const today = new Date();
-                      const dayNum = today.getDate();
-                      const monthStr = today.toLocaleDateString('en-US', { month: 'short' });
-                      const isToday = day.day.includes(`(${monthStr} ${dayNum})`);
-
-                      return (
-                        <SuggestedWorkoutCard 
-                          key={idx}
-                          day={day}
-                          absoluteIndex={absoluteIdx}
-                          onClick={setSelectedDay}
-                          isToday={isToday}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Bottom info banner */}
-            <div className="p-4 bg-slate-900/40 rounded-2xl border border-white/5 flex gap-3 items-center mt-2 shrink-0">
-              <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 shrink-0">
-                 <Info size={14} className="text-emerald-500" />
-              </div>
-              <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
-                Your 4-week trainings plan adapts automatically based on recorded stressors, wellness indicators, and power curves.
-              </p>
+      {/* Scrollable container for current selected week list */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 flex flex-col gap-4 relative">
+        
+        {/* Loader overlay when reworking / AI generation is happening */}
+        {reworkingWeeks.length > 0 && (
+          <div className="absolute inset-0 bg-[#05070a]/95 backdrop-blur-md flex flex-col items-center justify-center z-50 p-6 text-center animate-in fade-in duration-300">
+            <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(16,185,129,0.15)] relative overflow-hidden">
+              <Loader2 size={32} className="animate-spin text-emerald-400" />
             </div>
-
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-center py-12 px-6 space-y-3">
-            <p className="text-sm font-bold uppercase tracking-widest text-slate-500 opacity-60">Unable to generate training plan</p>
-            {weeklyBriefingError && (
-              <p className="text-[11px] text-rose-400 max-w-xs font-medium leading-relaxed bg-rose-500/10 border border-rose-500/20 rounded-xl p-3 shadow-inner">
-                {weeklyBriefingError}
-              </p>
-            )}
+            <h4 className="text-sm font-black text-white uppercase tracking-wider mb-2 italic">Coach waTTson is calibrating your training block</h4>
+            <p className="text-slate-500 text-[10px] uppercase font-mono tracking-widest">Applying custom adaptations...</p>
           </div>
         )}
+
+        {/* Selected Week Info & Stats Card */}
+        {selectedWeekStats && !isWeekLoading && (
+          <div className="p-4 rounded-2xl border border-white/5 bg-slate-950/40 flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col">
+                <span className="text-[9px] font-black uppercase text-slate-500 tracking-wider">Week {activeWeek} Focus</span>
+                <h3 className="text-sm font-black text-white uppercase tracking-tight">
+                  {weekPhaseNames[activeWeek]}
+                </h3>
+              </div>
+
+              {/* Intensity Mode Toggle (Power vs Heart Rate) */}
+              {onPlanModeChange && (
+                <div className="flex bg-[#090d14] border border-white/5 p-0.5 rounded-lg">
+                  {(['power', 'hr'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => onPlanModeChange(mode)}
+                      className={`px-2 py-1 rounded text-[8px] font-black uppercase tracking-wider transition-all ${
+                        planMode === mode 
+                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 font-bold' 
+                          : 'text-slate-500 hover:text-slate-300'
+                      }`}
+                    >
+                      {mode === 'power' ? 'FTP' : 'HR'}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Micro Stats Row */}
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="bg-[#0c0f16]/85 border border-white/5 rounded-xl p-2 flex flex-col items-center">
+                <span className="text-[7.5px] font-bold text-slate-500 uppercase tracking-widest">TSS Target</span>
+                <span className="text-sm font-black text-emerald-400 font-mono mt-0.5">
+                  {selectedWeekStats.totalTss}
+                </span>
+              </div>
+              <div className="bg-[#0c0f16]/85 border border-white/5 rounded-xl p-2 flex flex-col items-center">
+                <span className="text-[7.5px] font-bold text-slate-500 uppercase tracking-widest">Total Duration</span>
+                <span className="text-sm font-black text-white font-mono mt-0.5 truncate max-w-full">
+                  {Math.floor(selectedWeekStats.totalDuration / 60)}h {selectedWeekStats.totalDuration % 60}m
+                </span>
+              </div>
+              <div className="bg-[#0c0f16]/85 border border-white/5 rounded-xl p-2 flex flex-col items-center">
+                <span className="text-[7.5px] font-bold text-slate-500 uppercase tracking-widest">Rides count</span>
+                <span className="text-sm font-black text-slate-300 font-mono mt-0.5">
+                  {selectedWeekStats.workDays}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Selected Week Days List */}
+        <div className="flex flex-col gap-2">
+          {isWeekLoading ? (
+            <div className="p-12 rounded-2xl flex flex-col items-center justify-center border border-white/5 bg-slate-950/20">
+              <Loader2 size={24} className="animate-spin text-emerald-500 mb-2" />
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 animate-pulse">Analyzing Week {activeWeek} suggestions...</span>
+            </div>
+          ) : selectedWeekStats ? (
+            <div className="flex flex-col gap-2 animate-in fade-in duration-300">
+              {selectedWeekStats.days.map((day, dIdx) => {
+                const absoluteIdx = weeklyBriefing ? weeklyBriefing.days.indexOf(day) : dIdx;
+                const today = new Date();
+                const dayNum = today.getDate();
+                const monthStr = today.toLocaleDateString('en-US', { month: 'short' });
+                const isToday = day.day.includes(`(${monthStr} ${dayNum})`);
+
+                return (
+                  <SuggestedWorkoutCard 
+                    key={dIdx}
+                    day={day}
+                    absoluteIndex={absoluteIdx}
+                    onClick={setSelectedDay}
+                    isToday={isToday}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">No plan loaded for Week {activeWeek}.</span>
+            </div>
+          )}
+        </div>
+
+        {/* Active plan tweaks list */}
+        {planContext && planContext.split(' ; ').filter(Boolean).length > 0 && (
+          <div className="flex flex-col gap-2 p-3 bg-[#0a0d14]/40 border border-white/5 rounded-2xl animate-in slide-in-from-bottom-2 duration-300">
+            <div className="flex justify-between items-center px-1">
+              <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                <Sliders size={8} className="text-emerald-400" /> Active Adaptations ({planContext.split(' ; ').filter(Boolean).length})
+              </span>
+              <button 
+                onClick={handleClearAllTweaks}
+                className="text-[8px] font-black text-rose-400 hover:text-rose-300 uppercase tracking-widest hover:underline font-mono"
+              >
+                Clear All
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {planContext.split(' ; ').filter(Boolean).map((tweak, index) => (
+                <div 
+                  key={index} 
+                  className="flex items-center gap-1.5 px-2 py-1 bg-emerald-500/5 border border-emerald-500/20 rounded-lg text-[8.5px] font-semibold text-emerald-400"
+                >
+                  <span className="truncate max-w-[200px]">{formatTweakForDisplay(tweak)}</span>
+                  <button 
+                    onClick={() => handleRemoveTweak(index)}
+                    className="hover:bg-emerald-500/20 p-0.5 rounded text-emerald-400/70 hover:text-emerald-400"
+                  >
+                    <X size={8} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Simplified Plan Tweak Input */}
+        <div className="p-4 rounded-2xl border border-white/5 bg-slate-950/40 flex flex-col gap-3.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+              <Sparkles size={10} className="text-emerald-400" /> Adapt Entire Training Block
+            </span>
+          </div>
+
+          <div className="relative flex items-center">
+            <input
+              type="text"
+              value={tweakText}
+              onChange={(e) => setTweakText(e.target.value)}
+              placeholder="e.g., Focus on base miles, reduce intensity..."
+              className="w-full bg-[#090d14] border border-white/10 rounded-xl pl-3.5 pr-16 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/30 font-semibold shadow-inner"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && tweakText.trim() && !isWeekLoading) {
+                  const text = tweakText.trim();
+                  const directive = `Modify Entire Plan: ${text}. Please focus the entire plan on this adjustment.`;
+                  handleAddTweak(directive, undefined);
+                  setTweakText('');
+                }
+              }}
+            />
+            <button
+              onClick={() => {
+                const text = tweakText.trim();
+                if (!text) return;
+                const directive = `Modify Entire Plan: ${text}. Please focus the entire plan on this adjustment.`;
+                handleAddTweak(directive, undefined);
+                setTweakText('');
+              }}
+              disabled={!tweakText.trim() || isWeekLoading}
+              className="absolute right-1 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-30 text-slate-950 font-black text-[9px] uppercase tracking-wider rounded-lg transition-colors"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+
+        {/* Bottom Helper Info Block */}
+        <div className="p-3 bg-slate-950/20 rounded-2xl border border-white/5 flex gap-3 items-center shrink-0">
+          <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 shrink-0">
+             <Info size={14} className="text-emerald-400" />
+          </div>
+          <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
+            Your adaptations are sent to Google Gemini Pro to dynamically recalculate training targets and stress.
+          </p>
+        </div>
+
       </div>
 
-      {/* Why Detail Popup */}
-      {selectedDay && (
+      {/* Selected Workout Detail View Drawer / Modal overlay */}
+      {selectedDay ? (
         <div className="fixed inset-0 z-[110] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedDay(null)}>
-          <div className="bg-slate-950/80 w-full max-w-sm rounded-[2rem] p-6 pb-6 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
+          <div className="bg-slate-950/90 w-full max-w-sm rounded-[2rem] p-6 pb-6 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
             <button onClick={() => setSelectedDay(null)} className="absolute top-5 right-5 text-slate-500 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full">
               <X size={18} />
             </button>
+            
             <div className="flex flex-col items-center">
-              <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center mb-5 border border-emerald-500/20 shadow-[0_0_30px_rgba(16,185,129,0.1)] relative flex-shrink-0">
-                <Trophy size={28} className="text-emerald-400" />
+              <div className="w-14 h-14 rounded-full bg-emerald-500/10 flex items-center justify-center mb-4 border border-emerald-500/20 shadow-[0_0_30px_rgba(16,185,129,0.1)] shrink-0">
+                <Trophy size={24} className="text-emerald-400" />
               </div>
               
-              <h3 className="text-xl font-black text-white italic tracking-tighter mb-6 uppercase text-center leading-tight">
+              <h3 className="text-lg font-black text-white italic tracking-tighter mb-4 uppercase text-center leading-tight">
                 {selectedDay.focus}
               </h3>
               
-              <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-left space-y-4 relative overflow-hidden">
-                 <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-4">
-                    <div className="flex items-center gap-2 text-sm font-black text-white tracking-tighter">
-                       <Clock size={16} className="text-blue-400" /> {selectedDay.duration_target} MIN
+              <div className="bg-black/60 p-4 rounded-3xl border border-white/5 w-full text-left space-y-4">
+                 <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-3">
+                    <div className="flex items-center gap-1.5 text-xs font-black text-white tracking-tighter">
+                       <Clock size={14} className="text-blue-400" /> {selectedDay.duration_target} MIN
                     </div>
-                    <div className="flex items-center gap-2 text-sm font-black text-amber-400 italic">
-                       <Zap size={16} fill="currentColor" className="text-amber-400" /> {selectedDay.load_target} TSS
+                    <div className="flex items-center gap-1.5 text-xs font-black text-amber-400 italic">
+                       <Zap size={14} fill="currentColor" className="text-amber-400" /> {selectedDay.load_target} TSS
                     </div>
                  </div>
 
-                 <div className="space-y-3 py-2 max-h-[220px] overflow-y-auto custom-scrollbar px-1">
+                 <div className="space-y-3 max-h-[180px] overflow-y-auto custom-scrollbar pr-1">
                    {selectedDay.workout_steps && selectedDay.workout_steps.length > 0 ? (
                       <GroupedWorkoutStepsList 
                         steps={selectedDay.workout_steps}
@@ -434,69 +481,50 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                         fontSize="sm"
                       />
                    ) : (
-                      <p className="text-[13px] text-slate-400 leading-relaxed text-center px-2 font-medium opacity-80">
+                      <p className="text-xs text-slate-400 leading-relaxed text-center px-2 font-medium opacity-80">
                         {selectedDay.why}
                       </p>
                    )}
                  </div>
               </div>
 
-              <div className="mt-6 flex flex-col gap-3 w-full">
+                {/* Custom Tweak Input for this Ride */}
+                <div className="mt-3">
+                  <input
+                    type="text"
+                    id="weekly-custom-ride-tweak"
+                    placeholder="Modify this ride..."
+                    className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-3 py-2.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/30 font-semibold"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const target = e.currentTarget;
+                        const text = target.value.trim();
+                        if (text) {
+                          const weekIdx = getWeekForDay(selectedDay);
+                          const directive = `Modify ${selectedDay.focus} on ${selectedDay.day.split(' ')[0]}: ${text}. Please focus on this adjustment.`;
+                          handleAddTweak(directive, weekIdx);
+                          setSelectedDay(null);
+                        }
+                      }
+                    }}
+                  />
+                </div>
+
+              {/* Action Buttons: Close */}
+              <div className="mt-5 flex flex-col gap-2 w-full">
                 <button 
                   onClick={() => setSelectedDay(null)}
-                  className="w-full py-4 bg-[#1a1c22] rounded-2xl text-[11px] font-black text-slate-300 hover:text-white hover:bg-slate-800 transition-all uppercase tracking-[0.2em] active:scale-95"
+                  className="w-full py-3 bg-[#13151b] hover:bg-slate-800 text-slate-400 hover:text-white rounded-2xl text-[10px] font-black transition-all uppercase tracking-widest"
                 >
-                  CLOSE
+                  Close
                 </button>
               </div>
+
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
-      {/* Change Plan Full Screen Modal */}
-      {showChangePlanPopup && (
-        <div className="fixed inset-0 z-[120] bg-[#05070a] flex flex-col animate-in slide-in-from-bottom-4 duration-200">
-          <div className="flex-none flex items-center justify-between p-6 pb-4 border-b border-white/5" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 24px)' }}>
-            <h3 className="text-lg font-black text-white italic tracking-tighter uppercase flex items-center gap-2">
-              <Sparkles size={18} className="text-emerald-400" />
-              Adapt Plan
-            </h3>
-            <button onClick={() => setShowChangePlanPopup(false)} className="text-slate-400 hover:text-white p-2 transition-colors">
-              <X size={20} />
-            </button>
-          </div>
-          
-          <div className="flex-1 flex flex-col p-6 h-full">
-            <p className="text-[12px] text-slate-400 leading-relaxed mb-6">
-              Ask waTTson to adapt your schedule (e.g., "Taper for Saturday race", "increase hill climb intervals", "easier week").
-            </p>
-            
-            <textarea
-              autoFocus
-              value={promptInput}
-              onChange={(e) => setPromptInput(e.target.value)}
-              placeholder="Ex: Taper for Saturday race, increase threshold..."
-              className="flex-1 w-full bg-slate-950/60 border border-white/10 rounded-2xl p-4 text-sm text-white focus:outline-none focus:border-emerald-500/30 font-semibold placeholder-slate-600 transition-colors resize-none mb-6"
-            />
-
-            <button 
-              onClick={() => {
-                if (!promptInput.trim()) return;
-                if (onUpdatePlanContext) {
-                  onUpdatePlanContext(promptInput.trim());
-                }
-                setPromptInput('');
-                setShowChangePlanPopup(false);
-              }}
-              disabled={!promptInput.trim()}
-              className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[12px] uppercase tracking-widest rounded-xl shadow-[0_0_20px_rgba(16,185,129,0.3)] active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none flex-none mb-6"
-            >
-              Apply Adaptation
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

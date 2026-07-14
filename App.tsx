@@ -18,7 +18,8 @@ import { SuggestedWorkoutCard } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
 import { WeeklyBriefingModal } from './components/WeeklyBriefingModal';
 import { ChangelogModal } from './components/ChangelogModal';
-import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList } from './components/StepLabel';
+import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts } from './components/StepLabel';
+import { CheckCircle } from 'lucide-react';
 import { 
   LayoutDashboard, 
   Bike,
@@ -164,6 +165,7 @@ const App: React.FC = () => {
   const [loadingWeeklyBriefing, setLoadingWeeklyBriefing] = useState(false);
   const [generatedWeeks, setGeneratedWeeks] = useState<number[]>([]);
   const [loadingWeeks, setLoadingWeeks] = useState<{ [week: number]: boolean }>({});
+  const [reworkingWeeks, setReworkingWeeks] = useState<number[]>([]);
 
   const [planMode, setPlanMode] = useState<'power' | 'hr'>(() => {
     return (localStorage.getItem('wattson_plan_mode') as 'power' | 'hr') || 'power';
@@ -237,9 +239,102 @@ const App: React.FC = () => {
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [planContext, setPlanContext] = useState<string | null>(() => localStorage.getItem('wattson_plan_context'));
+  const [syncingDayInApp, setSyncingDayInApp] = useState<string | null>(null);
+  const [syncSuccessInApp, setSyncSuccessInApp] = useState<string | null>(null);
+
+  const getWeekForDayInApp = (dayObj: any) => {
+    if (!weeklyBriefing) return 1;
+    const idx = weeklyBriefing.days.indexOf(dayObj);
+    if (idx === -1) return 1;
+    
+    if (weeklyBriefing.days.length === 0) return 1;
+    const firstDay = weeklyBriefing.days[0].day;
+    const getDayOfWeekFromAbbr = (abbr: string): number => {
+      const clean = abbr.trim().substring(0, 3).toLowerCase();
+      switch (clean) {
+        case 'mon': return 1;
+        case 'tue': return 2;
+        case 'wed': return 3;
+        case 'thu': return 4;
+        case 'fri': return 5;
+        case 'sat': return 6;
+        case 'sun': return 7;
+        default: return 1;
+      }
+    };
+    const firstDayOfWeek = getDayOfWeekFromAbbr(firstDay);
+    const week1Len = 8 - firstDayOfWeek;
+    
+    if (idx < week1Len) return 1;
+    if (idx < week1Len + 7) return 2;
+    if (idx < week1Len + 14) return 3;
+    return 4;
+  };
+
+  const handleAddTweakFromApp = (newTweakDirective: string, weekIndex?: number) => {
+    let currentTweaks: string[] = [];
+    if (planContext) {
+      currentTweaks = planContext.split(' ; ').filter(Boolean);
+    }
+    currentTweaks.push(newTweakDirective);
+    const newContext = currentTweaks.join(' ; ');
+    
+    setPlanContext(newContext);
+    safeSetItem('wattson_plan_context', newContext);
+    fetchWeeklyBriefingData(newContext, true, undefined, undefined, weekIndex);
+  };
+
+  const handleSyncToIntervalsFromApp = async (day: any, absoluteIndex: number) => {
+    if (!creds) return;
+    setSyncingDayInApp(day.day);
+    try {
+      const todayStr = toLocalDateStr(new Date());
+      const hasActivityToday = (activities || []).some(a => a.start_date_local.startsWith(todayStr));
+      const offset = hasActivityToday ? 1 : 0;
+
+      const targetDate = new Date();
+      targetDate.setDate(targetDate.getDate() + absoluteIndex + offset);
+      const dateStr = toLocalDateStr(targetDate);
+      
+      const effOriginalFtp = weeklyBriefing?.ftp || 250;
+      const scalingRatio = ftp && effOriginalFtp ? (ftp / effOriginalFtp) : 1;
+
+      const workoutText = day.workout_steps?.map((s: any) => {
+        const scaledWatts = s.target_pct 
+          ? Math.round(s.target_pct * (ftp || 250)) 
+          : (s.target_watts ? Math.round(s.target_watts * scalingRatio) : null);
+        
+        const scaledLabel = s.target_pct && s.target_pct > 0
+          ? scaleLabelWatts(s.label, ftp || 250, effOriginalFtp)
+          : (ftp && effOriginalFtp ? scaleLabelWatts(s.label, ftp, effOriginalFtp) : s.label);
+
+        return `- ${scaledLabel || 'Step'} ${s.duration}m ${scaledWatts ? `${scaledWatts}w` : ''}`;
+      }).join('\n') || day.why;
+
+      await uploadWorkout(creds, {
+        name: day.focus,
+        description: day.why,
+        date: dateStr,
+        moving_time: day.duration_target * 60,
+        icu_training_load: day.load_target,
+        workout_text: workoutText
+      });
+      
+      setSyncSuccessInApp(day.day);
+      setTimeout(() => setSyncSuccessInApp(null), 3000);
+    } catch (err) {
+      console.error("Sync failed:", err);
+      alert("Failed to sync workout to Intervals.icu calendar.");
+    } finally {
+      setSyncingDayInApp(null);
+    }
+  };
+
   const [showSuggestionDetail, setShowSuggestionDetail] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const todayElementRef = useRef<HTMLDivElement>(null);
+  const todayAndPastContainerRef = useRef<HTMLDivElement>(null);
+  const [hidePlanHeader, setHidePlanHeader] = useState(false);
   
   const [userGoal, setUserGoal] = useState<string>(() => localStorage.getItem('wattson_goal') || 'Improve cycling performance');
   const [showGoalEditor, setShowGoalEditor] = useState(false);
@@ -392,6 +487,7 @@ const App: React.FC = () => {
     
     if (weekIndex) {
       setLoadingWeeks(prev => ({ ...prev, [weekIndex]: true }));
+      setReworkingWeeks(prev => [...prev, weekIndex]);
     } else {
       setLoadingWeeklyBriefing(true);
     }
@@ -460,6 +556,7 @@ const App: React.FC = () => {
     } finally {
       if (weekIndex) {
         setLoadingWeeks(prev => ({ ...prev, [weekIndex]: false }));
+        setReworkingWeeks(prev => prev.filter(w => w !== weekIndex));
       } else {
         setLoadingWeeklyBriefing(false);
       }
@@ -745,6 +842,33 @@ const App: React.FC = () => {
     return [...timelineItems].sort((a, b) => b.date.getTime() - a.date.getTime());
   }, [timelineItems]);
 
+  useEffect(() => {
+    if (activeTab !== 'rides') {
+      setHidePlanHeader(false);
+      return;
+    }
+    
+    if (typeof window === 'undefined' || !('IntersectionObserver' in window)) return;
+
+    const element = todayAndPastContainerRef.current;
+    if (!element) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setHidePlanHeader(entry.isIntersecting);
+      },
+      {
+        threshold: 0,
+        rootMargin: "-20px 0px 0px 0px" // Trigger slightly before it hits the very top edge
+      }
+    );
+
+    observer.observe(element);
+    return () => {
+      observer.unobserve(element);
+    };
+  }, [activeTab, sortedTimelineItems]);
+
   const nextRideFromPlan = useMemo(() => {
     if (!weeklyBriefing || !weeklyBriefing.days) return null;
     
@@ -930,7 +1054,7 @@ const App: React.FC = () => {
 
       {/* Scrollable View Area */}
       <div 
-        className={`flex-1 hide-scrollbar scroll-smooth flex flex-col relative ${activeTab === 'chat' ? 'p-0 overflow-hidden' : 'px-4 pt-4 pb-16 overflow-y-auto'}`}
+        className={`flex-1 hide-scrollbar scroll-smooth flex flex-col relative ${activeTab === 'chat' ? 'p-0 overflow-hidden' : 'px-4 pt-4 pb-28 overflow-y-auto'}`}
       >
 
         {activeTab === 'dashboard' && (
@@ -1155,7 +1279,7 @@ const App: React.FC = () => {
                         {/* Future Rides Section */}
                         {futureItems.length > 0 && (
                           <div className="flex flex-col space-y-3.5 relative">
-                            <div className="z-10 bg-slate-950 pt-4 pb-2 px-1 -mx-1 border-b border-white/5 shadow-md">
+                            <div className={`sticky top-0 z-20 bg-[#05070a]/95 backdrop-blur-md pt-4 pb-2 px-1 -mx-1 border-b border-white/5 shadow-md transition-all duration-300 ${hidePlanHeader ? 'opacity-0 pointer-events-none -translate-y-2' : 'opacity-100'}`}>
                               <div className="flex items-center gap-3">
                                 <span className="inline-block px-3 py-1 bg-blue-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.4)]">
                                   Plan
@@ -1180,89 +1304,92 @@ const App: React.FC = () => {
                           </div>
                         )}
 
-                        {/* Today Section */}
-                        {todayItems.length > 0 && (
-                          <div className="flex flex-col space-y-3.5 pt-2">
-                            <div 
-                              className="flex items-center gap-3 px-1"
-                              ref={futureItems.length === 0 ? todayElementRef : null}
-                            >
-                              <span className="inline-block px-3 py-1 bg-emerald-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse">
-                                Today
-                              </span>
-                              <div className="flex-1 h-px bg-gradient-to-r from-emerald-500/40 to-transparent" />
-                            </div>
-                            {todayItems.map(item => (
-                              <React.Fragment key={item.key}>
-                                {item.type === 'today_actual' ? (
-                                  item.activityData && (
-                                    <ActivityCard 
-                                      activity={item.activityData} 
-                                      onClick={setSelectedActivity} 
-                                    />
-                                  )
-                                ) : (
-                                  item.dayData && (
-                                    <div className="scroll-mt-[120px]">
-                                      <SuggestedWorkoutCard 
-                                        day={item.dayData}
-                                        absoluteIndex={item.absoluteIndex ?? 0}
-                                        onClick={(day) => setSelectedSuggestedDay(day)}
-                                        isToday={true}
-                                      />
-                                    </div>
-                                  )
-                                )}
-                              </React.Fragment>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Past Section */}
-                        {pastItems.length > 0 && (
-                          <div className="flex flex-col space-y-3.5 pt-4">
-                            <div className="flex items-center gap-3 px-1 pb-2">
-                              <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
-                                Training History
-                              </span>
-                              <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
-                            </div>
-                            {pastItems.map((item, idx, arr) => {
-                              const prevItem = idx > 0 ? arr[idx - 1] : null;
-                              let showMonthHeader = false;
-                              let monthLabel = '';
-                              if (item.activityData) {
-                                const itemMonth = new Date(item.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' });
-                                const prevMonth = prevItem && prevItem.activityData 
-                                  ? new Date(prevItem.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' })
-                                  : '';
-                                if (itemMonth !== prevMonth && idx > 0) { 
-                                  showMonthHeader = true;
-                                  monthLabel = itemMonth.toUpperCase();
-                                }
-                              }
-                              
-                              return (
+                        {/* Today & Past Section Wrapper */}
+                        <div ref={todayAndPastContainerRef} className="flex flex-col space-y-3.5">
+                          {/* Today Section */}
+                          {todayItems.length > 0 && (
+                            <div className="flex flex-col space-y-3.5 pt-2">
+                              <div 
+                                className="flex items-center gap-3 px-1"
+                                ref={futureItems.length === 0 ? todayElementRef : null}
+                              >
+                                <span className="inline-block px-3 py-1 bg-emerald-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse">
+                                  Today
+                                </span>
+                                <div className="flex-1 h-px bg-gradient-to-r from-emerald-500/40 to-transparent" />
+                              </div>
+                              {todayItems.map(item => (
                                 <React.Fragment key={item.key}>
-                                  {showMonthHeader && (
-                                    <div className="flex items-center gap-3 px-1 pt-4 pb-2">
-                                      <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
-                                        {monthLabel}
-                                      </span>
-                                      <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
-                                    </div>
-                                  )}
-                                  {item.activityData && (
-                                    <ActivityCard 
-                                      activity={item.activityData} 
-                                      onClick={setSelectedActivity} 
-                                    />
+                                  {item.type === 'today_actual' ? (
+                                    item.activityData && (
+                                      <ActivityCard 
+                                        activity={item.activityData} 
+                                        onClick={setSelectedActivity} 
+                                      />
+                                    )
+                                  ) : (
+                                    item.dayData && (
+                                      <div className="scroll-mt-[120px]">
+                                        <SuggestedWorkoutCard 
+                                          day={item.dayData}
+                                          absoluteIndex={item.absoluteIndex ?? 0}
+                                          onClick={(day) => setSelectedSuggestedDay(day)}
+                                          isToday={true}
+                                        />
+                                      </div>
+                                    )
                                   )}
                                 </React.Fragment>
-                              );
-                            })}
-                          </div>
-                        )}
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Past Section */}
+                          {pastItems.length > 0 && (
+                            <div className="flex flex-col space-y-3.5 pt-4">
+                              <div className="flex items-center gap-3 px-1 pb-2">
+                                <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
+                                  Training History
+                                </span>
+                                <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
+                              </div>
+                              {pastItems.map((item, idx, arr) => {
+                                const prevItem = idx > 0 ? arr[idx - 1] : null;
+                                let showMonthHeader = false;
+                                let monthLabel = '';
+                                if (item.activityData) {
+                                  const itemMonth = new Date(item.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' });
+                                  const prevMonth = prevItem && prevItem.activityData 
+                                    ? new Date(prevItem.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' })
+                                    : '';
+                                  if (itemMonth !== prevMonth && idx > 0) { 
+                                    showMonthHeader = true;
+                                    monthLabel = itemMonth.toUpperCase();
+                                  }
+                                }
+                                
+                                return (
+                                  <React.Fragment key={item.key}>
+                                    {showMonthHeader && (
+                                      <div className="flex items-center gap-3 px-1 pt-4 pb-2">
+                                        <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
+                                          {monthLabel}
+                                        </span>
+                                        <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
+                                      </div>
+                                    )}
+                                    {item.activityData && (
+                                      <ActivityCard 
+                                        activity={item.activityData} 
+                                        onClick={setSelectedActivity} 
+                                      />
+                                    )}
+                                  </React.Fragment>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </>
                     );
                   })()}
@@ -1374,39 +1501,22 @@ const App: React.FC = () => {
                )}
              </div>
 
-             <div className="sticky bottom-0 shrink-0 px-4 pt-3 bg-slate-950/80 backdrop-blur-md border-t border-white/5 z-20" style={{ paddingBottom: isKeyboardOpen ? '12px' : 'calc(max(16px, env(safe-area-inset-bottom)) + 12px)' }}>
-               <form 
-                 onSubmit={(e) => { e.preventDefault(); handleSendMessage(chatInput); }} 
-                 className="relative max-w-full"
-               >
-                 <textarea 
-                   ref={chatInputRef}
-                   value={chatInput}
-                   onChange={(e) => {
-                     setChatInput(e.target.value);
-                     // Auto-expand
-                     e.target.style.height = 'inherit';
-                     e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
-                   }}
-                   onKeyDown={(e) => {
-                     if (e.key === 'Enter' && !e.shiftKey) {
-                       e.preventDefault();
-                       handleSendMessage(chatInput);
-                     }
-                   }}
-                   placeholder="Message waTTson..."
-                   rows={1}
-                   className="w-full bg-slate-900/60 backdrop-blur-md border border-white/10 rounded-[1.5rem] pl-5 pr-12 py-3.5 text-base text-white focus:outline-none focus:border-emerald-500/40 shadow-xl resize-none custom-scrollbar min-h-[48px] transition-colors"
-                   style={{ height: 'auto' }}
-                 />
-                 <button 
-                   type="submit" 
-                   disabled={!chatInput.trim() || isChatLoading}
-                   className="absolute right-2.5 bottom-2 w-9 h-9 bg-emerald-500 rounded-full flex items-center justify-center text-slate-950 disabled:opacity-30 active:scale-90 transition-all shadow-lg"
-                 >
-                   <Send size={16} />
-                 </button>
-               </form>
+             <div className="sticky bottom-0 shrink-0 px-4 pt-3 pb-[92px] bg-[#05070a]/90 backdrop-blur-md border-t border-white/5 z-20 flex flex-col gap-2">
+               <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest text-center">
+                 Select Diagnostic Focus
+               </span>
+               <div className="flex gap-2 overflow-x-auto pb-1.5 hide-scrollbar justify-center">
+                 {CHAT_SUGGESTIONS.map((suggestionText) => (
+                   <button 
+                     key={suggestionText}
+                     onClick={() => handleSendMessage(suggestionText)}
+                     disabled={isChatLoading}
+                     className="text-[9px] font-black text-slate-200 bg-[#12141c] border border-white/5 hover:border-emerald-500/30 hover:bg-emerald-500/5 hover:text-emerald-400 rounded-xl py-2 px-3.5 active:scale-95 transition-all flex items-center gap-1.5 uppercase tracking-wider shrink-0"
+                   >
+                     {suggestionText}
+                   </button>
+                 ))}
+               </div>
              </div>
           </div>
         )}
@@ -1909,6 +2019,9 @@ const App: React.FC = () => {
           const weekday = targetDate.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase();
           const dayNum = targetDate.getDate();
 
+          const weekIdx = getWeekForDayInApp(selectedSuggestedDay);
+          const isReworking = reworkingWeeks.includes(weekIdx) || loadingWeeks[weekIdx];
+
           return (
             <div className="fixed inset-0 z-[220] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedSuggestedDay(null)}>
               <div className="bg-slate-950/80 w-full max-w-sm rounded-[2.5rem] p-6 pb-6 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
@@ -1925,45 +2038,107 @@ const App: React.FC = () => {
                     {selectedSuggestedDay.focus}
                   </h3>
                   
-                  <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-left space-y-4 relative overflow-hidden">
-                 <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-4">
-                    <div className="flex items-center gap-2 text-sm font-black text-white tracking-tighter">
-                       <Clock size={16} className="text-blue-400" /> {selectedSuggestedDay.duration_target} MIN
+                  {isReworking ? (
+                    <div className="w-full py-8 flex flex-col items-center justify-center bg-black/60 rounded-3xl border border-white/5 text-center px-4">
+                      <Loader2 size={24} className="animate-spin text-emerald-400 mb-3" />
+                      <span className="text-[11px] font-black text-white uppercase tracking-wider mb-1">Calibrating Workout...</span>
+                      <span className="text-[9px] font-bold text-slate-500 uppercase font-mono tracking-widest">Applying custom adjustments</span>
                     </div>
-                    <div className="flex items-center gap-2 text-sm font-black text-amber-400 italic">
-                       <Zap size={16} fill="currentColor" className="text-amber-400" /> {selectedSuggestedDay.load_target} TSS
-                    </div>
-                 </div>
+                  ) : (
+                    <>
+                      <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-left space-y-4 relative overflow-hidden">
+                        <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-4">
+                          <div className="flex items-center gap-2 text-sm font-black text-white tracking-tighter">
+                            <Clock size={16} className="text-blue-400" /> {selectedSuggestedDay.duration_target} MIN
+                          </div>
+                          <div className="flex items-center gap-2 text-sm font-black text-amber-400 italic">
+                            <Zap size={16} fill="currentColor" className="text-amber-400" /> {selectedSuggestedDay.load_target} TSS
+                          </div>
+                        </div>
 
-                 <div className="space-y-3 py-2 max-h-[220px] overflow-y-auto custom-scrollbar px-1">
-                   {selectedSuggestedDay.workout_steps && selectedSuggestedDay.workout_steps.length > 0 ? (
-                     <GroupedWorkoutStepsList 
-                       steps={selectedSuggestedDay.workout_steps}
-                       currentFtp={ftp || undefined}
-                       originalFtp={weeklyBriefing?.ftp}
-                       fontSize="sm"
-                     />
-                   ) : (
-                      <p className="text-[13px] text-slate-400 leading-relaxed text-center px-2 font-medium opacity-80">
-                        {selectedSuggestedDay.why}
-                      </p>
-                   )}
-                 </div>
-              </div>
+                        <div className="space-y-3 py-2 max-h-[160px] overflow-y-auto custom-scrollbar px-1">
+                          {selectedSuggestedDay.workout_steps && selectedSuggestedDay.workout_steps.length > 0 ? (
+                            <GroupedWorkoutStepsList 
+                              steps={selectedSuggestedDay.workout_steps}
+                              currentFtp={ftp || undefined}
+                              originalFtp={weeklyBriefing?.ftp}
+                              fontSize="sm"
+                            />
+                          ) : (
+                            <p className="text-[13px] text-slate-400 leading-relaxed text-center px-2 font-medium opacity-80">
+                              {selectedSuggestedDay.why}
+                            </p>
+                          )}
+                        </div>
+                      </div>
 
-              <div className="mt-6 flex flex-col gap-3 w-full">
-                <button 
-                  onClick={() => setSelectedSuggestedDay(null)}
-                  className="w-full py-4 bg-[#1a1c22] rounded-2xl text-[11px] font-black text-slate-300 hover:text-white hover:bg-slate-800 transition-all uppercase tracking-[0.2em] active:scale-95"
-                >
-                  CLOSE
-                </button>
+                      {/* Workout Modification */}
+                      <div className="w-full mt-5 border-t border-white/5 pt-4">
+                        <input
+                          type="text"
+                          id="app-custom-ride-tweak"
+                          placeholder="Modify this ride..."
+                          className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-3 py-2.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/30 font-semibold"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              const target = e.currentTarget;
+                              const text = target.value.trim();
+                              if (text) {
+                                const directive = `Modify ${selectedSuggestedDay.focus} on ${selectedSuggestedDay.day.split(' ')[0]}: ${text}. Please focus on this adjustment.`;
+                                handleAddTweakFromApp(directive, weekIdx);
+                                target.value = '';
+                                setSelectedSuggestedDay(null);
+                              }
+                            }
+                          }}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {/* Action Buttons: Sync to Intervals & Close */}
+                  <div className="mt-6 flex flex-col gap-2 w-full">
+                    {creds && !isReworking && (
+                      <button
+                        onClick={() => handleSyncToIntervalsFromApp(selectedSuggestedDay, index)}
+                        disabled={syncingDayInApp === selectedSuggestedDay.day}
+                        className={`w-full py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2 border ${
+                          syncSuccessInApp === selectedSuggestedDay.day
+                            ? 'bg-emerald-500/10 border-emerald-400 text-emerald-400'
+                            : 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-lg hover:bg-emerald-400'
+                        }`}
+                      >
+                        {syncingDayInApp === selectedSuggestedDay.day ? (
+                          <>
+                            <Loader2 size={12} className="animate-spin" />
+                            <span>Syncing...</span>
+                          </>
+                        ) : syncSuccessInApp === selectedSuggestedDay.day ? (
+                          <>
+                            <CheckCircle size={12} />
+                            <span>Synced to Intervals.icu!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Calendar size={12} />
+                            <span>Sync to Intervals.icu</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                    
+                    <button 
+                      onClick={() => setSelectedSuggestedDay(null)}
+                      className="w-full py-3 bg-[#1a1c22] rounded-2xl text-[11px] font-black text-slate-300 hover:text-white hover:bg-slate-800 transition-all uppercase tracking-[0.2em] active:scale-95"
+                    >
+                      CLOSE
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      );
-    })()}
+          );
+      })()}
 
       {reasoningPopup && (
         <div className="absolute inset-0 z-[220] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setReasoningPopup(null)}>
@@ -2076,6 +2251,7 @@ const App: React.FC = () => {
           weeklyBriefingError={weeklyBriefingError}
           loadingWeeks={loadingWeeks}
           generatedWeeks={generatedWeeks}
+          reworkingWeeks={reworkingWeeks}
           onFetchWeek={(wk) => fetchWeeklyBriefingData(undefined, false, planMode, trainingMode, wk)}
           planMode={planMode}
           onPlanModeChange={(newMode) => {
@@ -2088,10 +2264,10 @@ const App: React.FC = () => {
             localStorage.removeItem('wattson_plan_context');
             fetchWeeklyBriefingData("", true);
           }}
-          onUpdatePlanContext={(directive) => {
+          onUpdatePlanContext={(directive, weekIndex) => {
             setPlanContext(directive);
             safeSetItem('wattson_plan_context', directive);
-            fetchWeeklyBriefingData(directive, true);
+            fetchWeeklyBriefingData(directive, true, undefined, undefined, weekIndex);
           }}
           onForceRefresh={() => {
             fetchWeeklyBriefingData(undefined, true);
@@ -2106,77 +2282,52 @@ const App: React.FC = () => {
         changes={APP_CHANGELOG}
       />
 
-      {/* Floating 3-Dot Options Menu & Button */}
+      {/* Floating Modern Navigation Dock */}
       {!isKeyboardOpen && (
-        <>
-          {/* Menu Backdrop for clicking outside */}
-          <AnimatePresence>
-            {showOptionsMenu && (
-              <div 
-                className="absolute inset-0 bg-slate-950/20 backdrop-blur-[2px] z-45"
-                onClick={() => setShowOptionsMenu(false)}
-              />
-            )}
-          </AnimatePresence>
-
-          {/* Floating Action Menu */}
-          <AnimatePresence>
-            {showOptionsMenu && (
-              <motion.div
-                initial={{ opacity: 0, y: 15, scale: 0.9 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 10, scale: 0.9 }}
-                transition={{ type: 'spring', duration: 0.25 }}
-                className="absolute bottom-20 right-6 z-50 bg-slate-950/95 border border-white/10 rounded-[1.8rem] shadow-[0_12px_40px_rgba(0,0,0,0.85)] p-3 min-w-[160px] backdrop-blur-2xl flex flex-col gap-1.5"
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-[360px] bg-slate-950/75 backdrop-blur-xl border border-white/10 rounded-2xl p-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.85)] flex items-center justify-between gap-1">
+          {[
+            { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
+            { id: 'rides', icon: Bike, label: 'Rides' },
+            { id: 'chat', icon: MessageSquare, label: 'waTTson' },
+            { id: 'settings', icon: Settings, label: 'Profile' }
+          ].map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id as any)}
+                className="relative flex-1 py-2 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all duration-300 active:scale-95 group overflow-hidden"
               >
-                <div className="px-2.5 pb-1.5 mb-1 border-b border-white/5 flex flex-col">
-                  <span className="text-[8px] font-black tracking-[0.25em] text-slate-500 uppercase">Navigation</span>
-                </div>
-                {[
-                  { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
-                  { id: 'rides', icon: Bike, label: 'Rides' },
-                  { id: 'chat', icon: MessageSquare, label: 'waTTson' },
-                  { id: 'settings', icon: Settings, label: 'Profile' }
-                ].map((item) => {
-                  const Icon = item.icon;
-                  const isActive = activeTab === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => {
-                        setActiveTab(item.id as any);
-                        setShowOptionsMenu(false);
-                      }}
-                      className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl transition-all duration-200 active:scale-95 text-left ${
-                        isActive 
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10' 
-                          : 'text-slate-400 hover:text-white border border-transparent'
-                      }`}
-                    >
-                      <Icon size={16} className={isActive ? 'text-emerald-400' : 'text-slate-500'} />
-                      <span className={`text-[12px] uppercase tracking-wider ${isActive ? 'font-black' : 'font-bold'}`}>
-                        {item.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Floating Options Trigger Button */}
-          <button
-            onClick={() => setShowOptionsMenu(!showOptionsMenu)}
-            className={`absolute bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center shadow-[0_8px_24px_rgba(16,185,129,0.3)] hover:bg-emerald-400 active:scale-90 transition-all duration-300`}
-            aria-label="Toggle navigation menu"
-          >
-            {showOptionsMenu ? (
-              <X size={24} className="animate-in spin-in-90 duration-200" />
-            ) : (
-              <MoreHorizontal size={24} className="animate-in fade-in duration-200" />
-            )}
-          </button>
-        </>
+                {isActive && (
+                  <motion.div
+                    layoutId="activeTabPill"
+                    className="absolute inset-0 bg-emerald-500/10 border border-emerald-500/20 rounded-xl"
+                    transition={{ type: 'spring', stiffness: 350, damping: 25 }}
+                  />
+                )}
+                <Icon 
+                  size={18} 
+                  className={`transition-colors duration-200 ${
+                    isActive ? 'text-emerald-400' : 'text-slate-400 group-hover:text-white'
+                  }`} 
+                />
+                <span 
+                  className={`text-[9px] uppercase tracking-wider transition-all duration-200 ${
+                    isActive ? 'text-emerald-400 font-black' : 'text-slate-500 group-hover:text-slate-300'
+                  }`}
+                >
+                  {item.label}
+                </span>
+                
+                {/* Glowing subtle indicator dot for the active tab */}
+                {isActive && (
+                  <span className="w-1 h-1 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] mt-0.5" />
+                )}
+              </button>
+            );
+          })}
+        </div>
       )}
     </div>
   );

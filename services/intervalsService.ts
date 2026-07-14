@@ -358,8 +358,9 @@ export const uploadWorkout = async (
       body: JSON.stringify(body)
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.message || "Failed to upload workout");
+      const err = await response.text();
+      console.error("Intervals.icu API error:", err);
+      throw new Error(`Failed to upload workout: ${err}`);
     }
     return await response.json();
   } catch (error) {
