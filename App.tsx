@@ -1505,6 +1505,25 @@ const App: React.FC = () => {
                <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest text-center">
                  Select Diagnostic Focus
                </span>
+                <div className="flex gap-2 mb-2">
+                  <textarea
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Ask me anything..."
+                    className="flex-1 bg-[#0a0d14] border border-white/10 rounded-xl px-3 py-2 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/30 font-semibold"
+                  />
+                  <button 
+                    onClick={() => {
+                        if (chatInput.trim()) {
+                            handleSendMessage(chatInput);
+                            setChatInput("");
+                        }
+                    }}
+                    className="bg-emerald-500 text-slate-950 px-4 rounded-xl font-black text-[10px] uppercase"
+                  >
+                    Send
+                  </button>
+                </div>
                <div className="flex gap-2 overflow-x-auto pb-1.5 hide-scrollbar justify-center">
                  {CHAT_SUGGESTIONS.map((suggestionText) => (
                    <button 
