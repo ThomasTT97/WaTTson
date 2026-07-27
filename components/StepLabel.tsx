@@ -50,6 +50,18 @@ export const StepLabel: React.FC<StepLabelProps> = ({ label, target_pct, target_
     formattedLabel = scaleLabelWatts(formattedLabel, currentFtp, effOriginalFtp);
   }
 
+  // Ensure target power is visible if we have it but it's not in the label
+  let effectiveWatts = target_watts;
+  if (!effectiveWatts && target_pct && currentFtp) {
+    effectiveWatts = Math.round(target_pct * currentFtp);
+  } else if (target_watts && currentFtp && effOriginalFtp && currentFtp !== effOriginalFtp) {
+     effectiveWatts = Math.round(target_watts * (currentFtp / effOriginalFtp));
+  }
+
+  if (effectiveWatts && effectiveWatts > 0 && !/\d+\s*[wW]\b/.test(formattedLabel) && !formattedLabel.includes('+')) {
+    formattedLabel = `${formattedLabel} @ ${effectiveWatts}w`;
+  }
+
   // Matches "3 times: 10 min 304w + 5 min 180w", "3x: 10 min 304w + 5 min 180w", etc.
   // Regex explains: optional leading number, word "times" or "x", followed by colon, and then details
   const match = formattedLabel.match(/^(\d+)\s*(?:times|x)\s*:\s*(.+)$/i) || 
