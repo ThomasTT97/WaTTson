@@ -58,6 +58,7 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
   // Unified tweak states
   const [tweakText, setTweakText] = useState('');
   const [tweakTarget, setTweakTarget] = useState<'week' | 'plan'>('week'); // target week or whole plan
+  const [rideTweakText, setRideTweakText] = useState('');
 
   useEffect(() => {
     [2, 3, 4].forEach(wk => {
@@ -489,25 +490,38 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
               </div>
 
                 {/* Custom Tweak Input for this Ride */}
-                <div className="mt-3">
+                <div className="mt-3 relative flex items-center">
                   <input
                     type="text"
                     id="weekly-custom-ride-tweak"
                     placeholder="Modify this ride..."
-                    className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-3 py-2.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/30 font-semibold"
+                    value={rideTweakText}
+                    onChange={(e) => setRideTweakText(e.target.value)}
+                    className="w-full bg-[#0a0d14] border border-white/10 rounded-xl pl-3 pr-16 py-2.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/30 font-semibold"
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        const target = e.currentTarget;
-                        const text = target.value.trim();
-                        if (text) {
-                          const weekIdx = getWeekForDay(selectedDay);
-                          const directive = `Modify ${selectedDay.focus} on ${selectedDay.day.split(' ')[0]}: ${text}. Please focus on this adjustment.`;
-                          handleAddTweak(directive, weekIdx);
-                          setSelectedDay(null);
-                        }
+                      if (e.key === 'Enter' && rideTweakText.trim()) {
+                        const weekIdx = getWeekForDay(selectedDay);
+                        const directive = `Modify ${selectedDay.focus} on ${selectedDay.day.split(' ')[0]}: ${rideTweakText.trim()}. Please focus on this adjustment.`;
+                        handleAddTweak(directive, weekIdx);
+                        setRideTweakText('');
+                        setSelectedDay(null);
                       }
                     }}
                   />
+                  <button
+                    onClick={() => {
+                      if (!rideTweakText.trim()) return;
+                      const weekIdx = getWeekForDay(selectedDay);
+                      const directive = `Modify ${selectedDay.focus} on ${selectedDay.day.split(' ')[0]}: ${rideTweakText.trim()}. Please focus on this adjustment.`;
+                      handleAddTweak(directive, weekIdx);
+                      setRideTweakText('');
+                      setSelectedDay(null);
+                    }}
+                    disabled={!rideTweakText.trim()}
+                    className="absolute right-1 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-30 text-slate-950 font-black text-[9px] uppercase tracking-wider rounded-lg transition-colors cursor-pointer"
+                  >
+                    Apply
+                  </button>
                 </div>
 
               {/* Action Buttons: Close */}

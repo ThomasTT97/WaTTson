@@ -40,8 +40,8 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
     return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
   };
 
-  const getSportInfo = (focusStr: string) => {
-    const lower = focusStr.toLowerCase();
+  const getSportInfo = (focusStr?: string) => {
+    const lower = (focusStr || '').toLowerCase();
     if (lower.includes('run') || lower.includes('running') || lower.includes('brick')) {
       return { name: 'Run', color: 'text-orange-400/60' };
     } else if (lower.includes('swim') || lower.includes('swimming') || lower.includes('pool')) {
@@ -63,15 +63,15 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
 
   const weekday = typeof absoluteIndex === 'number' 
     ? computedDate.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()
-    : getDayAbbr(day.day);
+    : getDayAbbr(day.day || '');
 
   const dayNum = typeof absoluteIndex === 'number'
     ? computedDate.getDate()
-    : getDayNumber(day.day);
+    : getDayNumber(day.day || '');
 
   const sport = getSportInfo(day.focus);
 
-  const isRest = day.intensity === 'Rest' || day.focus.toLowerCase().includes('rest') || day.load_target === 0;
+  const isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || day.load_target === 0;
 
   if (isRest) {
     return (

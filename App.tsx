@@ -2460,22 +2460,22 @@ const App: React.FC = () => {
         if (showDirectivesSubModal) {
           return (
             <div 
-              className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
+              className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-start sm:items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200"
               onClick={() => {
                 setShowRequestChangeModal(false);
                 setShowDirectivesSubModal(false);
               }}
             >
               <div 
-                className="bg-slate-950/95 w-full max-w-sm rounded-[2.5rem] p-6 relative border border-white/10 shadow-2xl space-y-4"
+                className="bg-slate-950/95 w-full max-w-sm rounded-3xl sm:rounded-[2.5rem] p-4 sm:p-6 relative border border-white/10 shadow-2xl space-y-3 sm:space-y-4 max-h-[88dvh] flex flex-col overflow-y-auto custom-scrollbar my-auto"
                 onClick={e => e.stopPropagation()}
               >
                 <button 
                   onClick={() => setShowDirectivesSubModal(false)}
-                  className="absolute top-5 left-5 text-slate-400 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full flex items-center justify-center"
+                  className="absolute top-4 left-4 sm:top-5 sm:left-5 text-slate-400 hover:text-white transition-colors p-1.5 sm:p-2 z-20 bg-black/40 rounded-full flex items-center justify-center"
                   title="Back"
                 >
-                  <ChevronLeft size={18} />
+                  <ChevronLeft size={16} />
                 </button>
 
                 <button 
@@ -2483,16 +2483,16 @@ const App: React.FC = () => {
                     setShowRequestChangeModal(false);
                     setShowDirectivesSubModal(false);
                   }}
-                  className="absolute top-5 right-5 text-slate-500 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full"
+                  className="absolute top-4 right-4 sm:top-5 sm:right-5 text-slate-500 hover:text-white transition-colors p-1.5 sm:p-2 z-20 bg-black/40 rounded-full"
                 >
-                  <X size={18} />
+                  <X size={16} />
                 </button>
 
-                <div className="text-center space-y-1 pt-2">
-                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9.5px] font-black uppercase tracking-wider mb-1">
+                <div className="text-center space-y-1 pt-1 sm:pt-2">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9.5px] font-black uppercase tracking-wider mb-0.5">
                     <Sparkles size={11} /> Plan AI Engine
                   </div>
-                  <h3 className="text-lg font-black text-white italic tracking-tight uppercase">
+                  <h3 className="text-base sm:text-lg font-black text-white italic tracking-tight uppercase">
                     Active Directives
                   </h3>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
@@ -2506,11 +2506,11 @@ const App: React.FC = () => {
                   if (activeDirectivesList.length > 0) {
                     return (
                       <div className="space-y-3">
-                        <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar p-1">
+                        <div className="space-y-2 max-h-48 sm:max-h-60 overflow-y-auto custom-scrollbar p-1">
                           {activeDirectivesList.map((directive, idx) => (
                             <div 
                               key={`${idx}-${directive}`}
-                              className="bg-[#0a0d14] border border-emerald-500/20 hover:border-emerald-500/40 rounded-xl p-3 flex items-center justify-between gap-2.5 transition-all shadow-sm"
+                              className="bg-[#0a0d14] border border-emerald-500/20 hover:border-emerald-500/40 rounded-xl p-2.5 sm:p-3 flex items-center justify-between gap-2.5 transition-all shadow-sm"
                             >
                               <div className="flex items-start gap-2 min-w-0">
                                 <span className="text-emerald-400 font-black text-[9px] mt-0.5 shrink-0 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md">
@@ -2565,7 +2565,7 @@ const App: React.FC = () => {
                     );
                   } else {
                     return (
-                      <div className="bg-[#0a0d14] border border-white/5 rounded-2xl p-6 text-center space-y-1">
+                      <div className="bg-[#0a0d14] border border-white/5 rounded-2xl p-5 text-center space-y-1">
                         <p className="text-xs text-slate-400 font-medium">No custom directives active.</p>
                       </div>
                     );
@@ -2586,14 +2586,14 @@ const App: React.FC = () => {
 
         return (
           <div 
-            className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
+            className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-start sm:items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200"
             onClick={() => {
               setShowRequestChangeModal(false);
               setShowDirectivesSubModal(false);
             }}
           >
             <div 
-              className="bg-slate-950/95 w-full max-w-sm rounded-[2.5rem] p-6 relative border border-white/10 shadow-2xl space-y-4"
+              className="bg-slate-950/95 w-full max-w-sm rounded-3xl sm:rounded-[2.5rem] p-4 sm:p-6 relative border border-white/10 shadow-2xl space-y-3 sm:space-y-4 max-h-[88dvh] flex flex-col overflow-y-auto custom-scrollbar my-auto"
               onClick={e => e.stopPropagation()}
             >
               <button 
@@ -2601,16 +2601,16 @@ const App: React.FC = () => {
                   setShowRequestChangeModal(false);
                   setShowDirectivesSubModal(false);
                 }}
-                className="absolute top-5 right-5 text-slate-500 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full"
+                className="absolute top-4 right-4 sm:top-5 sm:right-5 text-slate-500 hover:text-white transition-colors p-1.5 sm:p-2 z-20 bg-black/40 rounded-full"
               >
-                <X size={18} />
+                <X size={16} />
               </button>
 
-              <div className="text-center space-y-1 pt-1">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9.5px] font-black uppercase tracking-wider mb-1">
+              <div className="text-center space-y-0.5 sm:space-y-1 pt-0.5">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9.5px] font-black uppercase tracking-wider mb-0.5">
                   <Sparkles size={11} /> Plan AI Engine
                 </div>
-                <h3 className="text-lg font-black text-white italic tracking-tight uppercase">
+                <h3 className="text-base sm:text-lg font-black text-white italic tracking-tight uppercase">
                   Request Change
                 </h3>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
@@ -2622,42 +2622,41 @@ const App: React.FC = () => {
               {planContext && (
                 <button
                   onClick={() => setShowDirectivesSubModal(true)}
-                  className="w-full flex items-center justify-between bg-slate-900/80 hover:bg-slate-900 border border-emerald-500/30 hover:border-emerald-500/50 rounded-2xl p-3 px-3.5 transition-all group text-left active:scale-95 shadow-sm cursor-pointer"
+                  className="w-full flex items-center justify-between bg-slate-900/80 hover:bg-slate-900 border border-emerald-500/30 hover:border-emerald-500/50 rounded-xl sm:rounded-2xl p-2.5 sm:p-3 px-3.5 transition-all group text-left active:scale-95 shadow-sm cursor-pointer shrink-0"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-7 h-7 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-                      <Sparkles size={13} />
+                    <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg sm:rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                      <Sparkles size={12} />
                     </div>
                     <div className="min-w-0">
                       <span className="text-[8.5px] font-black uppercase tracking-wider text-emerald-400 block leading-tight">
                         Active Directives
                       </span>
-                      <p className="text-[11px] font-bold text-slate-200 truncate mt-0.5">
+                      <p className="text-[10.5px] font-bold text-slate-200 truncate mt-0.5">
                         "{planContext}"
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-1 text-slate-400 group-hover:text-emerald-400 text-[10px] font-bold uppercase tracking-wider shrink-0 ml-2">
                     <span>View</span>
-                    <ChevronRight size={14} />
+                    <ChevronRight size={13} />
                   </div>
                 </button>
               )}
 
               {/* Text Input Area */}
-              <div className="space-y-1.5 pt-1">
+              <div className="space-y-1 pt-0.5">
                 <textarea
                   placeholder="e.g. Shorten tomorrow's ride to 45m, add a rest day on Friday, or lower overall intensity..."
                   value={requestChangeInput}
                   onChange={(e) => setRequestChangeInput(e.target.value)}
-                  rows={4}
-                  autoFocus
-                  className="w-full bg-[#0a0d14] border border-white/10 rounded-2xl p-3.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/40 font-medium resize-none shadow-inner"
+                  rows={2}
+                  className="w-full bg-[#0a0d14] border border-white/10 rounded-xl sm:rounded-2xl p-3 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/40 font-medium resize-none shadow-inner min-h-[64px] max-h-[110px]"
                 />
               </div>
 
               {/* Apply Action */}
-              <div className="space-y-2 pt-1">
+              <div className="space-y-2 pt-0.5">
                 <button
                   onClick={() => {
                     if (!requestChangeInput.trim()) return;
@@ -2667,7 +2666,7 @@ const App: React.FC = () => {
                     setRequestChangeInput('');
                   }}
                   disabled={!requestChangeInput.trim()}
-                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-2xl disabled:opacity-40 transition-all active:scale-95 shadow-lg flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="w-full py-2.5 sm:py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl sm:rounded-2xl disabled:opacity-40 transition-all active:scale-95 shadow-lg flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Sparkles size={13} />
                   <span>Apply Change</span>
