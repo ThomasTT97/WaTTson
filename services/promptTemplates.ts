@@ -16,6 +16,7 @@ interface RideFeedbackParams {
   avgHr: number;
   userGoal: string;
   plannedWorkoutCtx: string;
+  lapsCtx: string;
   ftp?: number;
   hasPowerOnMostRides?: boolean;
   hrStatsText?: string;
@@ -88,11 +89,12 @@ export const getRideFeedbackPrompt = (p: RideFeedbackParams): string => {
     Goal: ${p.userGoal}.
     
     ${p.plannedWorkoutCtx}
+    ${p.lapsCtx}
     
     Return JSON with:
-    summary: A 1-sentence punchy coaching summary.
+    summary: A 2-4 sentence coaching summary. Start with a punchy hook. If laps/intervals data is provided, explicitly comment on the execution of the intervals (e.g., consistency, power target adherence). If no laps are provided, deduce the efforts from the overall metrics and discuss them.
     goal_contribution: A clear explanation of how this session contributes to ${p.userGoal}.
-    one_thing_to_improve: Exactly 1 action-oriented, helpful conclusion of something they could do better on their next training session based on this ride's data (e.g. "Focus on keeping your cadence above 85 rpm on climbs", "Make sure to fuel with 60g carbs per hour for rides over 90 min", "Control your heart rate during recovery intervals to maximize adaptation").
+    one_thing_to_improve: Exactly 1 action-oriented, helpful conclusion of something they could do better on their next training session based on this ride's data (e.g. "Focus on keeping your cadence above 85 rpm on climbs", "Make sure to fuel with 60g carbs per hour for rides over 90 min", "Control your heart rate during recovery intervals to maximize adaptation"). If the user missed targets during the intervals, point it out.
     workout_steps: If a planned workout exists, provide the structured steps intended for this workout. 
       Steps should include duration (mins), target_watts (W), and label.
       ${hrGuideline}`;

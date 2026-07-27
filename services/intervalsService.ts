@@ -232,13 +232,17 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
   const { apiKey } = creds;
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
   const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
-  const url = `https://intervals.icu/api/v1/activity/${activityId}/intervals`;
+  const url = `https://intervals.icu/api/v1/activity/${activityId}`;
   try {
     const response = await fetch(url, { method: 'GET', headers });
     if (!response.ok) return [];
     const data = await response.json();
-    return Array.isArray(data) ? data : [];
-  } catch (error) { return []; }
+    const intervals = data.icu_intervals || data.intervals;
+    return Array.isArray(intervals) ? intervals : [];
+  } catch (error) { 
+    console.error("fetchActivityIntervals error:", error);
+    return []; 
+  }
 };
 
 export const fetchPlannedWorkout = async (dateStr: string, creds: IntervalsCredentials): Promise<PlannedWorkout | null> => {

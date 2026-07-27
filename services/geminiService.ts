@@ -146,13 +146,31 @@ export const getRideFeedback = async (
   ftp?: number,
   allActivities?: Activity[]
 ): Promise<CoachingFeedback> => {
-  const cacheKey = `wattson_feedback_v2_${activity.id}_${userGoal || 'default'}`;
+  const cacheKey = `wattson_feedback_v3_${activity.id}_${userGoal || 'default'}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
   const plannedWorkoutCtx = plannedWorkout 
     ? `Planned Workout: "${plannedWorkout.name}". Description: "${plannedWorkout.description}".`
     : "No planned workout for this ride.";
+
+  let lapsCtx = "No specific laps/intervals data recorded on the device. Please analyze the overall session metrics (duration, power, NP, intensity, etc.) to deduce if there were any structured efforts, or if it was a steady/variable ride. Make sure to discuss these inferred efforts (or lack thereof).";
+  if (intervals && intervals.length > 0) {
+    const formatLapTime = (secs: number) => {
+      const m = Math.floor(secs / 60);
+      const s = Math.round(secs % 60);
+      return m > 0 ? `${m}m${s > 0 ? ` ${s}s` : ''}` : `${s}s`;
+    };
+
+    const formattedLaps = intervals
+      .filter(l => l.moving_time > 10) // exclude very short mis-clicks
+      .map((l, i) => `Lap ${i+1}${l.label ? ` "${l.label}"` : ''} (${l.type || 'LAP'}): ${formatLapTime(l.moving_time)}, Power: ${Math.round(l.average_watts || 0)}W, HR: ${Math.round(l.average_heartrate || 0)}bpm`)
+      .join('; ');
+    
+    if (formattedLaps.length > 0) {
+      lapsCtx = `Actual Executed Laps: ${formattedLaps}`;
+    }
+  }
 
   const prompt = getRideFeedbackPrompt({
     activityName: activity.name || '',
@@ -165,6 +183,7 @@ export const getRideFeedback = async (
     avgHr: Math.round(activity.average_heartrate || 0),
     userGoal: userGoal || 'Fitness',
     plannedWorkoutCtx,
+    lapsCtx,
     ftp,
     hasPowerOnMostRides: true,
     hrStatsText: ""

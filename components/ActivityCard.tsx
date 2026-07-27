@@ -23,6 +23,10 @@ export const getRideType = (activity: Activity): string => {
     baseType = 'Threshold';
   } else if (nameLower.includes('vo2')) {
     baseType = 'VO2 Max';
+  } else if (nameLower.includes('anaerobic')) {
+    baseType = 'Anaerobic';
+  } else if (nameLower.includes('sprint')) {
+    baseType = 'Sprint';
   } else {
     // 2. Get intensity
     let intensity = activity.icu_intensity;
@@ -74,6 +78,12 @@ export const getRideType = (activity: Activity): string => {
         baseType = 'Threshold';
       } else {
         baseType = 'VO2 Max';
+      }
+      
+      const vi = activity.icu_variability_index;
+      if (vi && vi > 1.15 && intensity > 0.75) {
+        if (vi > 1.25) baseType = 'Sprint';
+        else if (baseType === 'Threshold') baseType = 'Anaerobic';
       }
     } else {
       // 3. Fallback name cues
@@ -168,10 +178,16 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
               <Zap size={10} className="text-indigo-400/60" />
               <span className="text-slate-400">{pace}</span>
             </div>
-          ) : (activity.average_watts || activity.icu_average_watts) ? (
+          ) : (activity.weighted_average_watts || activity.icu_weighted_average_watts || activity.average_watts || activity.icu_average_watts) ? (
             <div className="flex items-center gap-1 text-[10px] font-bold">
               <Zap size={10} className="text-yellow-400/60" />
-              <span className="text-slate-400">{Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0)}W</span>
+              <span className="text-slate-400">
+                {activity.weighted_average_watts || activity.icu_weighted_average_watts ? (
+                  <>{Math.round(activity.weighted_average_watts ?? activity.icu_weighted_average_watts ?? 0)}W <span className="text-[8px] text-yellow-400/50">NP</span></>
+                ) : (
+                  <>{Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0)}W</>
+                )}
+              </span>
             </div>
           ) : activity.average_heartrate ? (
             <div className="flex items-center gap-1 text-[10px] font-bold">

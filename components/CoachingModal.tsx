@@ -30,6 +30,7 @@ interface CoachingModalProps {
 
 export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, onClose, userGoal, ftp, allActivities }) => {
   const [feedback, setFeedback] = useState<CoachingFeedback | null>(null);
+  const [intervals, setIntervals] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,11 +40,12 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
       setError(null);
       try {
         const dateStr = activity.start_date_local.split('T')[0];
-        const [intervals, plannedWorkout] = await Promise.all([
+        const [fetchedIntervals, plannedWorkout] = await Promise.all([
           fetchActivityIntervals(activity.id, creds),
           fetchPlannedWorkout(dateStr, creds)
         ]);
-        const data = await getRideFeedback(activity, intervals, plannedWorkout, userGoal, ftp, allActivities);
+        setIntervals(fetchedIntervals || []);
+        const data = await getRideFeedback(activity, fetchedIntervals, plannedWorkout, userGoal, ftp, allActivities);
         setFeedback(data);
       } catch (err: any) {
         setError(err.message || "Engine analysis failed.");
@@ -63,7 +65,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
 
   const metrics = [
     { label: 'DUR', value: formatDuration(activity.moving_time || activity.elapsed_time || 0), icon: Clock, color: 'text-blue-400', bg: 'bg-blue-500/10' },
-    { label: 'PWR', value: `${Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0)}W`, icon: Zap, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+    { label: 'NP', value: `${Math.round(activity.weighted_average_watts ?? activity.icu_weighted_average_watts ?? activity.average_watts ?? activity.icu_average_watts ?? 0)}W`, icon: Zap, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
     { label: 'HR', value: `${Math.round(activity.average_heartrate || 0)}`, icon: Heart, color: 'text-rose-400', bg: 'bg-rose-500/10' },
     { label: 'TSS', value: String(Math.round(activity.icu_training_load || activity.icu_tss || activity.training_load || 0)), icon: Target, color: 'text-amber-400', bg: 'bg-amber-500/10' }
   ];
@@ -161,6 +163,27 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                   <p className="text-[11px] text-slate-300 leading-relaxed font-semibold">
                     {feedback.one_thing_to_improve}
                   </p>
+                </div>
+              )}
+
+              {/* Laps block */}
+              {intervals && intervals.length > 0 && (
+                <div className="glass-card p-5 rounded-[1.5rem] relative overflow-hidden bg-blue-500/5 border-blue-500/10 shrink-0">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ActivityIcon size={12} className="text-blue-400" />
+                    <h3 className="text-[9px] font-black text-blue-400 uppercase tracking-widest">Recorded Laps ({intervals.length})</h3>
+                  </div>
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto hide-scrollbar">
+                    {intervals.filter(l => l.moving_time > 10).map((lap, idx) => (
+                      <div key={idx} className="flex justify-between items-center text-[10px] text-slate-300">
+                        <span className="font-semibold">{idx + 1}. {lap.label || 'Lap'}</span>
+                        <div className="flex gap-3">
+                          <span>{Math.floor(lap.moving_time / 60)}m {Math.round(lap.moving_time % 60)}s</span>
+                          <span className="text-emerald-400 font-bold">{Math.round(lap.average_watts || 0)}W</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
