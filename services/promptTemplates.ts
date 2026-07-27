@@ -175,7 +175,7 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
     6. Keep all workout step "label" text under 4-5 words (e.g., "5m Warm-up 130w", "3x5m VO2 300w"). Do not write long sentences in labels.
     7. INTERVAL TRAINING BIAS: Never recommend continuous, uninterrupted high-intensity blocks (Sweet Spot, Threshold, VO2Max, i.e., >85% FTP) exceeding 15-20 minutes. Structure as intervals with recovery periods.
     8. "workout_steps" max 5 steps (e.g. Warmup, Main set, Recovery, Cooldown) to drastically speed up response times.
-    9. COMMUTE DAYS: If the user indicates they have a commute on a specific day, you ARE ALLOWED to schedule TWO separate workout sessions for that day (e.g. "Commute to work" and "Commute from work"). Return these as two separate day objects in the "days" array with identical date strings. INTEGRATE any planned intensity or interval training for that day DIRECTLY into the commute sessions rather than scheduling a third, separate workout.
+    9. COMMUTE DAYS: If the user indicates they have a commute on a specific day, you MUST schedule TWO separate workout sessions for that day. Name the FIRST commute session "Commute AM" (morning commute) and the SECOND commute session "Commute PM" (afternoon/evening commute). Return these as two separate day objects in the "days" array with identical date strings. INTEGRATE any planned intensity or interval training for that day DIRECTLY into the commute sessions rather than scheduling a third, separate workout.
     10. ${hrGuideline}
     11. ${triathlonGuideline}
     12. Return JSON with phase, focus, outlook_summary, days[].`;

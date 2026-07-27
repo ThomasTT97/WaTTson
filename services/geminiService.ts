@@ -298,6 +298,77 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
   return result;
 };
 
+export const normalizeBriefingDays = (briefing: WeeklyBriefing): WeeklyBriefing => {
+  if (!briefing || !briefing.days) return briefing;
+
+  const normalizedDays = briefing.days.map(d => ({ ...d }));
+
+  // Group days by day string (e.g., "Mon (Jul 27)")
+  const labelGroups: Record<string, number[]> = {};
+  normalizedDays.forEach((d, idx) => {
+    const key = d.day || `day-${idx}`;
+    if (!labelGroups[key]) labelGroups[key] = [];
+    labelGroups[key].push(idx);
+  });
+
+  Object.values(labelGroups).forEach(indices => {
+    // Find sessions in this group that represent commutes
+    const commuteIndices = indices.filter(i => {
+      const focus = (normalizedDays[i].focus || '').toLowerCase();
+      const why = (normalizedDays[i].why || '').toLowerCase();
+      return focus.includes('commute') || why.includes('commute');
+    });
+
+    if (commuteIndices.length >= 2) {
+      // First commute of the day -> Commute AM
+      const idx1 = commuteIndices[0];
+      let f1 = normalizedDays[idx1].focus || 'Commute AM';
+      if (!f1.toLowerCase().includes('commute am')) {
+        if (f1.toLowerCase().includes('commute pm')) {
+          f1 = f1.replace(/commute pm/i, 'Commute AM');
+        } else if (f1.toLowerCase().includes('commute')) {
+          f1 = f1.replace(/commute/i, 'Commute AM');
+        } else {
+          f1 = 'Commute AM';
+        }
+      }
+      normalizedDays[idx1].focus = f1;
+
+      // Second commute of the day -> Commute PM
+      const idx2 = commuteIndices[1];
+      let f2 = normalizedDays[idx2].focus || 'Commute PM';
+      if (!f2.toLowerCase().includes('commute pm')) {
+        if (f2.toLowerCase().includes('commute am')) {
+          f2 = f2.replace(/commute am/i, 'Commute PM');
+        } else if (f2.toLowerCase().includes('commute')) {
+          f2 = f2.replace(/commute/i, 'Commute PM');
+        } else {
+          f2 = 'Commute PM';
+        }
+      }
+      normalizedDays[idx2].focus = f2;
+    } else if (indices.length >= 2) {
+      // If a day has 2 workouts and either/both focus is commute
+      const idx1 = indices[0];
+      const idx2 = indices[1];
+      let f1 = (normalizedDays[idx1].focus || '');
+      let f2 = (normalizedDays[idx2].focus || '');
+
+      if (f1.toLowerCase().includes('commute') && !f1.toLowerCase().includes('commute am')) {
+        normalizedDays[idx1].focus = f1.replace(/commute(\s*pm)?/i, 'Commute AM');
+      }
+      if (f2.toLowerCase().includes('commute') && !f2.toLowerCase().includes('commute pm')) {
+        normalizedDays[idx2].focus = f2.replace(/commute(\s*am)?/i, 'Commute PM');
+      }
+    }
+  });
+
+  return {
+    ...briefing,
+    days: normalizedDays
+  };
+};
+
 /**
  * Generates a 4-week (28-day) training plan outlook based on physiology and goals.
  */
@@ -335,7 +406,7 @@ export const getWeeklyBriefing = async (
   
   if (!force) {
     const cached = getCache(cacheKey);
-    if (cached) return cached;
+    if (cached) return normalizeBriefingDays(cached);
   }
 
   const latestWellness = wellness[wellness.length - 1];
@@ -460,7 +531,8 @@ export const getWeeklyBriefing = async (
       }
     }
   });
-  const result = safeParseJSON(response.text) as WeeklyBriefing;
+  const rawResult = safeParseJSON(response.text) as WeeklyBriefing;
+  const result = normalizeBriefingDays(rawResult);
   result.ftp = ftp || 250;
   setCache(cacheKey, result);
   return result;

@@ -16,7 +16,6 @@ import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProf
 import { ActivityCard } from './components/ActivityCard';
 import { SuggestedWorkoutCard } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
-import { WeeklyBriefingModal } from './components/WeeklyBriefingModal';
 import { ChangelogModal } from './components/ChangelogModal';
 import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts } from './components/StepLabel';
 import { CheckCircle } from 'lucide-react';
@@ -53,7 +52,8 @@ import {
   Info,
   Trophy,
   Loader2,
-  Edit
+  Edit,
+  Trash2
 } from 'lucide-react';
 
 const CyclistIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -159,13 +159,21 @@ const App: React.FC = () => {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const [selectedSuggestedDay, setSelectedSuggestedDay] = useState<WeeklyBriefing['days'][0] | null>(null);
-  const [showWeeklyBriefing, setShowWeeklyBriefing] = useState(false);
   const [weeklyBriefing, setWeeklyBriefing] = useState<WeeklyBriefing | null>(null);
   const [weeklyBriefingError, setWeeklyBriefingError] = useState<string | null>(null);
   const [loadingWeeklyBriefing, setLoadingWeeklyBriefing] = useState(false);
   const [generatedWeeks, setGeneratedWeeks] = useState<number[]>([]);
   const [loadingWeeks, setLoadingWeeks] = useState<{ [week: number]: boolean }>({});
   const [reworkingWeeks, setReworkingWeeks] = useState<number[]>([]);
+  const [overallTweakInput, setOverallTweakInput] = useState('');
+  const [isPlanTweakExpanded, setIsPlanTweakExpanded] = useState(false);
+  const [specificRideTweakInput, setSpecificRideTweakInput] = useState('');
+
+  const [showRequestChangeModal, setShowRequestChangeModal] = useState(false);
+  const [showDirectivesSubModal, setShowDirectivesSubModal] = useState(false);
+  const [requestChangeInput, setRequestChangeInput] = useState('');
+  const [lastAppliedTweak, setLastAppliedTweak] = useState<string | null>(null);
+  const [showTweakSuccessNotice, setShowTweakSuccessNotice] = useState(false);
 
   const [planMode, setPlanMode] = useState<'power' | 'hr'>(() => {
     return (localStorage.getItem('wattson_plan_mode') as 'power' | 'hr') || 'power';
@@ -187,6 +195,7 @@ const App: React.FC = () => {
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
   const [showAlternative, setShowAlternative] = useState(false);
 
+  const [isOtherFutureExpanded, setIsOtherFutureExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'rides' | 'chat' | 'settings'>('dashboard');
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -279,8 +288,11 @@ const App: React.FC = () => {
     currentTweaks.push(newTweakDirective);
     const newContext = currentTweaks.join(' ; ');
     
+    setLastAppliedTweak(newTweakDirective);
+    setShowTweakSuccessNotice(false);
     setPlanContext(newContext);
     safeSetItem('wattson_plan_context', newContext);
+    setActiveTab('rides');
     fetchWeeklyBriefingData(newContext, true, undefined, undefined, weekIndex);
   };
 
@@ -342,6 +354,7 @@ const App: React.FC = () => {
   const [formKey, setFormKey] = useState(creds?.apiKey || '');
   const [formId, setFormId] = useState(creds?.athleteId || '');
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+  const [expandedWeeks, setExpandedWeeks] = useState<Record<number, boolean>>({ 1: true });
 
   useEffect(() => {
     const lastSeenVersion = localStorage.getItem('wattson_last_version');
@@ -360,15 +373,42 @@ const App: React.FC = () => {
     };
 
     const handleFocusOut = () => {
-      setIsKeyboardOpen(false);
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (!active || (active.tagName !== 'INPUT' && active.tagName !== 'TEXTAREA')) {
+          setIsKeyboardOpen(false);
+        }
+      }, 100);
     };
 
     window.addEventListener('focusin', handleFocusIn);
     window.addEventListener('focusout', handleFocusOut);
 
+    const vv = window.visualViewport;
+    const handleViewportResize = () => {
+      if (vv) {
+        const isMobileKeyboard = window.innerHeight - vv.height > 150;
+        if (isMobileKeyboard) {
+          setIsKeyboardOpen(true);
+        } else {
+          const active = document.activeElement;
+          if (!active || (active.tagName !== 'INPUT' && active.tagName !== 'TEXTAREA')) {
+            setIsKeyboardOpen(false);
+          }
+        }
+      }
+    };
+
+    if (vv) {
+      vv.addEventListener('resize', handleViewportResize);
+    }
+
     return () => {
       window.removeEventListener('focusin', handleFocusIn);
       window.removeEventListener('focusout', handleFocusOut);
+      if (vv) {
+        vv.removeEventListener('resize', handleViewportResize);
+      }
     };
   }, []);
 
@@ -393,6 +433,7 @@ const App: React.FC = () => {
         getAnnualPowerCurves(activeCreds, 3) // Last 3 years
       ]);
       
+      console.log("Fetched activities sample:", fetchedActivities?.length > 0 ? fetchedActivities[0] : "empty");
       setActivities(fetchedActivities || []);
       setWellnessData(fetchedWellness || []);
       setPowerCurves(curves || []);
@@ -507,11 +548,7 @@ const App: React.FC = () => {
         : "";
         
       let startContext = `CURRENT DATE: ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}. `;
-      if (hasActivityToday) {
-        startContext += `Plan MUST start from TOMORROW, which is ${tomorrowName} (Day 1 = Tomorrow), as the athlete already completed a workout today. ${todaySuggestionText} Use this workout for ${tomorrowName}. `;
-      } else {
-        startContext += `Plan MUST start from TODAY, which is ${todayName}. ${todaySuggestionText} Use this workout for ${todayName} (Day 1). `;
-      }
+      startContext += `Plan MUST start from TODAY, which is ${todayName} (Day 1 = Today). Note: The athlete may have completed a workout today (${hasActivityToday ? '1 or more activities completed today' : 'no activities completed yet today'}). If their request or custom directives specify multiple workouts or commutes per day, include any remaining or planned workouts for Today in Day 1. When scheduling 2 commutes for a day, the first commute MUST be named "Commute AM" and the second commute MUST be named "Commute PM". `;
 
       const ctxToUse = customPlanContext !== undefined ? customPlanContext : (planContext || undefined);
       const activeMode = mode || planMode;
@@ -559,6 +596,9 @@ const App: React.FC = () => {
         setReworkingWeeks(prev => prev.filter(w => w !== weekIndex));
       } else {
         setLoadingWeeklyBriefing(false);
+      }
+      if (lastAppliedTweak) {
+        setShowTweakSuccessNotice(true);
       }
     }
   }, [activities, wellnessData, userGoal, suggestion, ftp, powerCurves, planContext, planMode, trainingMode]);
@@ -664,6 +704,18 @@ const App: React.FC = () => {
   }, [activities]);
 
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const scrollToTop = () => {
+      if (mainScrollRef.current) {
+        mainScrollRef.current.scrollTop = 0;
+      }
+    };
+    scrollToTop();
+    const timer = setTimeout(scrollToTop, 50);
+    return () => clearTimeout(timer);
+  }, [activeTab]);
 
   const handleSendMessage = async (text: string) => {
     if (!text.trim() || isChatLoading) return;
@@ -773,35 +825,45 @@ const App: React.FC = () => {
       absoluteIndex?: number;
     }[] = [];
 
+    const todaySuggestedList: typeof items = [];
+    const futureSuggestedList: typeof items = [];
+
     // 1. Process suggested workouts from weekly briefing
     if (weeklyBriefing && weeklyBriefing.days) {
-      const hasActivityToday = (activities || []).some(a => a.start_date_local.startsWith(todayStr));
-      const offset = hasActivityToday ? 1 : 0;
+      const uniqueDayLabels: string[] = [];
+      weeklyBriefing.days.forEach(d => {
+        if (d.day && !uniqueDayLabels.includes(d.day)) {
+          uniqueDayLabels.push(d.day);
+        }
+      });
 
       weeklyBriefing.days.forEach((day, idx) => {
+        const dayOffset = uniqueDayLabels.indexOf(day.day) !== -1 ? uniqueDayLabels.indexOf(day.day) : idx;
         const targetDate = new Date(today);
-        targetDate.setDate(today.getDate() + idx + offset);
+        targetDate.setDate(today.getDate() + dayOffset);
         
         const dateStr = toLocalDateStr(targetDate);
         const isTodayDay = dateStr === todayStr;
 
         if (isTodayDay) {
-          items.push({
-            type: 'today_suggested',
-            key: `suggested-today-${idx}`,
-            date: targetDate,
-            label: "Today's Target Workout",
-            dayData: day,
-            absoluteIndex: idx
-          });
+          if (day && day.intensity !== 'Rest' && !day.focus?.toLowerCase().includes('rest') && day.load_target > 0) {
+            todaySuggestedList.push({
+              type: 'today_suggested',
+              key: `suggested-today-${idx}`,
+              date: targetDate,
+              label: "Today's Target Workout",
+              dayData: day,
+              absoluteIndex: dayOffset
+            });
+          }
         } else if (targetDate > today) {
-          items.push({
+          futureSuggestedList.push({
             type: 'future_suggested',
             key: `suggested-future-${idx}`,
             date: targetDate,
             label: "Suggested Workout",
             dayData: day,
-            absoluteIndex: idx
+            absoluteIndex: dayOffset
           });
         }
       });
@@ -812,12 +874,15 @@ const App: React.FC = () => {
     const recognizedTypes = ['Ride', 'VirtualRide', 'Run', 'VirtualRun', 'Swim'];
     const filtered = safeActivities.filter(a => !a.type || recognizedTypes.includes(a.type));
 
+    const todayActualList: typeof items = [];
+    const pastList: typeof items = [];
+
     filtered.forEach(a => {
       const activityDate = new Date(a.start_date_local);
       const dateOnlyStr = a.start_date_local.split('T')[0];
       
       if (dateOnlyStr === todayStr) {
-        items.push({
+        todayActualList.push({
           type: 'today_actual',
           key: `actual-today-${a.id}`,
           date: activityDate,
@@ -825,7 +890,7 @@ const App: React.FC = () => {
           activityData: a
         });
       } else if (activityDate < today) {
-        items.push({
+        pastList.push({
           type: 'past',
           key: `actual-past-${a.id}`,
           date: activityDate,
@@ -835,7 +900,38 @@ const App: React.FC = () => {
       }
     });
 
-    return items;
+    // Match actual activities today against suggested workouts today so completed rides replace corresponding suggested sessions (e.g. morning commute)
+    let remainingTodaySuggested = [...todaySuggestedList];
+    const sortedTodayActual = [...todayActualList].sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    sortedTodayActual.forEach(actual => {
+      const nameLower = (actual.activityData?.name || '').toLowerCase();
+      
+      let matchIdx = -1;
+      if (nameLower.includes('commute am') || nameLower.includes('morning')) {
+        matchIdx = remainingTodaySuggested.findIndex(s => s.dayData?.focus.toLowerCase().includes('commute am'));
+      } else if (nameLower.includes('commute pm') || nameLower.includes('afternoon') || nameLower.includes('evening')) {
+        matchIdx = remainingTodaySuggested.findIndex(s => s.dayData?.focus.toLowerCase().includes('commute pm'));
+      } else if (nameLower.includes('commute')) {
+        matchIdx = remainingTodaySuggested.findIndex(s => s.dayData?.focus.toLowerCase().includes('commute'));
+      }
+      
+      // Fallback: match first remaining suggested ride for today
+      if (matchIdx === -1 && remainingTodaySuggested.length > 0) {
+        matchIdx = 0;
+      }
+      
+      if (matchIdx !== -1) {
+        remainingTodaySuggested.splice(matchIdx, 1);
+      }
+    });
+
+    return [
+      ...futureSuggestedList,
+      ...remainingTodaySuggested,
+      ...todayActualList,
+      ...pastList
+    ];
   }, [activities, weeklyBriefing]);
 
   const sortedTimelineItems = useMemo(() => {
@@ -875,25 +971,31 @@ const App: React.FC = () => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayStr = toLocalDateStr(today);
-    const hasActivityToday = (activities || []).some(a => a.start_date_local.startsWith(todayStr));
-    const offset = hasActivityToday ? 1 : 0;
+
+    const uniqueDayLabels: string[] = [];
+    weeklyBriefing.days.forEach(d => {
+      if (d.day && !uniqueDayLabels.includes(d.day)) {
+        uniqueDayLabels.push(d.day);
+      }
+    });
 
     const daysWithDates = weeklyBriefing.days.map((day, idx) => {
+      const dayOffset = uniqueDayLabels.indexOf(day.day) !== -1 ? uniqueDayLabels.indexOf(day.day) : idx;
       const targetDate = new Date(today);
-      targetDate.setDate(today.getDate() + idx + offset);
+      targetDate.setDate(today.getDate() + dayOffset);
       const isRest = day?.intensity === 'Rest' || day?.focus.toLowerCase().includes('rest') || day?.load_target === 0;
       return {
         day,
         date: targetDate,
         isRest,
-        absoluteIndex: idx
+        absoluteIndex: dayOffset
       };
     });
 
     const upcomingRides = daysWithDates.filter(d => {
       if (d.isRest) return false;
       if (toLocalDateStr(d.date) === todayStr) {
-        return !hasActivityToday;
+        return true;
       }
       return d.date > today;
     });
@@ -901,30 +1003,13 @@ const App: React.FC = () => {
     return upcomingRides[0] || null;
   }, [weeklyBriefing, activities]);
 
-  useEffect(() => {
-    if (activeTab === 'rides') {
-      const scrollToday = () => {
-        if (todayElementRef.current) {
-          todayElementRef.current.scrollIntoView({ behavior: 'auto', block: 'start' });
-        }
-      };
-      scrollToday();
-      const t1 = setTimeout(scrollToday, 50);
-      const t2 = setTimeout(scrollToday, 150);
-      const t3 = setTimeout(scrollToday, 400);
-      return () => {
-        clearTimeout(t1);
-        clearTimeout(t2);
-        clearTimeout(t3);
-      };
-    }
-  }, [activeTab, sortedTimelineItems]);
+
 
   useEffect(() => {
-    if (chatEndRef.current) {
+    if (activeTab === 'chat' && chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, isChatLoading]);
+  }, [messages, isChatLoading, activeTab, isKeyboardOpen]);
 
   const currentWorkout = suggestion ? (showAlternative ? suggestion.alternative : suggestion.primary) : null;
 
@@ -1054,200 +1139,266 @@ const App: React.FC = () => {
 
       {/* Scrollable View Area */}
       <div 
+        ref={mainScrollRef}
         className={`flex-1 hide-scrollbar scroll-smooth flex flex-col relative ${activeTab === 'chat' ? 'p-0 overflow-hidden' : 'px-4 pt-4 pb-28 overflow-y-auto'}`}
       >
 
         {activeTab === 'dashboard' && (
-          <div className="flex flex-col space-y-3.5 animate-in fade-in duration-500 pb-2">
+          <div className="flex flex-col space-y-4 animate-in fade-in duration-500 pb-2">
             
-            {/* Section: Why */}
-            <div className="flex flex-col space-y-1.5">
-              <div className="px-1">
-                <span className="inline-block px-2.5 py-0.5 bg-emerald-500 text-slate-950 text-[9px] font-black uppercase tracking-[0.2em] rounded-md">
+            {/* Section 1: WHY - The Goal */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 px-1">
+                <span className="px-2 py-0.5 bg-emerald-500 text-slate-950 text-[8.5px] font-black uppercase tracking-[0.15em] rounded-md shrink-0">
                   Why
                 </span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                  The Goal
+                </span>
               </div>
-              <div className="glass-card p-2.5 rounded-xl border border-emerald-500/10 flex items-center gap-2.5 bg-gradient-to-r from-slate-950 via-slate-900/40 to-slate-950 relative overflow-hidden group">
-                <div className="absolute inset-y-0 right-0 w-32 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none group-hover:bg-emerald-500/10 transition-all duration-500" />
-                
-                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex flex-shrink-0 items-center justify-center relative shadow-inner overflow-hidden">
-                  <div className="absolute inset-1.5 border border-emerald-500/25 rounded-lg animate-ping [animation-duration:3s]" />
-                  <Target size={15} className="text-emerald-400" />
+              
+              <div className="glass-card px-3 py-2.5 rounded-2xl border border-white/10 flex items-center justify-between gap-2 bg-slate-900/40">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                    <Target size={13} />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="text-xs font-black text-white italic tracking-tight truncate">
+                      "{userGoal || 'Define your primary training goal'}"
+                    </h2>
+                  </div>
                 </div>
-                
-                <div className="flex-1 min-w-0 pr-1">
-                  <h2 className="text-[12px] font-black text-white italic tracking-tight leading-snug truncate">
-                    "{userGoal || 'Define your primary training goal'}"
-                  </h2>
-                </div>
-                
                 <button
                   onClick={() => setShowGoalEditor(true)}
-                  className="w-7 h-7 rounded-md bg-white/5 border border-white/5 text-slate-400 hover:text-white hover:bg-white/10 transition-all active:scale-95 flex items-center justify-center shrink-0"
+                  className="p-1.5 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white transition-all shrink-0 active:scale-95"
                   title="Edit Goal"
                 >
-                  <Edit size={10} />
+                  <Edit size={11} />
                 </button>
               </div>
             </div>
 
-            {/* Section: How */}
-            <div className="flex flex-col space-y-1.5">
-              <div className="px-1">
-                <span className="inline-block px-2.5 py-0.5 bg-emerald-500 text-slate-950 text-[9px] font-black uppercase tracking-[0.2em] rounded-md">
+            {/* Section 2: HOW - Next Ride & Week */}
+            <div className="space-y-1.5 pt-0.5">
+              <div className="flex items-center gap-2 px-1">
+                <span className="px-2 py-0.5 bg-emerald-500 text-slate-950 text-[8.5px] font-black uppercase tracking-[0.15em] rounded-md shrink-0">
                   How
                 </span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                  Next Ride & Week
+                </span>
               </div>
-              
-              <div className="grid grid-cols-1 gap-2">
-                {/* Training Plan Card */}
-                <div 
-                  onClick={() => setShowWeeklyBriefing(true)}
-                  className="glass-card p-2.5 rounded-xl border border-white/5 hover:border-emerald-500/20 flex items-center gap-2.5 bg-gradient-to-r from-slate-950 via-slate-900/20 to-slate-950 active:scale-[0.99] transition-all duration-300 cursor-pointer group"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500/20 group-hover:scale-105 transition-all shrink-0">
-                    <Calendar size={14} className="text-emerald-400" />
+
+              <div className="space-y-2">
+                {/* Visual indicator when plan is updating or updated */}
+                {loadingWeeklyBriefing && (
+                  <div className="glass-card p-3 rounded-2xl border border-emerald-500/40 bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-950 animate-pulse flex items-center gap-3 shadow-lg">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                      <Loader2 size={16} className="animate-spin text-emerald-400" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[8px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                          Updating Plan
+                        </span>
+                        {lastAppliedTweak && (
+                          <span className="text-[8px] font-bold text-slate-400 truncate">
+                            "{lastAppliedTweak}"
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] font-bold text-white truncate mt-0.5">
+                        Recalibrating workouts to match requested change...
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-[11px] font-black uppercase tracking-wider text-white">
-                      Trainings Plan
-                    </h3>
+                )}
+
+                {!loadingWeeklyBriefing && showTweakSuccessNotice && lastAppliedTweak && (
+                  <div className="glass-card p-2.5 px-3 rounded-2xl border border-emerald-500/30 bg-slate-900/80 flex items-center justify-between gap-2 shadow-md animate-in fade-in duration-300">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                        <Check size={12} className="stroke-[3]" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[8px] font-black uppercase tracking-widest text-emerald-400 block leading-none">Plan Updated</span>
+                        <p className="text-[10.5px] font-extrabold text-white truncate mt-0.5">
+                          "{lastAppliedTweak}"
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowTweakSuccessNotice(false)}
+                      className="p-1 text-slate-500 hover:text-white shrink-0"
+                    >
+                      <X size={12} />
+                    </button>
                   </div>
-                  <ChevronRight size={12} className="text-slate-500 group-hover:text-emerald-400 group-hover:translate-x-0.5 transition-all shrink-0" />
-                </div>
+                )}
 
                 {/* Next Ride Card */}
                 {nextRideFromPlan ? (
                   <div 
-                    onClick={() => setSelectedSuggestedDay(nextRideFromPlan.day)}
-                    className="glass-card p-2.5 rounded-xl border border-white/5 hover:border-emerald-500/20 flex items-center gap-2.5 bg-gradient-to-r from-slate-950 via-slate-900/20 to-slate-950 active:scale-[0.99] transition-all duration-300 cursor-pointer group relative overflow-hidden"
+                    onClick={() => {
+                      setActiveTab('rides');
+                      setSelectedSuggestedDay(nextRideFromPlan.day);
+                    }}
+                    className="glass-card p-3 rounded-2xl border border-emerald-500/20 bg-gradient-to-r from-emerald-950/20 via-slate-900/60 to-slate-950 active:scale-[0.99] transition-all cursor-pointer group relative overflow-hidden flex items-center justify-between gap-3 shadow-sm"
                   >
-                    <div className="absolute top-0 right-0 px-2 py-0.5 bg-emerald-500/10 border-l border-b border-emerald-500/10 rounded-bl-lg text-[7px] font-black uppercase tracking-wider text-emerald-400">
-                      {getFriendlyNextRideDay(nextRideFromPlan.date)}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0 group-hover:scale-105 transition-transform">
+                        <Bike size={17} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                            Next • {getFriendlyNextRideDay(nextRideFromPlan.date)}
+                          </span>
+                          <span className="text-[8px] font-extrabold text-amber-400 uppercase tracking-wider">
+                            {nextRideFromPlan.day.intensity}
+                          </span>
+                        </div>
+                        <h3 className="text-xs font-black text-white group-hover:text-emerald-400 transition-colors truncate mt-1">
+                          {nextRideFromPlan.day.focus}
+                        </h3>
+                      </div>
                     </div>
 
-                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500/20 group-hover:scale-105 transition-all shrink-0">
-                      <Bike size={14} className="text-emerald-400" />
-                    </div>
-                    <div className="flex-1 min-w-0 pr-8">
-                      <span className="block text-[8px] font-black text-slate-500 uppercase tracking-widest mb-0.5">
-                        Next Scheduled Ride
-                      </span>
-                      <h3 className="text-[11px] font-black text-white group-hover:text-emerald-400 transition-colors truncate">
-                        {nextRideFromPlan.day.focus}
-                      </h3>
-                    </div>
-                    <ChevronRight size={12} className="text-slate-500 group-hover:text-emerald-400 group-hover:translate-x-0.5 transition-all shrink-0" />
-                  </div>
-                ) : (
-                  <div className="glass-card p-2.5 rounded-xl border border-white/5 flex items-center gap-2.5 bg-gradient-to-r from-slate-950 via-slate-900/20 to-slate-950 opacity-60">
-                    <div className="w-8 h-8 rounded-lg bg-slate-900/50 border border-white/5 flex items-center justify-center text-slate-500 shrink-0">
-                      <Bike size={14} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <span className="block text-[8px] font-black text-slate-500 uppercase tracking-widest mb-0.5">
-                        Next Scheduled Ride
-                      </span>
-                      <h3 className="text-[11px] font-bold text-slate-400 truncate">
-                        No upcoming ride planned
-                      </h3>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="text-right">
+                        <span className="text-xs font-mono font-black text-white block">{nextRideFromPlan.day.duration_target}m</span>
+                        <span className="text-[9px] font-mono font-bold text-emerald-400">{nextRideFromPlan.day.load_target} TSS</span>
+                      </div>
+                      <ChevronRight size={14} className="text-slate-500 group-hover:text-emerald-400 transition-colors" />
                     </div>
                   </div>
-                )}
+                ) : null}
+
+                {/* Coming Week Summary Row */}
+                {(() => {
+                  const comingWeekDays = weeklyBriefing?.days ? weeklyBriefing.days.slice(0, 7) : [];
+                  const comingWeekRides = comingWeekDays.filter(d => d.intensity !== 'Rest' && !d.focus.toLowerCase().includes('rest') && d.load_target > 0);
+                  const comingWeekTss = comingWeekDays.reduce((acc, d) => acc + (d.load_target || 0), 0);
+                  const comingWeekMins = comingWeekDays.reduce((acc, d) => acc + (d.duration_target || 0), 0);
+                  const comingWeekHours = Math.round(comingWeekMins / 60 * 10) / 10;
+
+                  return (
+                    <div 
+                      onClick={() => setActiveTab('rides')}
+                      className="glass-card p-2.5 rounded-2xl border border-white/10 bg-slate-900/40 hover:border-emerald-500/20 active:scale-[0.99] transition-all cursor-pointer group space-y-2"
+                    >
+                      <div className="flex items-center justify-between px-0.5">
+                        <span className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
+                          <Calendar size={11} className="text-blue-400" /> Planned Week Outlook
+                        </span>
+                        <span className="text-[8.5px] font-bold text-emerald-400 flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+                          View Rides <ChevronRight size={10} />
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 bg-black/30 p-2 rounded-xl border border-white/5 text-center">
+                        <div>
+                          <span className="text-[7.5px] font-black uppercase text-slate-500 tracking-wider block">Volume</span>
+                          <span className="text-xs font-black text-white font-mono mt-0.5 block">{comingWeekHours}h</span>
+                        </div>
+                        <div>
+                          <span className="text-[7.5px] font-black uppercase text-slate-500 tracking-wider block">Target Load</span>
+                          <span className="text-xs font-black text-blue-400 font-mono mt-0.5 block">{comingWeekTss} TSS</span>
+                        </div>
+                        <div>
+                          <span className="text-[7.5px] font-black uppercase text-slate-500 tracking-wider block">Sessions</span>
+                          <span className="text-xs font-black text-emerald-400 font-mono mt-0.5 block">{comingWeekRides.length} rides</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
-            {/* Section: Results */}
-            <div className="flex flex-col space-y-1.5">
-              <div className="px-1">
-                <span className="inline-block px-2.5 py-0.5 bg-emerald-500 text-slate-950 text-[9px] font-black uppercase tracking-[0.2em] rounded-md">
+            {/* Section 3: RESULTS - Last Ride & Stats */}
+            <div className="space-y-1.5 pt-0.5">
+              <div className="flex items-center gap-2 px-1">
+                <span className="px-2 py-0.5 bg-emerald-500 text-slate-950 text-[8.5px] font-black uppercase tracking-[0.15em] rounded-md shrink-0">
                   Results
+                </span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                  Last Ride & Stats
                 </span>
               </div>
 
-              {/* Last Ride Section */}
-              {(() => {
-                const lastActivity = activities && activities.length > 0 
-                  ? [...activities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local))[0] 
-                  : null;
-                
-                if (!lastActivity) return null;
+              <div className="space-y-2">
+                {/* Last Activity Card */}
+                {(() => {
+                  const lastActivity = activities && activities.length > 0 
+                    ? [...activities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local))[0] 
+                    : null;
+                  
+                  if (!lastActivity) return null;
+                  const lastDate = new Date(lastActivity.start_date_local);
 
-                return (
-                  <div className="mb-2">
-                    <ActivityCard 
-                      activity={lastActivity} 
-                      onClick={(activity) => {
-                        setSelectedActivity(activity);
+                  return (
+                    <div 
+                      onClick={() => {
+                        setSelectedActivity(lastActivity);
                         setActiveTab('rides');
-                      }} 
-                    />
-                  </div>
-                );
-              })()}
+                      }}
+                      className="glass-card p-2.5 px-3 rounded-2xl border border-white/10 hover:border-emerald-500/20 bg-slate-900/40 cursor-pointer transition-all flex items-center justify-between gap-2"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex flex-col items-center justify-center shrink-0 leading-none">
+                          <span className="text-[6.5px] font-black uppercase text-slate-400">
+                            {lastDate.toLocaleDateString(undefined, { weekday: 'short' })}
+                          </span>
+                          <span className="text-[11px] font-black text-emerald-400">
+                            {lastDate.getDate()}
+                          </span>
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-[7.5px] font-black uppercase tracking-wider text-slate-500 block leading-none mb-0.5">Recent Activity</span>
+                          <h4 className="text-[11px] font-black text-white truncate">
+                            {lastActivity.name}
+                          </h4>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="text-right">
+                          <span className="text-[11px] font-black text-emerald-400 font-mono italic block">
+                            {(lastActivity.icu_training_load || lastActivity.icu_tss || 0)} TSS
+                          </span>
+                          <span className="text-[8.5px] font-mono text-slate-400 font-bold">
+                            {Math.round((lastActivity.moving_time || 0)/60)}m • {(lastActivity.weighted_average_watts || lastActivity.average_watts || 0)}W
+                          </span>
+                        </div>
+                        <ChevronRight size={12} className="text-slate-500" />
+                      </div>
+                    </div>
+                  );
+                })()}
 
-              {/* 3-column PMC metrics */}
-              <div className="grid grid-cols-3 gap-2">
-                {/* Fitness / CTL */}
-                <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px] group hover:border-white/10 transition-all">
-                  <div className="absolute top-0 right-0 w-8 h-8 bg-blue-500/5 rounded-full blur-xl pointer-events-none"></div>
-                  <div className="flex items-center gap-1 text-blue-400">
-                    <TrendingUp size={9} strokeWidth={2.5} />
-                    <span className="text-[7.5px] font-black uppercase tracking-widest text-slate-400">Fitness</span>
+                {/* 5-Metric Stats Grid */}
+                <div className="grid grid-cols-5 gap-1.5">
+                  <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center">
+                    <span className="text-[6.5px] font-black uppercase text-slate-400 tracking-wider">Fitness</span>
+                    <span className="text-xs font-black italic text-blue-400 font-mono mt-0.5">{stats.ctl}</span>
                   </div>
-                  <div className="mt-0.5">
-                    <span className="text-xl font-black italic tracking-tight text-white font-mono">{stats.ctl}</span>
+                  <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center">
+                    <span className="text-[6.5px] font-black uppercase text-slate-400 tracking-wider">Fatigue</span>
+                    <span className="text-xs font-black italic text-amber-400 font-mono mt-0.5">{stats.atl}</span>
                   </div>
-                </div>
-
-                {/* Fatigue / ATL */}
-                <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px] group hover:border-white/10 transition-all">
-                  <div className="absolute top-0 right-0 w-8 h-8 bg-amber-500/5 rounded-full blur-xl pointer-events-none"></div>
-                  <div className="flex items-center gap-1 text-amber-400">
-                    <Zap size={9} strokeWidth={2.5} fill="currentColor" />
-                    <span className="text-[7.5px] font-black uppercase tracking-widest text-slate-400">Fatigue</span>
-                  </div>
-                  <div className="mt-0.5">
-                    <span className="text-xl font-black italic tracking-tight text-white font-mono">{stats.atl}</span>
-                  </div>
-                </div>
-
-                {/* Form / TSB */}
-                <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-slate-900/30 to-slate-950/20 text-center min-h-[58px] group hover:border-white/10 transition-all">
-                  <div className="absolute top-0 right-0 w-8 h-8 bg-emerald-500/5 rounded-full blur-xl pointer-events-none"></div>
-                  <div className="flex items-center gap-1 text-emerald-400">
-                    <ActivityIcon size={9} strokeWidth={2.5} />
-                    <span className="text-[7.5px] font-black uppercase tracking-widest text-slate-400">Form</span>
-                  </div>
-                  <div className="mt-0.5 flex flex-col items-center">
-                    <span className={`text-xl font-black italic tracking-tight font-mono leading-none ${stats.form >= 5 ? 'text-emerald-400' : stats.form < -25 ? 'text-rose-400' : stats.form < -10 ? 'text-amber-400' : 'text-slate-200'}`}>
+                  <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center">
+                    <span className="text-[6.5px] font-black uppercase text-slate-400 tracking-wider">Form</span>
+                    <span className={`text-xs font-black italic font-mono mt-0.5 ${stats.form >= 5 ? 'text-emerald-400' : stats.form < -25 ? 'text-rose-400' : stats.form < -10 ? 'text-amber-400' : 'text-slate-200'}`}>
                       {stats.form > 0 ? `+${stats.form}` : stats.form}
                     </span>
                   </div>
-                </div>
-              </div>
-
-              {/* 2-column secondary metrics */}
-              <div className="grid grid-cols-2 gap-2">
-                {/* Total Time 7D */}
-                <div className="glass-card p-2 rounded-xl border border-white/5 bg-gradient-to-b from-slate-900/30 to-slate-950/20 hover:border-white/10 transition-all flex items-center justify-between min-h-[38px] px-3">
-                  <h4 className="text-[7.5px] font-bold text-slate-400 uppercase tracking-widest">Total Time (7D)</h4>
-                  <div className="flex items-baseline gap-0.5">
-                    <span className="text-base font-black italic tracking-tighter text-white font-mono">
-                      {stats.total7DayTime}
-                    </span>
-                    <span className="text-[8px] font-black text-slate-500 uppercase tracking-wider">h</span>
+                  <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center">
+                    <span className="text-[6.5px] font-black uppercase text-slate-400 tracking-wider">7D Time</span>
+                    <span className="text-xs font-black italic text-white font-mono mt-0.5">{stats.total7DayTime}h</span>
                   </div>
-                </div>
-                
-                {/* 7-Day Load */}
-                <div className="glass-card p-2 rounded-xl border border-white/5 bg-gradient-to-b from-slate-900/30 to-slate-950/20 hover:border-white/10 transition-all flex items-center justify-between min-h-[38px] px-3">
-                  <h4 className="text-[7.5px] font-bold text-slate-400 uppercase tracking-widest">7D Load</h4>
-                  <div className="flex items-baseline gap-0.5">
-                    <span className="text-base font-black italic tracking-tighter text-white font-mono">
-                      {stats.total7DayLoad}
-                    </span>
-                    <span className="text-[8px] font-black text-slate-500 uppercase tracking-wider">TSS</span>
+                  <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center">
+                    <span className="text-[6.5px] font-black uppercase text-slate-400 tracking-wider">7D Load</span>
+                    <span className="text-xs font-black italic text-emerald-400 font-mono mt-0.5">{stats.total7DayLoad}</span>
                   </div>
                 </div>
               </div>
@@ -1271,53 +1422,191 @@ const App: React.FC = () => {
                 <div className="flex flex-col pt-1 pb-2 space-y-3.5">
                   {(() => {
                     const futureItems = sortedTimelineItems.filter(i => i.type === 'future_suggested');
-                    const todayItems = sortedTimelineItems.filter(i => i.type === 'today_suggested' || i.type === 'today_actual');
+                    const rawTodayItems = sortedTimelineItems.filter(i => i.type === 'today_suggested' || i.type === 'today_actual');
+                    const todayItems = [...rawTodayItems].sort((a, b) => {
+                      if (a.type === 'today_suggested' && b.type === 'today_actual') return -1;
+                      if (a.type === 'today_actual' && b.type === 'today_suggested') return 1;
+                      if (a.type === 'today_suggested' && b.type === 'today_suggested') {
+                        return (a.key.localeCompare(b.key));
+                      }
+                      if (a.type === 'today_actual' && b.type === 'today_actual') {
+                        return b.date.getTime() - a.date.getTime();
+                      }
+                      return 0;
+                    });
                     const pastItems = sortedTimelineItems.filter(i => i.type === 'past');
                     
+                    // Filter future items for 1 week forward (Week 1)
+                    const week1FutureItems = futureItems.filter(item => !item.dayData || getWeekForDayInApp(item.dayData) === 1);
+                    const week1TotalTss = week1FutureItems.reduce((acc, i) => acc + (i.dayData?.load_target || 0), 0);
+                    const week1RideCount = week1FutureItems.filter(i => i.dayData && !i.dayData.focus.toLowerCase().includes('rest')).length;
+
                     return (
                       <>
-                        {/* Future Rides Section */}
-                        {futureItems.length > 0 && (
-                          <div className="flex flex-col space-y-3.5 relative">
-                            <div className={`sticky top-0 z-20 bg-[#05070a]/95 backdrop-blur-md pt-4 pb-2 px-1 -mx-1 border-b border-white/5 shadow-md transition-all duration-300 ${hidePlanHeader ? 'opacity-0 pointer-events-none -translate-y-2' : 'opacity-100'}`}>
-                              <div className="flex items-center gap-3">
-                                <span className="inline-block px-3 py-1 bg-blue-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.4)]">
-                                  Plan
-                                </span>
-                                <div className="flex-1 h-px bg-gradient-to-r from-blue-500/40 to-transparent" />
-                              </div>
-                            </div>
-                            {futureItems.map((item, idx, arr) => (
-                              <React.Fragment key={item.key}>
-                                {item.dayData && (
-                                  <div ref={idx === arr.length - 1 ? todayElementRef : null} className="scroll-mt-[112px]">
-                                    <SuggestedWorkoutCard 
-                                      day={item.dayData}
-                                      absoluteIndex={item.absoluteIndex ?? 0}
-                                      onClick={(day) => setSelectedSuggestedDay(day)}
-                                      isToday={false}
-                                    />
-                                  </div>
-                                )}
-                              </React.Fragment>
-                            ))}
-                          </div>
-                        )}
+                        {/* Integrated Training Plan Section */}
+                        <div className="flex flex-col space-y-3 relative">
+                          {/* Planned Upcoming Sessions (1 Week Forward, Above Today) */}
+                          {week1FutureItems.length > 0 && (() => {
+                            const chronFutureItems = [...week1FutureItems].sort((a, b) => a.date.getTime() - b.date.getTime());
+                            const nextRideItem = chronFutureItems[0];
+                            // Sort remaining future items descending so furthest future is at the complete top
+                            const otherFutureItems = chronFutureItems.slice(1).sort((a, b) => b.date.getTime() - a.date.getTime());
 
-                        {/* Today & Past Section Wrapper */}
-                        <div ref={todayAndPastContainerRef} className="flex flex-col space-y-3.5">
+                            return (
+                              <div className="flex flex-col space-y-2.5 pt-1">
+                                <div className="flex items-center justify-between gap-2 px-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="inline-block px-2.5 py-0.5 bg-[#12141c] border border-blue-500/30 text-blue-400 text-[9.5px] font-black uppercase tracking-[0.2em] rounded-lg shrink-0 whitespace-nowrap">
+                                      PLANNED RIDES
+                                    </span>
+                                    <span className="text-[9.5px] font-bold text-slate-400">
+                                      {week1RideCount} rides • {week1TotalTss} TSS
+                                    </span>
+                                  </div>
+
+                                  <button
+                                    onClick={() => {
+                                      setRequestChangeInput('');
+                                      setShowRequestChangeModal(true);
+                                    }}
+                                    className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 border border-emerald-500/30 text-emerald-300 text-[9.5px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-sm active:scale-95 shrink-0"
+                                  >
+                                    <Sparkles size={11} className="text-emerald-400" />
+                                    <span>Request Change</span>
+                                  </button>
+                                </div>
+
+                                <div className="space-y-2 pt-0.5">
+                                  {/* Loading state indicator when plan is updating */}
+                                  {loadingWeeklyBriefing && (
+                                    <div className="glass-card p-3 rounded-2xl border border-emerald-500/40 bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-950 animate-pulse flex items-center gap-3 shadow-lg my-1">
+                                      <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                                        <Loader2 size={16} className="animate-spin text-emerald-400" />
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[8px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                                            Updating Plan
+                                          </span>
+                                          {lastAppliedTweak && (
+                                            <span className="text-[8px] font-bold text-slate-400 truncate">
+                                              "{lastAppliedTweak}"
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-[11px] font-bold text-white truncate mt-0.5">
+                                          Recalibrating workouts to match requested change...
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Success notification banner after plan completes update */}
+                                  {!loadingWeeklyBriefing && showTweakSuccessNotice && lastAppliedTweak && (
+                                    <div className="glass-card p-2.5 px-3 rounded-2xl border border-emerald-500/30 bg-slate-900/80 flex items-center justify-between gap-2 shadow-md animate-in fade-in duration-300 my-1">
+                                      <div className="flex items-center gap-2.5 min-w-0">
+                                        <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                                          <Check size={12} className="stroke-[3]" />
+                                        </div>
+                                        <div className="min-w-0">
+                                          <span className="text-[8px] font-black uppercase tracking-widest text-emerald-400 block leading-none">Plan Updated</span>
+                                          <p className="text-[10.5px] font-extrabold text-white truncate mt-0.5">
+                                            "{lastAppliedTweak}"
+                                          </p>
+                                        </div>
+                                      </div>
+                                      <button
+                                        onClick={() => setShowTweakSuccessNotice(false)}
+                                        className="p-1 text-slate-500 hover:text-white shrink-0"
+                                      >
+                                        <X size={12} />
+                                      </button>
+                                    </div>
+                                  )}
+                                   {/* Other Future Rides (Collapsible - Placed on Top for chronological order down to today) */}
+                                  {otherFutureItems.length > 0 && (
+                                    <div className="flex flex-col space-y-2">
+                                      <button
+                                        onClick={() => setIsOtherFutureExpanded(!isOtherFutureExpanded)}
+                                        className="w-full p-2.5 px-3 rounded-2xl bg-slate-900/80 hover:bg-slate-900 border border-white/10 flex items-center justify-between cursor-pointer transition-all group select-none"
+                                      >
+                                        <div className="flex items-center gap-2.5">
+                                          <div className="p-1 rounded-lg bg-white/5 border border-white/10 text-slate-400 group-hover:text-white transition-colors">
+                                            {isOtherFutureExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                          </div>
+                                          <div className="flex items-baseline gap-2">
+                                            <span className="text-xs font-black uppercase tracking-wide text-white">
+                                              Other Planned Rides ({otherFutureItems.length})
+                                            </span>
+                                            <span className="text-[9.5px] font-bold text-slate-400">
+                                              • {otherFutureItems.reduce((acc, i) => acc + (i.dayData?.load_target || 0), 0)} TSS
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <span className="text-[8.5px] font-black uppercase tracking-wider text-slate-500 group-hover:text-slate-300">
+                                          {isOtherFutureExpanded ? 'Collapse' : 'Expand'}
+                                        </span>
+                                      </button>
+
+                                      {isOtherFutureExpanded && (
+                                        <motion.div
+                                          initial={{ opacity: 0, height: 0 }}
+                                          animate={{ opacity: 1, height: 'auto' }}
+                                          exit={{ opacity: 0, height: 0 }}
+                                          className="space-y-2 pt-1 overflow-hidden"
+                                        >
+                                          {otherFutureItems.map((item) => (
+                                            <React.Fragment key={item.key}>
+                                              {item.dayData && (
+                                                <SuggestedWorkoutCard 
+                                                  day={item.dayData}
+                                                  absoluteIndex={item.absoluteIndex ?? 0}
+                                                  onClick={(day) => setSelectedSuggestedDay(day)}
+                                                  isToday={false}
+                                                />
+                                              )}
+                                            </React.Fragment>
+                                          ))}
+                                        </motion.div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* Next Ride / Tomorrow (Immediately above Today) */}
+                                  {nextRideItem && nextRideItem.dayData && (
+                                    <div className="flex flex-col space-y-2 pt-1">
+                                      <div className="flex items-center gap-2 px-1">
+                                        <span className="inline-block px-2.5 py-0.5 bg-[#12141c] border border-blue-500/40 text-blue-400 text-[9.5px] font-black uppercase tracking-[0.2em] rounded-lg shrink-0 whitespace-nowrap shadow-sm">
+                                          TOMORROW
+                                        </span>
+                                        <div className="flex-1 h-px bg-gradient-to-r from-blue-500/30 to-transparent" />
+                                      </div>
+                                      <SuggestedWorkoutCard 
+                                        day={nextRideItem.dayData}
+                                        absoluteIndex={nextRideItem.absoluteIndex ?? 0}
+                                        onClick={(day) => setSelectedSuggestedDay(day)}
+                                        isToday={false}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
                           {/* Today Section */}
                           {todayItems.length > 0 && (
-                            <div className="flex flex-col space-y-3.5 pt-2">
+                            <div className="flex flex-col space-y-2.5 pt-2">
                               <div 
-                                className="flex items-center gap-3 px-1"
-                                ref={futureItems.length === 0 ? todayElementRef : null}
+                                className="flex items-center gap-2.5 px-1 scroll-mt-14"
+                                ref={todayElementRef}
                               >
-                                <span className="inline-block px-3 py-1 bg-emerald-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse">
+                                <span className="inline-block px-2.5 py-0.5 bg-emerald-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.2em] rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse">
                                   Today
                                 </span>
                                 <div className="flex-1 h-px bg-gradient-to-r from-emerald-500/40 to-transparent" />
                               </div>
+
                               {todayItems.map(item => (
                                 <React.Fragment key={item.key}>
                                   {item.type === 'today_actual' ? (
@@ -1325,6 +1614,7 @@ const App: React.FC = () => {
                                       <ActivityCard 
                                         activity={item.activityData} 
                                         onClick={setSelectedActivity} 
+                                        isToday={true}
                                       />
                                     )
                                   ) : (
@@ -1343,16 +1633,19 @@ const App: React.FC = () => {
                               ))}
                             </div>
                           )}
+                        </div>
 
-                          {/* Past Section */}
+                        {/* Past Section / Training History */}
+                        <div ref={todayAndPastContainerRef} className="flex flex-col space-y-3.5 pt-3">
                           {pastItems.length > 0 && (
-                            <div className="flex flex-col space-y-3.5 pt-4">
-                              <div className="flex items-center gap-3 px-1 pb-2">
-                                <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
+                            <div className="flex flex-col space-y-3 pt-2">
+                              <div className="flex items-center gap-3 px-1 pb-1">
+                                <span className="inline-block px-2.5 py-0.5 bg-[#12141c] border border-white/10 text-slate-400 text-[9.5px] font-black uppercase tracking-[0.2em] rounded-lg">
                                   Training History
                                 </span>
-                                <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
+                                <div className="flex-1 h-px bg-gradient-to-r from-white/10 to-transparent" />
                               </div>
+
                               {pastItems.map((item, idx, arr) => {
                                 const prevItem = idx > 0 ? arr[idx - 1] : null;
                                 let showMonthHeader = false;
@@ -1371,11 +1664,11 @@ const App: React.FC = () => {
                                 return (
                                   <React.Fragment key={item.key}>
                                     {showMonthHeader && (
-                                      <div className="flex items-center gap-3 px-1 pt-4 pb-2">
-                                        <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
+                                      <div className="flex items-center gap-3 px-1 pt-3 pb-1">
+                                        <span className="inline-block px-2.5 py-0.5 bg-[#12141c] border border-white/10 text-slate-400 text-[9px] font-black uppercase tracking-[0.2em] rounded-lg">
                                           {monthLabel}
                                         </span>
-                                        <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
+                                        <div className="flex-1 h-px bg-gradient-to-r from-white/10 to-transparent" />
                                       </div>
                                     )}
                                     {item.activityData && (
@@ -1501,40 +1794,45 @@ const App: React.FC = () => {
                )}
              </div>
 
-             <div className="sticky bottom-0 shrink-0 px-4 pt-3 pb-[92px] bg-[#05070a]/90 backdrop-blur-md border-t border-white/5 z-20 flex flex-col gap-2">
-               <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest text-center">
-                 Select Diagnostic Focus
-               </span>
-                <div className="flex gap-2 mb-2">
-                  <textarea
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Ask me anything..."
-                    className="flex-1 bg-[#0a0d14] border border-white/10 rounded-xl px-3 py-2 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/30 font-semibold"
-                  />
-                  <button 
-                    onClick={() => {
-                        if (chatInput.trim()) {
-                            handleSendMessage(chatInput);
-                            setChatInput("");
-                        }
-                    }}
-                    className="bg-emerald-500 text-slate-950 px-4 rounded-xl font-black text-[10px] uppercase"
-                  >
-                    Send
-                  </button>
-                </div>
-               <div className="flex gap-2 overflow-x-auto pb-1.5 hide-scrollbar justify-center">
-                 {CHAT_SUGGESTIONS.map((suggestionText) => (
-                   <button 
-                     key={suggestionText}
-                     onClick={() => handleSendMessage(suggestionText)}
-                     disabled={isChatLoading}
-                     className="text-[9px] font-black text-slate-200 bg-[#12141c] border border-white/5 hover:border-emerald-500/30 hover:bg-emerald-500/5 hover:text-emerald-400 rounded-xl py-2 px-3.5 active:scale-95 transition-all flex items-center gap-1.5 uppercase tracking-wider shrink-0"
-                   >
-                     {suggestionText}
-                   </button>
-                 ))}
+             <div className={`flex-none px-4 pt-2.5 bg-[#05070a]/95 backdrop-blur-xl border-t border-white/10 z-20 flex flex-col gap-2 transition-all duration-300 ${isKeyboardOpen ? 'pb-3' : 'pb-[88px]'}`}>
+
+               {/* Input Field & Send Button */}
+               <div className="flex gap-2 items-center">
+                 <textarea
+                   value={chatInput}
+                   onChange={(e) => setChatInput(e.target.value)}
+                   onKeyDown={(e) => {
+                     if (e.key === 'Enter' && !e.shiftKey) {
+                       e.preventDefault();
+                       if (chatInput.trim() && !isChatLoading) {
+                         handleSendMessage(chatInput);
+                         setChatInput("");
+                       }
+                     }
+                   }}
+                   onFocus={() => {
+                     setIsKeyboardOpen(true);
+                     setTimeout(() => {
+                       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                     }, 150);
+                   }}
+                   placeholder="Ask waTTson anything... (Enter to send)"
+                   rows={1}
+                   className="flex-1 bg-[#0a0d14] border border-white/10 focus:border-emerald-500/50 rounded-xl px-3.5 py-2 text-[12px] text-white placeholder-slate-500 focus:outline-none font-medium resize-none max-h-24 transition-all"
+                 />
+                 <button 
+                   onClick={() => {
+                     if (chatInput.trim() && !isChatLoading) {
+                       handleSendMessage(chatInput);
+                       setChatInput("");
+                     }
+                   }}
+                   disabled={!chatInput.trim() || isChatLoading}
+                   className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all shrink-0 active:scale-95 flex items-center justify-center gap-1 h-[36px]"
+                 >
+                   <span>Send</span>
+                   <Send size={11} className="stroke-[3]" />
+                 </button>
                </div>
              </div>
           </div>
@@ -2028,12 +2326,9 @@ const App: React.FC = () => {
           const today = new Date();
           today.setHours(0, 0, 0, 0);
           const todayStr = toLocalDateStr(today);
-          const hasActivityToday = (activities || []).some(a => a.start_date_local.startsWith(todayStr));
-          const offset = hasActivityToday ? 1 : 0;
-
           const targetDate = new Date(today);
           if (index !== -1) {
-            targetDate.setDate(today.getDate() + index + offset);
+            targetDate.setDate(today.getDate() + index);
           }
           const weekday = targetDate.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase();
           const dayNum = targetDate.getDate();
@@ -2041,19 +2336,40 @@ const App: React.FC = () => {
           const weekIdx = getWeekForDayInApp(selectedSuggestedDay);
           const isReworking = reworkingWeeks.includes(weekIdx) || loadingWeeks[weekIdx];
 
+          const isSimpleRide = (() => {
+            const f = (selectedSuggestedDay.focus || '').toLowerCase();
+            const i = (selectedSuggestedDay.intensity || '').toLowerCase();
+            return f.includes('recovery') || f.includes('endurance') || f.includes('easy') || f.includes('rest') || i === 'easy' || i === 'rest';
+          })();
+
+          const simpleTargetWatts = (() => {
+            if (selectedSuggestedDay.workout_steps && selectedSuggestedDay.workout_steps.length > 0) {
+              const stepWithPower = selectedSuggestedDay.workout_steps.find((s: any) => (s.target_watts && s.target_watts > 0) || (s.target_pct && s.target_pct > 0));
+              if (stepWithPower) {
+                if (stepWithPower.target_watts && stepWithPower.target_watts > 0) return Math.round(stepWithPower.target_watts);
+                if (stepWithPower.target_pct && stepWithPower.target_pct > 0 && (ftp || 250)) return Math.round(stepWithPower.target_pct * (ftp || 250));
+              }
+            }
+            if (selectedSuggestedDay.load_target > 0 && selectedSuggestedDay.duration_target > 0 && (ftp || 250)) {
+              const est = Math.round(Math.sqrt((selectedSuggestedDay.load_target * 3600 * Math.pow(ftp || 250, 2)) / (selectedSuggestedDay.duration_target * 60 * 100)));
+              if (est > 40 && est < 500) return est;
+            }
+            return Math.round((ftp || 250) * 0.65);
+          })();
+
           return (
             <div className="fixed inset-0 z-[220] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedSuggestedDay(null)}>
-              <div className="bg-slate-950/80 w-full max-w-sm rounded-[2.5rem] p-6 pb-6 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
+              <div className="bg-slate-950/80 w-full max-w-sm rounded-[2.5rem] p-6 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
                 <button onClick={() => setSelectedSuggestedDay(null)} className="absolute top-5 right-5 text-slate-500 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full">
                   <X size={18} />
                 </button>
                 <div className="flex flex-col items-center">
-                  <div className="w-10 h-10 rounded-xl bg-slate-900/50 flex flex-col items-center justify-center shrink-0 border border-white/5 shadow-inner mb-5">
+                  <div className="w-10 h-10 rounded-xl bg-slate-900/50 flex flex-col items-center justify-center shrink-0 border border-white/5 shadow-inner mb-4">
                     <span className="text-[7.5px] font-black text-slate-500 uppercase leading-none mb-0.5 tracking-tighter">{weekday}</span>
                     <span className="text-base font-black text-white italic leading-none">{dayNum}</span>
                   </div>
                   
-                  <h3 className="text-lg font-black text-white italic tracking-tighter mb-6 uppercase text-center leading-tight px-4">
+                  <h3 className="text-lg font-black text-white italic tracking-tighter mb-5 uppercase text-center leading-tight px-4">
                     {selectedSuggestedDay.focus}
                   </h3>
                   
@@ -2065,87 +2381,67 @@ const App: React.FC = () => {
                     </div>
                   ) : (
                     <>
-                      <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-left space-y-4 relative overflow-hidden">
-                        <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-4">
-                          <div className="flex items-center gap-2 text-sm font-black text-white tracking-tighter">
-                            <Clock size={16} className="text-blue-400" /> {selectedSuggestedDay.duration_target} MIN
+                      {isSimpleRide ? (
+                        <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-center space-y-4 relative overflow-hidden">
+                          <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-3">
+                            <div className="flex items-center gap-2 text-sm font-black text-white tracking-tighter">
+                              <Clock size={16} className="text-blue-400" /> {selectedSuggestedDay.duration_target} MIN
+                            </div>
+                            <div className="flex items-center gap-2 text-sm font-black text-amber-400 italic">
+                              <Zap size={16} fill="currentColor" className="text-amber-400" /> {selectedSuggestedDay.load_target} TSS
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2 text-sm font-black text-amber-400 italic">
-                            <Zap size={16} fill="currentColor" className="text-amber-400" /> {selectedSuggestedDay.load_target} TSS
+
+                          {/* Single Target Power Display for Simple Recovery & Endurance Rides */}
+                          <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-2xl flex flex-col items-center justify-center space-y-1">
+                            <span className="text-[8.5px] font-black uppercase tracking-widest text-emerald-400">Target Steady Power</span>
+                            <div className="flex items-baseline justify-center gap-1">
+                              <span className="text-3xl font-black italic font-mono text-white">{simpleTargetWatts}</span>
+                              <span className="text-xs font-black text-emerald-400 uppercase italic">Watts</span>
+                            </div>
+                            {ftp && simpleTargetWatts > 0 && (
+                              <span className="text-[9.5px] font-extrabold text-slate-400 font-mono">
+                                ~{Math.round((simpleTargetWatts / (ftp || 250)) * 100)}% FTP
+                              </span>
+                            )}
+                          </div>
+
+                          <p className="text-[12px] text-slate-300 leading-relaxed text-center px-2 font-medium opacity-90 italic">
+                            "{selectedSuggestedDay.why || 'Focus on steady cadence and fluid pedaling.'}"
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-left space-y-4 relative overflow-hidden">
+                          <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-4">
+                            <div className="flex items-center gap-2 text-sm font-black text-white tracking-tighter">
+                              <Clock size={16} className="text-blue-400" /> {selectedSuggestedDay.duration_target} MIN
+                            </div>
+                            <div className="flex items-center gap-2 text-sm font-black text-amber-400 italic">
+                              <Zap size={16} fill="currentColor" className="text-amber-400" /> {selectedSuggestedDay.load_target} TSS
+                            </div>
+                          </div>
+
+                          <div className="space-y-3 py-2 max-h-[220px] overflow-y-auto custom-scrollbar px-1">
+                            {selectedSuggestedDay.workout_steps && selectedSuggestedDay.workout_steps.length > 0 ? (
+                              <GroupedWorkoutStepsList 
+                                steps={selectedSuggestedDay.workout_steps}
+                                currentFtp={ftp || undefined}
+                                originalFtp={weeklyBriefing?.ftp}
+                                fontSize="sm"
+                              />
+                            ) : (
+                              <p className="text-[13px] text-slate-400 leading-relaxed text-center px-2 font-medium opacity-80">
+                                {selectedSuggestedDay.why}
+                              </p>
+                            )}
                           </div>
                         </div>
-
-                        <div className="space-y-3 py-2 max-h-[160px] overflow-y-auto custom-scrollbar px-1">
-                          {selectedSuggestedDay.workout_steps && selectedSuggestedDay.workout_steps.length > 0 ? (
-                            <GroupedWorkoutStepsList 
-                              steps={selectedSuggestedDay.workout_steps}
-                              currentFtp={ftp || undefined}
-                              originalFtp={weeklyBriefing?.ftp}
-                              fontSize="sm"
-                            />
-                          ) : (
-                            <p className="text-[13px] text-slate-400 leading-relaxed text-center px-2 font-medium opacity-80">
-                              {selectedSuggestedDay.why}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Workout Modification */}
-                      <div className="w-full mt-5 border-t border-white/5 pt-4">
-                        <input
-                          type="text"
-                          id="app-custom-ride-tweak"
-                          placeholder="Modify this ride..."
-                          className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-3 py-2.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/30 font-semibold"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              const target = e.currentTarget;
-                              const text = target.value.trim();
-                              if (text) {
-                                const directive = `Modify ${selectedSuggestedDay.focus} on ${selectedSuggestedDay.day.split(' ')[0]}: ${text}. Please focus on this adjustment.`;
-                                handleAddTweakFromApp(directive, weekIdx);
-                                target.value = '';
-                                setSelectedSuggestedDay(null);
-                              }
-                            }
-                          }}
-                        />
-                      </div>
+                      )}
                     </>
                   )}
 
-                  {/* Action Buttons: Sync to Intervals & Close */}
-                  <div className="mt-6 flex flex-col gap-2 w-full">
-                    {creds && !isReworking && (
-                      <button
-                        onClick={() => handleSyncToIntervalsFromApp(selectedSuggestedDay, index)}
-                        disabled={syncingDayInApp === selectedSuggestedDay.day}
-                        className={`w-full py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2 border ${
-                          syncSuccessInApp === selectedSuggestedDay.day
-                            ? 'bg-emerald-500/10 border-emerald-400 text-emerald-400'
-                            : 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-lg hover:bg-emerald-400'
-                        }`}
-                      >
-                        {syncingDayInApp === selectedSuggestedDay.day ? (
-                          <>
-                            <Loader2 size={12} className="animate-spin" />
-                            <span>Syncing...</span>
-                          </>
-                        ) : syncSuccessInApp === selectedSuggestedDay.day ? (
-                          <>
-                            <CheckCircle size={12} />
-                            <span>Synced to Intervals.icu!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Calendar size={12} />
-                            <span>Sync to Intervals.icu</span>
-                          </>
-                        )}
-                      </button>
-                    )}
-                    
+                  {/* Close Action */}
+                  <div className="mt-5 flex flex-col gap-2 w-full">
                     <button 
                       onClick={() => setSelectedSuggestedDay(null)}
                       className="w-full py-3 bg-[#1a1c22] rounded-2xl text-[11px] font-black text-slate-300 hover:text-white hover:bg-slate-800 transition-all uppercase tracking-[0.2em] active:scale-95"
@@ -2157,6 +2453,239 @@ const App: React.FC = () => {
               </div>
             </div>
           );
+      })()}
+
+      {/* Request Change Modal */}
+      {showRequestChangeModal && (() => {
+        if (showDirectivesSubModal) {
+          return (
+            <div 
+              className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
+              onClick={() => {
+                setShowRequestChangeModal(false);
+                setShowDirectivesSubModal(false);
+              }}
+            >
+              <div 
+                className="bg-slate-950/95 w-full max-w-sm rounded-[2.5rem] p-6 relative border border-white/10 shadow-2xl space-y-4"
+                onClick={e => e.stopPropagation()}
+              >
+                <button 
+                  onClick={() => setShowDirectivesSubModal(false)}
+                  className="absolute top-5 left-5 text-slate-400 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full flex items-center justify-center"
+                  title="Back"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+
+                <button 
+                  onClick={() => {
+                    setShowRequestChangeModal(false);
+                    setShowDirectivesSubModal(false);
+                  }}
+                  className="absolute top-5 right-5 text-slate-500 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full"
+                >
+                  <X size={18} />
+                </button>
+
+                <div className="text-center space-y-1 pt-2">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9.5px] font-black uppercase tracking-wider mb-1">
+                    <Sparkles size={11} /> Plan AI Engine
+                  </div>
+                  <h3 className="text-lg font-black text-white italic tracking-tight uppercase">
+                    Active Directives
+                  </h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Custom directives guiding your AI plan
+                  </p>
+                </div>
+
+                {(() => {
+                  const activeDirectivesList = planContext ? planContext.split(' ; ').map(s => s.trim()).filter(Boolean) : [];
+                  
+                  if (activeDirectivesList.length > 0) {
+                    return (
+                      <div className="space-y-3">
+                        <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar p-1">
+                          {activeDirectivesList.map((directive, idx) => (
+                            <div 
+                              key={`${idx}-${directive}`}
+                              className="bg-[#0a0d14] border border-emerald-500/20 hover:border-emerald-500/40 rounded-xl p-3 flex items-center justify-between gap-2.5 transition-all shadow-sm"
+                            >
+                              <div className="flex items-start gap-2 min-w-0">
+                                <span className="text-emerald-400 font-black text-[9px] mt-0.5 shrink-0 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md">
+                                  #{idx + 1}
+                                </span>
+                                <span className="text-xs text-slate-200 font-medium leading-snug break-words">
+                                  {directive}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  const updated = activeDirectivesList.filter((_, i) => i !== idx);
+                                  if (updated.length === 0) {
+                                    setPlanContext(null);
+                                    localStorage.removeItem('wattson_plan_context');
+                                    setLastAppliedTweak(null);
+                                    setShowTweakSuccessNotice(false);
+                                    fetchWeeklyBriefingData(undefined, true);
+                                    setShowDirectivesSubModal(false);
+                                    setShowRequestChangeModal(false);
+                                  } else {
+                                    const newContext = updated.join(' ; ');
+                                    setPlanContext(newContext);
+                                    safeSetItem('wattson_plan_context', newContext);
+                                    fetchWeeklyBriefingData(newContext, true);
+                                  }
+                                }}
+                                title="Delete directive"
+                                className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all shrink-0 active:scale-90 cursor-pointer"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => {
+                            setPlanContext(null);
+                            localStorage.removeItem('wattson_plan_context');
+                            setLastAppliedTweak(null);
+                            setShowTweakSuccessNotice(false);
+                            fetchWeeklyBriefingData(undefined, true);
+                            setShowDirectivesSubModal(false);
+                            setShowRequestChangeModal(false);
+                          }}
+                          className="w-full py-2.5 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 font-black text-xs uppercase tracking-wider rounded-xl transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Trash2 size={13} />
+                          <span>Delete All Directives</span>
+                        </button>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div className="bg-[#0a0d14] border border-white/5 rounded-2xl p-6 text-center space-y-1">
+                        <p className="text-xs text-slate-400 font-medium">No custom directives active.</p>
+                      </div>
+                    );
+                  }
+                })()}
+
+                <button 
+                  onClick={() => setShowDirectivesSubModal(false)}
+                  className="w-full py-2.5 bg-slate-900/80 rounded-xl text-[10px] font-black text-slate-300 hover:text-white transition-all uppercase tracking-widest flex items-center justify-center gap-1 border border-white/5"
+                >
+                  <ChevronLeft size={12} />
+                  <span>Back to Request Change</span>
+                </button>
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div 
+            className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
+            onClick={() => {
+              setShowRequestChangeModal(false);
+              setShowDirectivesSubModal(false);
+            }}
+          >
+            <div 
+              className="bg-slate-950/95 w-full max-w-sm rounded-[2.5rem] p-6 relative border border-white/10 shadow-2xl space-y-4"
+              onClick={e => e.stopPropagation()}
+            >
+              <button 
+                onClick={() => {
+                  setShowRequestChangeModal(false);
+                  setShowDirectivesSubModal(false);
+                }}
+                className="absolute top-5 right-5 text-slate-500 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full"
+              >
+                <X size={18} />
+              </button>
+
+              <div className="text-center space-y-1 pt-1">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9.5px] font-black uppercase tracking-wider mb-1">
+                  <Sparkles size={11} /> Plan AI Engine
+                </div>
+                <h3 className="text-lg font-black text-white italic tracking-tight uppercase">
+                  Request Change
+                </h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  Describe how you'd like to adjust your plan
+                </p>
+              </div>
+
+              {/* Active Directives trigger button (click through to dedicated screen) */}
+              {planContext && (
+                <button
+                  onClick={() => setShowDirectivesSubModal(true)}
+                  className="w-full flex items-center justify-between bg-slate-900/80 hover:bg-slate-900 border border-emerald-500/30 hover:border-emerald-500/50 rounded-2xl p-3 px-3.5 transition-all group text-left active:scale-95 shadow-sm cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-7 h-7 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                      <Sparkles size={13} />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-[8.5px] font-black uppercase tracking-wider text-emerald-400 block leading-tight">
+                        Active Directives
+                      </span>
+                      <p className="text-[11px] font-bold text-slate-200 truncate mt-0.5">
+                        "{planContext}"
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 text-slate-400 group-hover:text-emerald-400 text-[10px] font-bold uppercase tracking-wider shrink-0 ml-2">
+                    <span>View</span>
+                    <ChevronRight size={14} />
+                  </div>
+                </button>
+              )}
+
+              {/* Text Input Area */}
+              <div className="space-y-1.5 pt-1">
+                <textarea
+                  placeholder="e.g. Shorten tomorrow's ride to 45m, add a rest day on Friday, or lower overall intensity..."
+                  value={requestChangeInput}
+                  onChange={(e) => setRequestChangeInput(e.target.value)}
+                  rows={4}
+                  autoFocus
+                  className="w-full bg-[#0a0d14] border border-white/10 rounded-2xl p-3.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/40 font-medium resize-none shadow-inner"
+                />
+              </div>
+
+              {/* Apply Action */}
+              <div className="space-y-2 pt-1">
+                <button
+                  onClick={() => {
+                    if (!requestChangeInput.trim()) return;
+                    handleAddTweakFromApp(requestChangeInput.trim());
+                    setShowRequestChangeModal(false);
+                    setShowDirectivesSubModal(false);
+                    setRequestChangeInput('');
+                  }}
+                  disabled={!requestChangeInput.trim()}
+                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-2xl disabled:opacity-40 transition-all active:scale-95 shadow-lg flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Sparkles size={13} />
+                  <span>Apply Change</span>
+                </button>
+
+                <button 
+                  onClick={() => {
+                    setShowRequestChangeModal(false);
+                    setShowDirectivesSubModal(false);
+                  }}
+                  className="w-full py-2 bg-slate-900/60 rounded-xl text-[10px] font-black text-slate-400 hover:text-white transition-all uppercase tracking-widest"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        );
       })()}
 
       {reasoningPopup && (
@@ -2253,45 +2782,6 @@ const App: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
-
-      {showWeeklyBriefing && creds && (
-        <WeeklyBriefingModal 
-          activities={activities || []} 
-          wellness={wellnessData} 
-          creds={creds} 
-          userGoal={userGoal} 
-          onClose={() => setShowWeeklyBriefing(false)} 
-          todaySuggestion={suggestion}
-          ftp={ftp || undefined}
-          powerCurves={powerCurves}
-          planContext={planContext || undefined}
-          weeklyBriefing={weeklyBriefing}
-          weeklyBriefingError={weeklyBriefingError}
-          loadingWeeks={loadingWeeks}
-          generatedWeeks={generatedWeeks}
-          reworkingWeeks={reworkingWeeks}
-          onFetchWeek={(wk) => fetchWeeklyBriefingData(undefined, false, planMode, trainingMode, wk)}
-          planMode={planMode}
-          onPlanModeChange={(newMode) => {
-            setPlanMode(newMode);
-            localStorage.setItem('wattson_plan_mode', newMode);
-            fetchWeeklyBriefingData(undefined, true, newMode);
-          }}
-          onResetPlanContext={() => {
-            setPlanContext(null);
-            localStorage.removeItem('wattson_plan_context');
-            fetchWeeklyBriefingData("", true);
-          }}
-          onUpdatePlanContext={(directive, weekIndex) => {
-            setPlanContext(directive);
-            safeSetItem('wattson_plan_context', directive);
-            fetchWeeklyBriefingData(directive, true, undefined, undefined, weekIndex);
-          }}
-          onForceRefresh={() => {
-            fetchWeeklyBriefingData(undefined, true);
-          }}
-        />
       )}
 
       <ChangelogModal 

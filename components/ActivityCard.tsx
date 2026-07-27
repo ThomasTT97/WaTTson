@@ -5,6 +5,7 @@ import { Zap, Clock, ChevronRight, Activity as ActivityIcon, Heart, TrendingUp }
 interface ActivityCardProps {
   activity: Activity;
   onClick: (activity: Activity) => void;
+  isToday?: boolean;
 }
 
 export const getRideType = (activity: Activity): string => {
@@ -89,7 +90,7 @@ export const getRideType = (activity: Activity): string => {
   return `${baseType} Ride`;
 };
 
-export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onClick }) => {
+export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onClick, isToday }) => {
   const dateObj = new Date(activity.start_date_local);
   const weekday = dateObj.toLocaleDateString(undefined, { weekday: 'short' });
   const day = dateObj.getDate();
@@ -119,19 +120,32 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
   return (
     <div 
       onClick={() => onClick(activity)}
-      className="glass-card p-2.5 pl-3 pr-3 rounded-2xl cursor-pointer hover:bg-white/[0.04] active:scale-[0.98] transition-all duration-300 group flex items-center gap-3 border border-white/[0.03]"
+      className={`glass-card p-2.5 pl-3 pr-3 rounded-2xl cursor-pointer active:scale-[0.98] transition-all duration-300 group flex items-center gap-3 border ${
+        isToday 
+          ? 'border-emerald-500/40 bg-gradient-to-r from-emerald-950/30 via-slate-900/50 to-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.12)] hover:border-emerald-500/60' 
+          : 'border-white/[0.04] bg-slate-900/40 hover:bg-white/[0.04]'
+      }`}
     >
-      <div className="w-10 h-10 rounded-xl bg-slate-900/50 flex flex-col items-center justify-center shrink-0 border border-white/5 shadow-inner group-hover:border-emerald-500/20 transition-colors">
-        <span className="text-[7.5px] font-black text-slate-500 uppercase leading-none mb-0.5 tracking-tighter">{weekday}</span>
-        <span className="text-base font-black text-white italic leading-none">{day}</span>
+      <div className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center shrink-0 border shadow-inner transition-colors ${
+        isToday 
+          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400' 
+          : 'bg-slate-900/50 border-white/5 text-white group-hover:border-emerald-500/20'
+      }`}>
+        <span className={`text-[7.5px] font-black uppercase leading-none mb-0.5 tracking-tighter ${isToday ? 'text-emerald-400' : 'text-slate-500'}`}>{weekday}</span>
+        <span className={`text-base font-black italic leading-none ${isToday ? 'text-emerald-300' : 'text-white'}`}>{day}</span>
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col justify-center">
         <div className="flex items-center gap-2 mb-0.5">
-          <h3 className="font-bold text-slate-200 text-xs truncate leading-tight tracking-tight group-hover:text-emerald-400 transition-colors">
+          <h3 className={`font-bold text-xs truncate leading-tight tracking-tight transition-colors ${isToday ? 'text-emerald-300' : 'text-slate-200 group-hover:text-emerald-400'}`}>
             {displayName}
           </h3>
-          {isVirtual && (
+          {isToday && (
+            <div className="px-1.5 py-0.5 rounded shadow-sm bg-emerald-500/20 border border-emerald-500/40 text-[7.5px] font-black text-emerald-300 uppercase tracking-wider flex items-center gap-1 shrink-0">
+              COMPLETED TODAY
+            </div>
+          )}
+          {isVirtual && !isToday && (
             <div className="px-1.5 py-0.5 rounded shadow-sm bg-orange-500/10 border border-orange-500/20 text-[7px] font-black text-orange-500 uppercase tracking-widest">Virtual</div>
           )}
         </div>

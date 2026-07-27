@@ -8,6 +8,10 @@ export default defineConfig(({ mode }) => {
   
   return {
     plugins: [react()],
+    server: {
+      port: 3000,
+      host: '0.0.0.0'
+    },
     define: {
       // Polyfill process.env.GEMINI_API_KEY for the @google/genai SDK
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.API_KEY || ''),

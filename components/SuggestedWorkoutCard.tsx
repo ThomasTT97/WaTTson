@@ -52,8 +52,23 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
     return { name: 'Ride', color: 'text-yellow-400/60' };
   };
 
-  const weekday = getDayAbbr(day.day);
-  const dayNum = getDayNumber(day.day);
+  const computedDate = (() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    if (typeof absoluteIndex === 'number') {
+      d.setDate(d.getDate() + absoluteIndex);
+    }
+    return d;
+  })();
+
+  const weekday = typeof absoluteIndex === 'number' 
+    ? computedDate.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()
+    : getDayAbbr(day.day);
+
+  const dayNum = typeof absoluteIndex === 'number'
+    ? computedDate.getDate()
+    : getDayNumber(day.day);
+
   const sport = getSportInfo(day.focus);
 
   const isRest = day.intensity === 'Rest' || day.focus.toLowerCase().includes('rest') || day.load_target === 0;
@@ -62,43 +77,49 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
     return (
       <div 
         onClick={() => onClick(day)}
-        className={`glass-card p-2.5 pl-3 pr-3 rounded-2xl cursor-pointer hover:bg-white/[0.02] active:scale-[0.98] transition-all duration-300 group flex items-center gap-3 border border-dashed ${
+        className={`glass-card p-2.5 pl-3 pr-3 rounded-2xl cursor-pointer transition-all duration-300 group flex items-center gap-3 border ${
           isToday 
-            ? 'border-emerald-500/20 bg-emerald-500/[0.01] shadow-[0_0_15px_rgba(16,185,129,0.03)]' 
-            : 'border-slate-800/60 bg-transparent opacity-60 hover:opacity-85'
+            ? 'border-emerald-500/30 bg-gradient-to-r from-emerald-950/20 via-slate-900/40 to-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.06)]' 
+            : 'border-indigo-500/20 bg-gradient-to-r from-indigo-950/20 via-slate-900/40 to-slate-950/80 hover:border-indigo-500/35'
         }`}
       >
         {/* Date block */}
-        <div className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center shrink-0 border border-dashed shadow-inner transition-colors ${
+        <div className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center shrink-0 border shadow-inner transition-colors ${
           isToday 
-            ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400/80' 
-            : 'bg-slate-950/40 border-slate-800 text-slate-500'
+            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+            : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-300'
         }`}>
-          <span className="text-[7.5px] font-black uppercase leading-none mb-0.5 tracking-tighter">{weekday}</span>
-          <span className={`text-base font-black italic leading-none ${isToday ? 'text-emerald-400' : 'text-slate-400'}`}>{dayNum || '–'}</span>
+          <span className="text-[7.5px] font-black uppercase leading-none mb-0.5 tracking-tighter opacity-80">{weekday}</span>
+          <span className="text-base font-black italic leading-none">{dayNum || '–'}</span>
         </div>
 
         {/* Focus description & REST badge */}
         <div className="flex-1 min-w-0 flex flex-col justify-center">
           <div className="flex items-center gap-2 mb-0.5">
             <h3 className={`font-bold text-xs truncate leading-tight tracking-tight transition-colors ${
-              isToday ? 'text-emerald-400/90' : 'text-slate-400 group-hover:text-slate-300'
+              isToday ? 'text-emerald-300' : 'text-slate-200 group-hover:text-indigo-300'
             }`}>
-              {day.focus}
+              {day.focus || 'Rest Day'}
             </h3>
-            <span className="text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider text-slate-400 bg-slate-500/10 border border-slate-500/10">
-              REST
+            <span className="text-[7.5px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider text-indigo-300 bg-indigo-500/15 border border-indigo-500/30 flex items-center gap-1 shrink-0">
+              <Coffee size={9} /> REST
             </span>
           </div>
           
-          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider truncate">
+          <p className="text-[10px] text-slate-400 font-medium tracking-tight truncate">
             {day.why || 'Time to recover, adapt, and rebuild muscles.'}
           </p>
         </div>
 
         {/* Cozy rest icon */}
-        <div className="flex flex-col items-end justify-center shrink-0 pr-1">
-          <Coffee size={14} className={isToday ? 'text-emerald-400/60' : 'text-slate-600 group-hover:text-slate-500'} />
+        <div className="flex items-center justify-center shrink-0">
+          <div className={`p-2 rounded-xl border flex items-center justify-center transition-all ${
+            isToday 
+              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+              : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-300 group-hover:scale-105 group-hover:text-indigo-200'
+          }`}>
+            <Coffee size={14} />
+          </div>
         </div>
       </div>
     );

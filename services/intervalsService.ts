@@ -142,6 +142,13 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
       if (remaining) await new Promise(resolve => setTimeout(resolve, 300));
     }
 
+    // After all activities are fetched, log yesterday's activity if it exists
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = toLocalDateString(yesterday);
+    const activityYesterday = allActivities.find(a => a.start_date_local.startsWith(yesterdayStr));
+    console.log("Activity from yesterday:", activityYesterday);
+
     return allActivities.sort((a, b) => b.start_date_local.localeCompare(a.start_date_local));
   } catch (error: any) {
     console.error('Activities Fetch Error:', error);
