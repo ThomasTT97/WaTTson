@@ -988,18 +988,12 @@ const App: React.FC = () => {
     
     if (typeof window === 'undefined' || !('IntersectionObserver' in window)) return;
 
-    const element = todayAndPastContainerRef.current;
+    const element = document.getElementById('timeline-top-sentinel');
     if (!element) return;
 
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        setHidePlanHeader(entry.isIntersecting);
-      },
-      {
-        threshold: 0,
-        rootMargin: "-20px 0px 0px 0px" // Trigger slightly before it hits the very top edge
-      }
-    );
+    const observer = new IntersectionObserver(([entry]) => {
+      setHidePlanHeader(!entry.isIntersecting);
+    });
 
     observer.observe(element);
     return () => {
@@ -1667,7 +1661,7 @@ const App: React.FC = () => {
                        <div className="absolute inset-2 border border-emerald-500/20 rounded-2xl animate-ping [animation-duration:4s]" />
                        <Bot size={28} className="text-emerald-400" />
                     </div>
-                    <p className="text-sm font-black text-white italic uppercase tracking-wider mb-2">waTTson Coach AI</p>
+                    <p className="text-sm font-black text-white italic uppercase tracking-wider mb-2">waTTson Coach</p>
                     <p className="text-[11px] text-slate-400 leading-relaxed mb-6 max-w-[240px]">
                       Your performance engine is fully calibrated. Ask me anything or select a diagnostic focus chip below:
                     </p>
@@ -1806,215 +1800,220 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {activeTab === 'settings' && (
+        {activeTab === "settings" && (
           <div className="flex flex-col animate-in slide-in-from-right-2 duration-400">
-             {settingsView === 'main' ? null : (
-               <div className="flex items-center justify-start pb-2 px-1 pt-1 mb-2">
-                 <button 
-                   onClick={() => setSettingsView('main')}
-                   className="w-9 h-9 rounded-xl glass-card flex items-center justify-center text-slate-500 border border-white/10 active:scale-95 transition-all"
-                 >
-                   <ChevronLeft size={18} />
-                 </button>
-               </div>
-             )}
+              {settingsView === "main" ? null : (
+                <div className="flex items-center gap-3 pb-4 px-1 pt-1 mb-4 border-b border-white/5">
+                  <button 
+                    onClick={() => setSettingsView("main")}
+                    className="w-9 h-9 rounded-xl glass-card flex items-center justify-center text-slate-400 border border-white/10 active:scale-95 transition-all"
+                  >
+                    <ChevronLeft size={18} />
+                  </button>
+                  <h2 className="text-[14px] font-black text-white italic uppercase tracking-tight">
+                    {settingsView === "rider_profile" ? "Rider Assessment" : 
+                     settingsView === "ftp" ? "Engine Benchmark" : 
+                     settingsView === "goal" ? "Goal & Ambition" : 
+                     settingsView === "training_method" ? "Training Setup" : ""}
+                  </h2>
+                </div>
+              )}
 
-             <div className="flex flex-col pb-2 px-1">
-               {settingsView === 'main' && (
-                 <>
-                   <div className="flex flex-col gap-2">
-                     <button 
-                       onClick={() => setSettingsView('rider_profile')}
-                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-amber-500/10 shadow-sm"
-                     >
-                       <div className="flex items-center gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400"><User size={20} /></div>
-                         <div className="text-left">
-                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Your Rider Profile</p>
-                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">AI Assessment</p>
-                         </div>
-                       </div>
-                       <ChevronRight size={16} className="text-slate-600 group-hover:text-amber-400 transition-colors" />
-                     </button>
+              <div className="flex flex-col pb-2 px-1">
+                {settingsView === "main" && (
+                  <div className="flex flex-col gap-2">
+                    <button 
+                      onClick={() => setSettingsView("rider_profile")}
+                      className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-amber-500/10 shadow-sm"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400"><User size={20} /></div>
+                        <div className="text-left">
+                          <p className="text-[11px] font-black text-white uppercase tracking-widest">Your Rider Profile</p>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Assessment</p>
+                        </div>
+                      </div>
+                      <ChevronRight size={16} className="text-slate-600 group-hover:text-amber-400 transition-colors" />
+                    </button>
 
-                     <button 
-                       onClick={() => setSettingsView('goal')}
-                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-emerald-500/10 shadow-sm"
-                     >
-                       <div className="flex items-center gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400"><Target size={20} /></div>
-                         <div className="text-left">
-                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Your Goal</p>
-                           <p className="text-[10px] text-slate-500 font-bold italic truncate max-w-[180px]">"{userGoal}"</p>
-                         </div>
-                       </div>
-                       <ChevronRight size={16} className="text-slate-600 group-hover:text-emerald-400 transition-colors" />
-                     </button>
+                    <button 
+                      onClick={() => setSettingsView("goal")}
+                      className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-emerald-500/10 shadow-sm"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400"><Target size={20} /></div>
+                        <div className="text-left">
+                          <p className="text-[11px] font-black text-white uppercase tracking-widest">Your Goal</p>
+                          <p className="text-[10px] text-slate-500 font-bold italic truncate max-w-[180px]">\"{userGoal}\"</p>
+                        </div>
+                      </div>
+                      <ChevronRight size={16} className="text-slate-600 group-hover:text-emerald-400 transition-colors" />
+                    </button>
 
-                     <button 
-                       onClick={() => setSettingsView('ftp')}
-                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-orange-500/10 shadow-sm"
-                     >
-                       <div className="flex items-center gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-400"><Zap size={20} /></div>
-                         <div className="text-left">
-                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Your FTP</p>
-                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{ftp || '---'} Watts</p>
-                         </div>
-                       </div>
-                       <ChevronRight size={16} className="text-slate-600 group-hover:text-orange-400 transition-colors" />
-                     </button>
+                    <button 
+                      onClick={() => setSettingsView("ftp")}
+                      className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-orange-500/10 shadow-sm"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-400"><Zap size={20} /></div>
+                        <div className="text-left">
+                          <p className="text-[11px] font-black text-white uppercase tracking-widest">Engine Benchmark</p>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{ftp ? `${ftp}W FTP` : "Click to set"}</p>
+                        </div>
+                      </div>
+                      <ChevronRight size={16} className="text-slate-600 group-hover:text-orange-400 transition-colors" />
+                    </button>
 
-                     <button 
-                       onClick={() => {
-                         setSettingsView('training_method');
-                         if (!threeMonthReview && !isLoadingThreeMonthReview && activities) {
-                           handleFetchThreeMonthReview();
-                         }
-                       }}
-                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-cyan-500/10 shadow-sm"
-                     >
-                       <div className="flex items-center gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center text-cyan-400 shrink-0"><Sliders size={20} /></div>
-                         <div className="text-left">
-                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Training Method & Mode</p>
-                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
-                             {trainingMethodology.toUpperCase()} • {trainingMode === 'cycling' ? 'CYCLING' : trainingMode === 'triathlon' ? 'TRIATHLON' : 'RUNNING'}
-                           </p>
-                         </div>
-                       </div>
-                       <ChevronRight size={16} className="text-slate-600 group-hover:text-cyan-400 transition-colors" />
-                     </button>
-                   </div>
-                  
-                   <div className="grid grid-cols-2 gap-2 mt-auto pt-4">
-                     <button onClick={() => { setSuggestion(null); loadData(creds!); }} className="p-3.5 bg-white/5 rounded-[1.3rem] border border-white/5 text-[9px] font-black uppercase tracking-widest text-slate-500 flex flex-col items-center gap-2 active:scale-95 transition-all">
-                        <RotateCcw size={16} /> Sync Engine
-                     </button>
-                     <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="p-3.5 bg-rose-500/5 rounded-[1.3rem] border border-rose-500/10 text-[9px] font-black uppercase tracking-widest text-rose-500 flex flex-col items-center gap-2 active:scale-95 transition-all">
-                        <LogOut size={16} /> Logout
-                     </button>
-                   </div>
-                 </>
-               )}
+                    <button 
+                      onClick={() => setSettingsView("training_method")}
+                      className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-cyan-500/10 shadow-sm"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center text-cyan-400"><Settings size={20} /></div>
+                        <div className="text-left">
+                          <p className="text-[11px] font-black text-white uppercase tracking-widest">Training Setup</p>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{trainingMethodology.replace("_", " ")} • {trainingMode}</p>
+                        </div>
+                      </div>
+                      <ChevronRight size={16} className="text-slate-600 group-hover:text-cyan-400 transition-colors" />
+                    </button>
+                    
+                    <div className="mt-8 pt-4 border-t border-white/5">
+                      <button 
+                        onClick={handleLogout}
+                        className="w-full glass-card p-4 rounded-2xl flex items-center justify-center gap-3 text-rose-500 hover:bg-rose-500/10 transition-all active:scale-[0.98] border border-rose-500/10 group"
+                      >
+                        <LogOut size={16} className="group-hover:translate-x-1 transition-transform" />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Disconnect Account</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
 
-               {settingsView === 'goal' && (
-                 <div className="glass-card p-4 rounded-[1.5rem] space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                {settingsView === "goal" && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="space-y-4">
-                      <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
+                      <p className="text-[11px] text-slate-400 leading-relaxed font-medium px-1">
                         waTTson adapts his coaching intensity, interval style, and recovery focus based on your current ambition.
                       </p>
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         <label className="text-[9px] font-bold text-slate-600 uppercase tracking-[0.2em] ml-1">Current Ambition</label>
-                        <div onClick={() => { setShowGoalEditor(true); setSettingsView('main'); }} className="bg-slate-950/50 p-5 rounded-2xl border border-white/5 cursor-pointer hover:border-emerald-500/30 transition-all group">
-                          <p className="text-[13px] text-white italic group-hover:text-emerald-400 transition-colors">"{userGoal}"</p>
-                          <p className="text-[8px] text-slate-600 uppercase tracking-widest mt-3 font-bold">Tap to edit</p>
-                        </div>
+                        <textarea 
+                          value={userGoal} 
+                          onChange={(e) => setUserGoal(e.target.value)} 
+                          className="w-full bg-slate-950/50 border border-white/10 rounded-[1.8rem] p-6 text-lg font-bold text-white outline-none focus:border-emerald-500/30 italic min-h-[140px] resize-none"
+                          placeholder="Ex: Improve hill climb efficiency..."
+                        />
+                        <button 
+                          onClick={() => { 
+                            safeSetItem("wattson_goal", userGoal); 
+                            setSuggestion(null); 
+                            setGeneratedWeeks([]);
+                            setWeeklyBriefing(null);
+                            fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
+                            setSettingsView("main");
+                          }}
+                          className="w-full py-5 bg-emerald-500 text-slate-950 font-black text-[10px] uppercase tracking-[0.2em] rounded-[1.5rem] shadow-xl active:scale-95 transition-all"
+                        >
+                          Update Engine Target
+                        </button>
                       </div>
                     </div>
                   </div>
                 )}
 
-                {settingsView === 'ftp' && (
-                  <div className="glass-card p-4 rounded-[1.5rem] space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                {settingsView === "ftp" && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="space-y-4">
-                      <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
-                        Your FTP (Functional Threshold Power) is the engine's core benchmark. While we sync this from Intervals.icu, you can override it here to fine-tune intensity.
+                      <p className="text-[11px] text-slate-400 leading-relaxed font-medium px-1">
+                        Your FTP (Functional Threshold Power) is the engine's core benchmark. While we sync this from Intervals.icu, you can override it here.
                       </p>
                       
-                      <div className="bg-slate-950/50 p-6 rounded-2xl border border-white/5 flex flex-col items-center">
-                        <span className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-2">Configure Engine Value</span>
+                      <div className="bg-slate-950/50 p-8 rounded-[2rem] border border-white/5 flex flex-col items-center">
+                        <span className="text-[8px] font-bold text-slate-600 uppercase tracking-[0.2em] mb-4">Engine Value</span>
                         <div className="flex items-center gap-6">
                           <button 
                             onClick={() => {
                               const newVal = Math.max(0, (ftp || 200) - 5);
                               setFtp(newVal);
-                              safeSetItem('wattson_ftp', newVal.toString());
+                              safeSetItem("wattson_ftp", newVal.toString());
                             }}
-                            className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-slate-400 active:scale-90 transition-all hover:bg-white/10"
+                            className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-slate-400 active:scale-90 transition-all hover:bg-white/10 border border-white/5"
                           >
-                            <ChevronLeft size={20} />
+                            <ChevronLeft size={24} />
                           </button>
-                          <span className="text-4xl font-black italic text-white tracking-tighter w-24 text-center">{ftp || '---'}</span>
+                          <div className="flex flex-col items-center min-w-[100px]">
+                            <span className="text-5xl font-black italic text-white tracking-tighter">{ftp || "---"}</span>
+                            <span className="text-[10px] font-bold text-orange-400 uppercase tracking-widest mt-1">Watts</span>
+                          </div>
                           <button 
                             onClick={() => {
                               const newVal = (ftp || 200) + 5;
                               setFtp(newVal);
-                              safeSetItem('wattson_ftp', newVal.toString());
+                              safeSetItem("wattson_ftp", newVal.toString());
                             }}
-                            className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-slate-400 active:scale-90 transition-all hover:bg-white/10"
+                            className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-slate-400 active:scale-90 transition-all hover:bg-white/10 border border-white/5"
                           >
-                            <ChevronRight size={20} />
+                            <ChevronRight size={24} />
                           </button>
                         </div>
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-4 text-orange-400">Watts</span>
-                      </div>
-                      
-                      <div className="pt-2">
-                         <p className="text-[10px] text-slate-500 leading-relaxed italic text-center">
-                           Changes here take effect immediately for all subsequent coaching suggestions and intensity calculations.
-                         </p>
                       </div>
                     </div>
                   </div>
                 )}
 
-
-
-               {settingsView === 'rider_profile' && (
-                 <div className="glass-card p-5 rounded-[1.8rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                {settingsView === "rider_profile" && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 px-1">
                     {isLoadingProfile ? (
-                      <div className="flex flex-col items-center justify-center py-10 text-center">
+                      <div className="glass-card p-12 rounded-[2rem] flex flex-col items-center justify-center text-center">
                         <div className="w-10 h-10 rounded-full border-t-2 border-emerald-500 animate-spin mb-4" />
                         <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Generating Profile...</p>
-                        <p className="text-[9px] text-slate-500 font-medium mt-1">Analyzing power curve and last 30 activities</p>
+                        <p className="text-[9px] text-slate-500 font-medium mt-1">Analyzing performance trends</p>
                       </div>
                     ) : userProfile ? (
-                      <div className="space-y-6">
-                        {/* Rider Type Header */}
-                        <div className="text-center pb-4 border-b border-white/5">
+                      <div className="space-y-5">
+                        <div className="glass-card p-6 rounded-[2rem] text-center border border-emerald-500/10">
                           <h3 className="text-xl font-black text-emerald-400 italic uppercase tracking-tight leading-tight">
                             {userProfile.athlete_type}
                           </h3>
-                          <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1.5">
-                            Based on recent 30-day performance trends
+                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
+                            Current performance profile
                           </p>
                         </div>
 
-                        {/* Rider Story Narrative */}
                         {userProfile.rider_story && (
-                          <div className="space-y-2">
-                            <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Rider Story</h4>
-                            <p className="text-[12px] text-slate-300 leading-relaxed font-medium bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl italic">
-                              "{userProfile.rider_story}"
+                          <div className="bg-slate-950/40 p-5 rounded-[1.8rem] border border-white/5">
+                            <p className="text-[12px] text-slate-300 leading-relaxed font-medium italic">
+                              \"{userProfile.rider_story}\"
                             </p>
                           </div>
                         )}
 
-                        {/* Strengths and Limiters */}
-                        <div className="grid grid-cols-1 gap-5">
-                          {/* Strengths */}
-                          <div className="relative pl-3">
-                            <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-emerald-500/40 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.3)]"></div>
-                            <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2">Areas of Strength</h4>
-                            <ul className="text-[11px] text-slate-400 leading-relaxed font-semibold space-y-1.5">
+                        <div className="grid grid-cols-1 gap-3">
+                          <div className="glass-card p-5 rounded-[1.8rem] border border-emerald-500/10 relative overflow-hidden">
+                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500/40"></div>
+                            <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-3">Key Strengths</h4>
+                            <ul className="text-[11px] text-slate-400 leading-relaxed font-semibold space-y-2">
                               {userProfile.strengths.map((s, i) => (
-                                <li key={i} className="flex items-start gap-1.5">
-                                  <span className="text-emerald-400 font-bold">✓</span>
+                                <li key={i} className="flex items-start gap-2">
+                                  <div className="w-4 h-4 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                                  </div>
                                   <span>{s}</span>
                                 </li>
                               ))}
                             </ul>
                           </div>
 
-                          {/* Limiters */}
-                          <div className="relative pl-3">
-                            <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-rose-500/40 rounded-full"></div>
-                            <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2">Limiters to Improve</h4>
-                            <ul className="text-[11px] text-slate-400 leading-relaxed font-semibold space-y-1.5">
+                          <div className="glass-card p-5 rounded-[1.8rem] border border-rose-500/10 relative overflow-hidden">
+                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-rose-500/40"></div>
+                            <h4 className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-3">Limiters</h4>
+                            <ul className="text-[11px] text-slate-400 leading-relaxed font-semibold space-y-2">
                               {userProfile.areas_for_improvement.map((a, i) => (
-                                <li key={i} className="flex items-start gap-1.5">
-                                  <span className="text-rose-400 font-bold">!</span>
+                                <li key={i} className="flex items-start gap-2">
+                                  <div className="w-4 h-4 rounded-full bg-rose-500/10 flex items-center justify-center shrink-0 mt-0.5">
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-rose-400"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                                  </div>
                                   <span>{a}</span>
                                 </li>
                               ))}
@@ -2022,381 +2021,174 @@ const App: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* What Can Be Improved Narrative */}
-                        {userProfile.what_can_be_improved && (
-                          <div className="space-y-2 pt-2 border-t border-white/5">
-                            <h4 className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Physiological Focus</h4>
-                            <p className="text-[12px] text-slate-300 leading-relaxed font-medium">
-                              {userProfile.what_can_be_improved}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Training Effectiveness & History */}
-                        <div className="space-y-4 pt-4 border-t border-white/5">
-                          <div className="space-y-2">
-                            <h4 className="text-[10px] font-black text-white uppercase tracking-widest">Training History & Response</h4>
-                            {userProfile.effective_training_history ? (
-                              <p className="text-[12px] text-slate-300 leading-relaxed font-medium">
-                                {userProfile.effective_training_history}
-                              </p>
-                            ) : (
-                              <p className="text-[12px] text-slate-300 leading-relaxed font-medium">
-                                {userProfile.training_response}
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-3 bg-slate-950/40 p-3 rounded-2xl border border-white/5">
-                            <div>
-                               <p className="text-[8px] font-black text-emerald-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-                                 <Check size={10} className="stroke-[3]" /> Effective
-                               </p>
-                               <ul className="text-[10px] text-slate-300 font-bold space-y-1">
-                                 {userProfile.effective_methods.map((m, i) => (
-                                   <li key={i} className="flex items-start gap-1">
-                                     <span className="text-emerald-500/50">•</span> {m}
-                                   </li>
-                                 ))}
-                               </ul>
-                            </div>
-                            <div>
-                               <p className="text-[8px] font-black text-rose-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-                                 <X size={10} className="stroke-[3]" /> Ineffective
-                               </p>
-                               <ul className="text-[10px] text-slate-300 font-bold space-y-1">
-                                 {userProfile.ineffective_methods.map((m, i) => (
-                                   <li key={i} className="flex items-start gap-1">
-                                     <span className="text-rose-500/50">•</span> {m}
-                                   </li>
-                                 ))}
-                               </ul>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Recommended Training Approach */}
-                        <div className="space-y-2 pt-4 border-t border-white/5 relative pl-3">
-                          <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-purple-500/40 rounded-full"></div>
-                          <h4 className="text-[11px] font-black text-white uppercase tracking-widest pl-1">Recommended Approach</h4>
-                          {userProfile.recommended_approach && (
-                            <p className="text-[12px] text-slate-300 leading-relaxed font-medium pl-1 mb-2">
-                              {userProfile.recommended_approach}
-                            </p>
-                          )}
-                          <p className="text-[11px] text-slate-400 font-bold leading-relaxed pl-1">
-                            <span className="text-purple-400 uppercase tracking-widest text-[9px] font-extrabold block mb-0.5">waTTson's Focus:</span>
+                        <div className="pt-4 border-t border-white/5 px-2">
+                          <p className="text-[11px] text-slate-400 font-bold leading-relaxed italic">
+                            <span className="text-purple-400 uppercase tracking-widest text-[9px] font-black block mb-0.5">waTTson's Focus:</span>
                             {userProfile.recommended_focus}
                           </p>
                         </div>
                       </div>
                     ) : (
-                      <div className="text-center py-6">
-                         <p className="text-[11px] text-slate-400">Not enough data to form an assessment yet.</p>
+                      <div className="glass-card p-10 rounded-[2rem] text-center border border-white/5">
+                        <p className="text-[11px] text-slate-400 font-medium">Not enough data to form an assessment yet.</p>
                       </div>
                     )}
-                 </div>
-               )}
+                  </div>
+                )}
 
-               {settingsView === 'training_method' && (
-                 <div className="glass-card p-5 rounded-[1.8rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                   {/* View Switcher Header */}
-                   <div className="flex bg-slate-950/60 p-1.5 rounded-2xl border border-white/5">
-                     <button
-                       onClick={() => setMethodologyTab('selection')}
-                       className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                         methodologyTab === 'selection' 
-                           ? 'bg-cyan-500 text-slate-950 shadow-md font-extrabold' 
-                           : 'text-slate-400 hover:text-white font-bold'
-                       }`}
-                     >
-                       Setup Engine
-                     </button>
-                     <button
-                       onClick={() => {
-                         setMethodologyTab('review');
-                         if (!threeMonthReview && !isLoadingThreeMonthReview && activities) {
-                           handleFetchThreeMonthReview();
-                         }
-                       }}
-                       className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                         methodologyTab === 'review' 
-                           ? 'bg-cyan-500 text-slate-950 shadow-md font-extrabold' 
-                           : 'text-slate-400 hover:text-white font-bold'
-                       }`}
-                     >
-                       90-Day Review
-                     </button>
-                   </div>
+                {settingsView === "training_method" && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 px-1">
+                    <div className="flex bg-slate-950/60 p-1.5 rounded-2xl border border-white/5">
+                      <button
+                        onClick={() => setMethodologyTab("selection")}
+                        className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                          methodologyTab === "selection" 
+                            ? "bg-cyan-500 text-slate-950 shadow-md" 
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        Setup
+                      </button>
+                      <button
+                        onClick={() => {
+                          setMethodologyTab("review");
+                          if (!threeMonthReview && !isLoadingThreeMonthReview && activities) {
+                            handleFetchThreeMonthReview();
+                          }
+                        }}
+                        className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                          methodologyTab === "review" 
+                            ? "bg-cyan-500 text-slate-950 shadow-md" 
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        Review
+                      </button>
+                    </div>
 
-                   {/* Tab 1: Setup (Methodology & Mode) */}
-                    {methodologyTab === 'selection' && (
+                    {methodologyTab === "selection" && (
                       <div className="space-y-6">
-                        {/* Training Mode Section */}
-                        <div className="space-y-3">
-                          <div className="flex flex-col gap-1">
+                        <div className="bg-slate-950/40 p-5 rounded-[1.8rem] border border-white/5 space-y-4">
+                          <div className="flex flex-col gap-1 px-1">
                             <span className="text-[10px] font-black text-white uppercase tracking-widest">Training Mode</span>
-                            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider leading-relaxed">
-                              Target discipline determines your structured session types
-                            </span>
+                            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Session distribution target</span>
                           </div>
-
                           <div className="grid grid-cols-3 gap-2">
-                            {(['cycling', 'triathlon', 'running'] as TrainingMode[]).map((mode) => {
+                            {(["cycling", "triathlon", "running"]).map((mode) => {
                               const isSelected = trainingMode === mode;
-                              let label = 'Cycling';
-                              let sublabel = 'CYC';
-                              let IconComponent = Bike;
-
-                              if (mode === 'triathlon') {
-                                label = 'Triathlon';
-                                sublabel = 'TRI';
-                                IconComponent = Trophy;
-                              } else if (mode === 'running') {
-                                label = 'Running';
-                                sublabel = 'RUN';
-                                IconComponent = ActivityIcon;
-                              }
-
                               return (
                                 <button
                                   key={mode}
                                   onClick={() => {
-                                    setTrainingMode(mode);
-                                    localStorage.setItem('wattson_training_mode', mode);
+                                    setTrainingMode(mode as TrainingMode);
+                                    localStorage.setItem("wattson_training_mode", mode);
                                     setGeneratedWeeks([]);
                                     setWeeklyBriefing(null);
-                                    fetchWeeklyBriefingData(undefined, true, undefined, mode, 1);
+                                    fetchWeeklyBriefingData(undefined, true, undefined, mode as TrainingMode, 1);
                                   }}
-                                  className={`flex flex-col items-center justify-center p-3.5 rounded-2xl border transition-all active:scale-[0.95] ${
+                                  className={`flex flex-col items-center justify-center p-3 rounded-2xl border transition-all active:scale-95 ${
                                     isSelected
-                                      ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.1)]'
-                                      : 'bg-white/[0.02] border-white/5 text-slate-400 hover:border-white/10 hover:text-slate-200'
+                                      ? "bg-cyan-500/10 border-cyan-500/40 text-cyan-400"
+                                      : "bg-white/[0.02] border-white/5 text-slate-500 hover:text-slate-300"
                                   }`}
                                 >
-                                  <IconComponent size={18} className="mb-1.5" />
-                                  <span className="text-[10px] font-black uppercase tracking-wider">{sublabel}</span>
-                                  <span className="text-[8px] font-bold opacity-60 uppercase mt-0.5">{label}</span>
+                                  <span className="text-[10px] font-black uppercase tracking-widest">{mode === "triathlon" ? "TRI" : mode === "running" ? "RUN" : "CYC"}</span>
                                 </button>
                               );
                             })}
                           </div>
                         </div>
 
-                        {/* Workout Methodology Section */}
-                        <div className="space-y-3 pt-4 border-t border-white/5">
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Workout Methodology</span>
-                            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider leading-relaxed">
-                              Distribution style used for power zone generation
-                            </span>
+                        <div className="bg-slate-950/40 p-5 rounded-[1.8rem] border border-white/5 space-y-4">
+                          <div className="flex flex-col gap-1 px-1">
+                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Methodology</span>
+                            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Interval style preference</span>
                           </div>
-
-                          <div className="space-y-2.5">
-                            {[
-                              {
-                                id: 'polarized' as TrainingMethodology,
-                                title: 'Polarized (80 / 20)',
-                                tagline: 'High VO2max & Endurance Focus',
-                                description: '80% low intensity (Zone 1/2) and 20% high intensity (Zone 5/6). Avoids mid-intensity threshold fatigue.'
-                              },
-                              {
-                                id: 'pyramidal' as TrainingMethodology,
-                                title: 'Pyramidal Distribution',
-                                tagline: 'Classic Aerobic tempo & Threshold',
-                                description: '70% Zone 1/2, 20% Zone 3/4 Tempo/SweetSpot, 10% Zone 5+ High Intensity. Builds robust aerobic foundation.'
-                              },
-                              {
-                                id: 'norwegian' as TrainingMethodology,
-                                title: 'Norwegian Lactate Method',
-                                tagline: 'Sub-Threshold Volume & Control',
-                                description: 'High volume sub-threshold intervals strictly controlled below LT2/3.8mmol lactate. Maximizes time at high aerobic power.'
-                              }
-                            ].map((method) => {
-                              const isSelected = trainingMethodology === method.id;
+                          <div className="space-y-2">
+                            {["polarized", "pyramidal", "norwegian"].map((m) => {
+                              const isSelected = trainingMethodology === m;
                               return (
                                 <button
-                                  key={method.id}
+                                  key={m}
                                   onClick={() => {
-                                    setTrainingMethodology(method.id);
-                                    localStorage.setItem('wattson_training_methodology', method.id);
+                                    setTrainingMethodology(m as TrainingMethodology);
+                                    localStorage.setItem("wattson_training_methodology", m);
                                     setGeneratedWeeks([]);
                                     setWeeklyBriefing(null);
-                                    setSuggestion(null);
                                     fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
                                   }}
-                                  className={`w-full text-left p-4 rounded-2xl border transition-all active:scale-[0.99] ${
+                                  className={`w-full p-4 rounded-2xl border text-left transition-all active:scale-[0.98] flex items-center justify-between ${
                                     isSelected
-                                      ? 'bg-cyan-500/10 border-cyan-500/40 shadow-[0_0_15px_rgba(6,182,212,0.12)]'
-                                      : 'bg-white/[0.02] border-white/5 hover:border-white/10'
+                                      ? "bg-cyan-500/10 border-cyan-500/40 text-cyan-400"
+                                      : "bg-white/[0.02] border-white/5 text-slate-500 hover:text-slate-300"
                                   }`}
                                 >
-                                  <div className="flex items-center justify-between mb-1">
-                                    <span className="text-[11px] font-black text-white uppercase tracking-wider">
-                                      {method.title}
-                                    </span>
-                                    {isSelected && (
-                                      <span className="px-2 py-0.5 rounded-full bg-cyan-500 text-slate-950 text-[8px] font-extrabold uppercase tracking-widest flex items-center gap-1">
-                                        <Check size={9} className="stroke-[3]" /> Active
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-[9px] text-cyan-400 font-bold uppercase tracking-widest mb-1">{method.tagline}</p>
-                                  <p className="text-[10px] text-slate-400 leading-relaxed font-semibold">{method.description}</p>
+                                  <span className="text-[11px] font-black uppercase tracking-widest">{m.replace("_", " ")}</span>
+                                  {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]"></div>}
                                 </button>
                               );
                             })}
                           </div>
                         </div>
-
-                        {/* Recalculation Alert */}
-                        <div className="p-3.5 bg-cyan-500/5 border border-cyan-500/10 rounded-2xl text-[9px] text-cyan-400 font-bold leading-relaxed flex items-start gap-2.5">
-                          <Info size={14} className="stroke-[3] shrink-0 mt-0.5" />
-                          <span>
-                            Adjusting either your training mode or workout methodology will trigger waTTson to immediately rebuild your custom daily suggestion and 4-week calendar.
-                          </span>
-                        </div>
-                      </div>
-                    )}                   {/* Tab 2: 3-Month Training Review */}
-                   {methodologyTab === 'review' && (
-                     <div className="space-y-4">
-                       {isLoadingThreeMonthReview ? (
-                         <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
-                           <Loader2 size={28} className="text-cyan-400 animate-spin" />
-                           <p className="text-[11px] font-black text-slate-300 uppercase tracking-widest">Analyzing 90-Day Training Data...</p>
-                           <p className="text-[9px] text-slate-500 font-medium">Evaluating TSS, volume trends, and goal progression with Gemini</p>
-                         </div>
-                       ) : threeMonthReview ? (
-                         <div className="space-y-4">
-                           {/* Status Badge & Title */}
-                           <div className="p-4 rounded-2xl bg-slate-950/60 border border-white/5 space-y-3">
-                             <div className="flex items-center justify-between">
-                               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">90-Day Progress Evaluation</span>
-                               <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
-                                 threeMonthReview.status === 'on_track' 
-                                                                       ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
-                                   : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                               }`}>
-                                 {threeMonthReview.status === 'on_track' ? (
-                                   <><Check size={12} className="stroke-[3]" /> Contributing to Goal</>
-                                 ) : (
-                                   <><Info size={12} className="stroke-[3]" /> Needs Adjustment</>
-                                 )}
-                               </span>
-                             </div>
-
-                             {/* Stats Summary Bar */}
-                             {threeMonthReview.period_stats && (
-                               <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/5 text-center">
-                                 <div className="bg-white/[0.02] p-2 rounded-xl">
-                                   <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">90d TSS</p>
-                                   <p className="text-[12px] font-black text-white mt-0.5">{threeMonthReview.period_stats.total_tss}</p>
-                                 </div>
-                                 <div className="bg-white/[0.02] p-2 rounded-xl">
-                                   <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Hours</p>
-                                   <p className="text-[12px] font-black text-white mt-0.5">{threeMonthReview.period_stats.total_hours}h</p>
-                                 </div>
-                                 <div className="bg-white/[0.02] p-2 rounded-xl">
-                                   <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Weekly Avg</p>
-                                   <p className="text-[12px] font-black text-white mt-0.5">{threeMonthReview.period_stats.avg_tss_per_week} tss/wk</p>
-                                 </div>
-                               </div>
-                             )}
-                           </div>
-
-                           {/* Conclusion Narrative */}
-                           <div className="space-y-2">
-                             <h4 className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">Executive Conclusion</h4>
-                             <p className="text-[11px] text-slate-200 leading-relaxed font-medium bg-white/[0.01] border border-white/[0.04] p-3.5 rounded-2xl italic">
-                               "{threeMonthReview.headline}"
-                             </p>
-                           </div>
-
-                           {/* Contributing Factors & Changes */}
-                           <div className="space-y-3">
-                             <div className="relative pl-3 space-y-1.5">
-                               <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-emerald-500/40 rounded-full"></div>
-                               <h4 className="text-[10px] font-black text-white uppercase tracking-widest">What's Contributing</h4>
-                               <ul className="text-[10px] text-slate-300 font-medium space-y-1">
-                                 {threeMonthReview.contributing_to_goal && [threeMonthReview.contributing_to_goal].map((factor: string, i: number) => (
-                                   <li key={i} className="flex items-start gap-1.5">
-                                     <span className="text-emerald-400 font-bold">•</span>
-                                     <span>{factor}</span>
-                                   </li>
-                                 ))}
-                               </ul>
-                             </div>
-
-                             <div className="relative pl-3 space-y-1.5">
-                               <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-amber-500/40 rounded-full"></div>
-                               <h4 className="text-[10px] font-black text-white uppercase tracking-widest">Recommended Changes</h4>
-                               <ul className="text-[10px] text-slate-300 font-medium space-y-1">
-                                 {threeMonthReview.needed_changes?.map((change: string, i: number) => (
-                                   <li key={i} className="flex items-start gap-1.5">
-                                     <span className="text-amber-400 font-bold">•</span>
-                                     <span>{change}</span>
-                                   </li>
-                                 ))}
-                               </ul>
-                             </div>
-                           </div>
-
-                           <button
-                             onClick={() => handleFetchThreeMonthReview(true)}
-                             className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 border border-white/5 active:scale-95"
-                           >
-                             <RefreshCw size={12} /> Refresh 90-Day Analysis
-                           </button>
-                         </div>
-                       ) : (
-                         <div className="text-center py-8 space-y-3" id="review-empty">
-                           <p className="text-[11px] text-slate-400 font-medium" id="p-review">No 3-month review generated yet.</p>
-                           <button
-                             onClick={() => handleFetchThreeMonthReview(true)}
-                             id="btn-first" className="px-4 py-2 bg-cyan-500 text-slate-950 font-black rounded-xl text-[10px] uppercase tracking-widest shadow-md hover:bg-cyan-400 transition-all active:scale-95"
-                           >
-                             Run 3-Month Analysis
-                           </button>
-                         </div>
-                       )}
-                     </div>
-                   )}
-                 </div>
-               )}
-                           {/*
-                           <button
-                             onClick={() => handleFetchThreeMonthReview(true)}
-                             className="px-4 py-2 bg-cyan-500 text-slate-950 font-black rounded-xl text-[10px] uppercase tracking-widest shadow-md hover:bg-cyan-400 transition-all active:scale-95"
-                           >
-                             Run 3-Month Analysis
-                           </button>
-                         </div>
-                       )}
-                     </div>
-                   )}
-                 </div>
-               )}
                       </div>
                     )}
-                 </div>
-               )}
-             </div>
+
+                    {methodologyTab === "review" && (
+                      <div className="space-y-4">
+                        {isLoadingThreeMonthReview ? (
+                          <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
+                            <Loader2 size={28} className="text-cyan-400 animate-spin" />
+                            <p className="text-[11px] font-black text-slate-300 uppercase tracking-widest">Analyzing 90-Day Training Data...</p>
+                            <p className="text-[9px] text-slate-500 font-medium">Evaluating TSS, volume trends, and goal progression</p>
+                          </div>
+                        ) : threeMonthReview ? (
+                          <div className="space-y-4">
+                            <div className="p-4 rounded-2xl bg-slate-950/60 border border-white/5 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">90-Day Progress</span>
+                                <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
+                                  threeMonthReview.status === "on_track" 
+                                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" 
+                                    : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                                }`}>
+                                  {threeMonthReview.status === "on_track" ? "On Track" : "Needs Adjustment"}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-200 leading-relaxed font-medium italic">\"{threeMonthReview.headline}\"</p>
+                            </div>
+                            
+                            <button
+                              onClick={() => handleFetchThreeMonthReview(true)}
+                              className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 border border-white/5 active:scale-95"
+                            >
+                              <RefreshCw size={12} /> Refresh Analysis
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="text-center py-8 space-y-3">
+                            <p className="text-[11px] text-slate-400 font-medium">No 3-month review generated yet.</p>
+                            <button
+                              onClick={() => handleFetchThreeMonthReview(true)}
+                              className="px-4 py-2 bg-cyan-500 text-slate-950 font-black rounded-xl text-[10px] uppercase tracking-widest shadow-md hover:bg-cyan-400 transition-all active:scale-95"
+                            >
+                              Run Analysis
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
           </div>
         )}
-      </div>
-
-       */}
-              </div>
-           </div>
-         )}
-       </div>
-       {showGoalEditor && (
+    {showGoalEditor && (
         <div className="fixed inset-0 z-[210] bg-slate-950/98 backdrop-blur-3xl flex flex-col p-8 animate-in slide-in-from-bottom-4 duration-400" style={{ paddingBottom: 'max(32px, env(safe-area-inset-bottom))' }}>
           <div className="flex items-center justify-between mb-8 mt-2">
             <h2 className="text-2xl text-header italic uppercase leading-none">DNA Focus</h2>
             <button onClick={() => setShowGoalEditor(false)} className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-slate-500"><Settings size={20} /></button>
           </div>
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Define your primary ambition for the AI engine.</p>
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Define your primary ambition for the coaching engine.</p>
           <textarea 
             value={userGoal} 
             onChange={(e) => setUserGoal(e.target.value)} 
@@ -2473,7 +2265,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Suggested Day Workout Detail Popup */}
       {selectedSuggestedDay && (() => {
           const index = weeklyBriefing ? weeklyBriefing.days.indexOf(selectedSuggestedDay) : -1;
           const today = new Date();
@@ -2643,13 +2434,13 @@ const App: React.FC = () => {
 
                 <div className="text-center space-y-1 pt-1 sm:pt-2">
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9.5px] font-black uppercase tracking-wider mb-0.5">
-                    <Sparkles size={11} /> Plan AI Engine
+                    <Sparkles size={11} /> Plan Engine
                   </div>
                   <h3 className="text-base sm:text-lg font-black text-white italic tracking-tight uppercase">
                     Active Directives
                   </h3>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    Custom directives guiding your AI plan
+                    Custom directives guiding your plan
                   </p>
                 </div>
 
@@ -3077,6 +2868,7 @@ const App: React.FC = () => {
           })}
         </div>
       )}
+    </div>
     </div>
   );
 };
