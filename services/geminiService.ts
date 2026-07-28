@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
+import { Type } from "@google/genai";
 import { 
   Activity, 
   ActivityInterval, 
@@ -10,14 +10,17 @@ import {
   Wellness,
   AnnualPowerCurve,
   RecoveryAdvice,
-  TrainingMode
+  TrainingMode,
+  TrainingMethodology,
+  ThreeMonthReview
 } from "../types";
 import {
   getRideFeedbackPrompt,
   getDailySuggestionPrompt,
   getWeeklyBriefingPrompt,
   getChatMessagePrompt,
-  getUserProfilePrompt
+  getUserProfilePrompt,
+  getThreeMonthReviewPrompt
 } from "./promptTemplates";
 
 
@@ -69,29 +72,19 @@ const setCache = (key: string, data: any) => {
 /**
  * General helper to call Gemini with a fallback chain.
  */
-const callGemini = async (params: any): Promise<GenerateContentResponse> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  
-  // Model fallback chain: 
-  // 1. gemini-3.5-flash (Supported basic/general text model)
-  // 2. gemini-3.1-flash-lite (Supported lightweight model)
-  const models = ['gemini-3.5-flash', 'gemini-3.1-flash-lite'];
-  
-  let lastError: any = null;
-  for (const model of models) {
-    try {
-      return await ai.models.generateContent({
-        ...params,
-        model
-      });
-    } catch (error: any) {
-      console.warn(`Gemini model ${model} failed, trying fallback...`, error);
-      lastError = error;
-      // Always try the next model in the fallback chain regardless of error type
-      continue;
-    }
+const callGemini = async (params: any): Promise<any> => {
+  const response = await fetch('/api/gemini', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(params)
+  });
+  if (!response.ok) {
+    const errData = await response.json();
+    throw new Error(errData.error || "Gemini service error");
   }
-  throw lastError || new Error("All Gemini models failed.");
+  return await response.json();
 };
 
 /**
@@ -224,12 +217,18 @@ export const getRideFeedback = async (
 /**
  * Generates a daily workout suggestion based on recent history.
  */
-export const getDailySuggestion = async (recentActivities: Activity[], userGoal?: string, forTomorrow: boolean = false, ftp?: number): Promise<DailySuggestion> => {
+export const getDailySuggestion = async (
+  recentActivities: Activity[], 
+  userGoal?: string, 
+  forTomorrow: boolean = false, 
+  ftp?: number,
+  methodology?: TrainingMethodology
+): Promise<DailySuggestion> => {
   const targetDate = new Date();
   if (forTomorrow) targetDate.setDate(targetDate.getDate() + 1);
   
   const targetStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
-  const cacheKey = `wattson_suggestion_${targetStr}_${userGoal || 'default'}`;
+  const cacheKey = `wattson_suggestion_${targetStr}_${userGoal || 'default'}_${methodology || 'polarized'}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
@@ -245,7 +244,8 @@ export const getDailySuggestion = async (recentActivities: Activity[], userGoal?
     userGoal: userGoal || '',
     ftp,
     hasPowerOnMostRides: true,
-    hrStatsText: ""
+    hrStatsText: "",
+    methodology
   });
 
   const response = await callGemini({
@@ -402,13 +402,14 @@ export const getWeeklyBriefing = async (
   force?: boolean,
   planMode: 'power' | 'hr' = 'power',
   trainingMode: TrainingMode = 'cycling',
-  weekIndex?: number
+  weekIndex?: number,
+  methodology?: TrainingMethodology
 ): Promise<WeeklyBriefing> => {
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   
-  // Include startContext and planContext in cache key to ensure it rotates if the "already had a ride" status changes or directives change
-  const contextHash = (startContext || '') + (planContext || '');
+  // Include startContext, planContext, methodology in cache key
+  const contextHash = (startContext || '') + (planContext || '') + (methodology || '');
   
   // Safe hash instead of fragile btoa which crashes on non-ASCII characters
   const safeHash = (str: string) => {
@@ -421,7 +422,7 @@ export const getWeeklyBriefing = async (
     return Math.abs(hash).toString(36);
   };
 
-  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${planMode}_${trainingMode}_${weekIndex || 'all'}_${contextHash ? safeHash(contextHash) : 'no-ctx'}`;
+  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${planMode}_${trainingMode}_${methodology || 'polarized'}_${weekIndex || 'all'}_${contextHash ? safeHash(contextHash) : 'no-ctx'}`;
   
   if (!force) {
     const cached = getCache(cacheKey);
@@ -503,7 +504,8 @@ export const getWeeklyBriefing = async (
     ftp,
     hasPowerOnMostRides,
     hrStatsText,
-    trainingMode
+    trainingMode,
+    methodology
   });
 
   const response = await callGemini({
@@ -587,11 +589,11 @@ export const sendChatMessage = async (
   }).join('\n');
 
   // Compress full history for the LLM to access
-  // For histories > 200 items, we summarize older ones to stay concise while maintaining the "full history" awareness
+  // For histories > 30 items, we summarize older ones to stay concise while maintaining the "full history" awareness
   let fullHistoryCompact = '';
-  if (sortedActivities.length > 200) {
-    const recentPool = sortedActivities.slice(0, 100);
-    const olderPool = sortedActivities.slice(100);
+  if (sortedActivities.length > 30) {
+    const recentPool = sortedActivities.slice(0, 20);
+    const olderPool = sortedActivities.slice(20);
     
     const recentStr = recentPool.map(a => 
       `${a.start_date_local.split('T')[0]}|TSS:${a.icu_training_load || a.icu_tss || 0}|NP:${Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0)}W`
@@ -608,7 +610,7 @@ export const sendChatMessage = async (
       .map(([m, tss]) => `${m}:TSS ${Math.round(tss as number)}`)
       .join(',');
 
-    fullHistoryCompact = `Recent: ${recentStr} | Older Summaries: ${summaryStr}`;
+    fullHistoryCompact = `Recent: ${recentStr} | Older Monthly TSS Summaries: ${summaryStr}`;
   } else {
     fullHistoryCompact = sortedActivities.map(a => 
       `${a.start_date_local.split('T')[0]}|${a.type}|TSS:${a.icu_training_load || a.icu_tss || 0}|NP:${Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0)}W|${Math.round((a.distance || 0)/1000)}km`
@@ -625,7 +627,9 @@ export const sendChatMessage = async (
     totalActivities: context.activities.length
   });
 
-  const contents = history.map(m => ({
+  // Slice history to only keep the last 12 messages to prevent token bloat while retaining good context
+  const slicedHistory = history.slice(-12);
+  const contents = slicedHistory.map(m => ({
     role: m.role,
     parts: [{ text: m.text }]
   }));
@@ -808,5 +812,85 @@ Return exactly the following JSON structure:
   const result = safeParseJSON(response.text);
   setCache(cacheKey, result);
   return result;
+};
+
+/**
+ * Analyzes athlete's performance over the past 3 months (90 days).
+ */
+export const analyzeThreeMonthReview = async (
+  activities: Activity[],
+  userGoal: string,
+  ftp?: number,
+  methodology: TrainingMethodology = 'polarized',
+  force?: boolean
+): Promise<ThreeMonthReview> => {
+  const cacheKey = `wattson_3m_review_v1_${userGoal}_${ftp || 250}_${methodology}`;
+  if (!force) {
+    const cached = getCache(cacheKey);
+    if (cached) return cached;
+  }
+
+  const ninetyDaysAgo = new Date();
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+  const ninetyDaysStr = ninetyDaysAgo.toISOString().split('T')[0];
+
+  const recent90 = activities.filter(a => a.start_date_local && a.start_date_local.split('T')[0] >= ninetyDaysStr);
+  const totalActivities = recent90.length;
+  const totalMovingSecs = recent90.reduce((acc, a) => acc + (a.moving_time || a.elapsed_time || 0), 0);
+  const totalHours = Math.round((totalMovingSecs / 3600) * 10) / 10;
+  const totalKm = Math.round(recent90.reduce((acc, a) => acc + (a.distance || 0), 0) / 1000);
+  const totalTss = Math.round(recent90.reduce((acc, a) => acc + (a.icu_training_load || a.icu_tss || a.training_load || 0), 0));
+  const avgTssPerWeek = Math.round(totalTss / 12.8); // 90 days is ~12.8 weeks
+
+  const sorted = [...recent90].sort((a, b) => b.start_date_local.localeCompare(a.start_date_local));
+  const sampleActivities = sorted.slice(0, 35);
+
+  const recentActivitiesSummary = sampleActivities.map(a => 
+    `${a.start_date_local.split('T')[0]}: ${a.name || 'Ride'}, ${Math.round((a.moving_time||0)/60)}m, ${Math.round((a.distance||0)/1000)}km, TSS ${a.icu_training_load || a.icu_tss || 0}, Avg ${Math.round(a.average_watts||a.icu_average_watts||0)}W, NP ${Math.round(a.weighted_average_watts||a.icu_weighted_average_watts||0)}W`
+  ).join('\n');
+
+  const prompt = getThreeMonthReviewPrompt({
+    userGoal,
+    ftp,
+    methodology,
+    periodStats: {
+      totalActivities,
+      totalHours,
+      totalKm,
+      totalTss,
+      avgTssPerWeek
+    },
+    recentActivitiesSummary
+  });
+
+  const response = await callGemini({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    config: {
+      responseMimeType: 'application/json',
+      temperature: 0.2,
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          status: { type: Type.STRING, enum: ['on_track', 'needs_adjustment', 'off_target'] },
+          headline: { type: Type.STRING },
+          contributing_to_goal: { type: Type.STRING },
+          needed_changes: { type: Type.ARRAY, items: { type: Type.STRING } },
+          intensity_distribution_summary: { type: Type.STRING }
+        },
+        required: ['status', 'headline', 'contributing_to_goal', 'needed_changes', 'intensity_distribution_summary']
+      }
+    }
+  });
+
+  const parsed = safeParseJSON(response.text) as ThreeMonthReview;
+  parsed.period_stats = {
+    total_activities: totalActivities,
+    total_hours: totalHours,
+    total_tss: totalTss,
+    avg_tss_per_week: avgTssPerWeek
+  };
+
+  setCache(cacheKey, parsed);
+  return parsed;
 };
 

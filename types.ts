@@ -1,5 +1,20 @@
 
 export type TrainingMode = 'cycling' | 'triathlon' | 'running';
+export type TrainingMethodology = 'polarized' | 'pyramidal' | 'norwegian';
+
+export interface ThreeMonthReview {
+  status: 'on_track' | 'needs_adjustment' | 'off_target';
+  headline: string;
+  contributing_to_goal: string;
+  needed_changes: string[];
+  intensity_distribution_summary: string;
+  period_stats?: {
+    total_activities: number;
+    total_hours: number;
+    total_tss: number;
+    avg_tss_per_week: number;
+  };
+}
 
 export interface Activity {
   id: string;

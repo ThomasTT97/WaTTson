@@ -9,10 +9,12 @@ import {
   UserProfileAnalysis,
   AnnualPowerCurve,
   WeeklyBriefing,
-  TrainingMode
+  TrainingMode,
+  TrainingMethodology,
+  ThreeMonthReview
 } from './types';
 import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile, getAnnualPowerCurves, uploadWorkout } from './services/intervalsService';
-import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile } from './services/geminiService';
+import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile, analyzeThreeMonthReview } from './services/geminiService';
 import { ActivityCard } from './components/ActivityCard';
 import { SuggestedWorkoutCard, formatPlannedRideTitle } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
@@ -53,7 +55,8 @@ import {
   Trophy,
   Loader2,
   Edit,
-  Trash2
+  Trash2,
+  Sliders
 } from 'lucide-react';
 
 const CyclistIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -183,6 +186,12 @@ const App: React.FC = () => {
   const [trainingMode, setTrainingMode] = useState<TrainingMode>(() => {
     return (localStorage.getItem('wattson_training_mode') as TrainingMode) || 'cycling';
   });
+  const [trainingMethodology, setTrainingMethodology] = useState<TrainingMethodology>(() => {
+    return (localStorage.getItem('wattson_training_methodology') as TrainingMethodology) || 'polarized';
+  });
+  const [threeMonthReview, setThreeMonthReview] = useState<ThreeMonthReview | null>(null);
+  const [isLoadingThreeMonthReview, setIsLoadingThreeMonthReview] = useState(false);
+  const [methodologyTab, setMethodologyTab] = useState<'selection' | 'review'>('selection');
   
   const [suggestion, setSuggestion] = useState<DailySuggestion | null>(() => {
     try {
@@ -201,9 +210,22 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'rides' | 'chat' | 'settings'>('dashboard');
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'methodology' | 'ftp'>('main');
+  const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'rider_profile' | 'training_method' | 'ftp'>('main');
   const [userProfile, setUserProfile] = useState<UserProfileAnalysis | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
+
+  const handleFetchThreeMonthReview = async (force: boolean = false) => {
+    if (!activities) return;
+    setIsLoadingThreeMonthReview(true);
+    try {
+      const review = await analyzeThreeMonthReview(activities, userGoal, ftp || undefined, trainingMethodology, force);
+      setThreeMonthReview(review);
+    } catch (err) {
+      console.error("Failed to fetch 3-month review:", err);
+    } finally {
+      setIsLoadingThreeMonthReview(false);
+    }
+  };
   const [showWorkoutDetail, setShowWorkoutDetail] = useState(false);
   const [syncingWorkout, setSyncingWorkout] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState(false);
@@ -211,8 +233,6 @@ const App: React.FC = () => {
   const [showReleaseNotes, setShowReleaseNotes] = useState(false);
 
   const isPlanUpdating = loadingWeeklyBriefing || loadingWeeks[1] || false;
-
-  const APP_VERSION = "1.1.0";
 
   useEffect(() => {
     const seenVersion = localStorage.getItem('wattson_seen_version');
@@ -440,8 +460,8 @@ const App: React.FC = () => {
       }
 
       const [fetchedActivities, fetchedWellness, profile, curves] = await Promise.all([
-        fetchActivities(activeCreds, 3650),
-        fetchWellness(activeCreds, 3650),
+        fetchActivities(activeCreds, 365),
+        fetchWellness(activeCreds, 365),
         activeCreds.apiKey === 'demo' ? Promise.resolve({ id: '0', icu_ftp: 250 }) : fetchAthleteProfile(activeCreds),
         getAnnualPowerCurves(activeCreds, 3) // Last 3 years
       ]);
@@ -523,7 +543,7 @@ const App: React.FC = () => {
       const fetchNewSuggestion = async () => {
         setLoadingSuggestion(true);
         try {
-          const data = await getDailySuggestion(activities!, userGoal, hasRideToday, ftp || undefined);
+          const data = await getDailySuggestion(activities!, userGoal, hasRideToday, ftp || undefined, trainingMethodology);
           setSuggestion(data);
           safeSetItem('wattson_daily_cache', JSON.stringify(data));
         } catch (err) {
@@ -534,7 +554,7 @@ const App: React.FC = () => {
       };
       fetchNewSuggestion();
     }
-  }, [activities, userGoal, hasRideToday]);
+  }, [activities, userGoal, hasRideToday, trainingMethodology]);
 
   const fetchWeeklyBriefingData = useCallback(async (customPlanContext?: string, force = false, mode?: 'power' | 'hr', trainingModeArg?: TrainingMode, weekIndex?: number) => {
     if (!activities || activities.length === 0) return;
@@ -567,7 +587,7 @@ const App: React.FC = () => {
       const activeMode = mode || planMode;
       const activeTrainingMode = trainingModeArg || trainingMode;
 
-      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode, activeTrainingMode, weekIndex);
+      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode, activeTrainingMode, weekIndex, trainingMethodology);
       setWeeklyBriefing(prev => {
         if (!prev) return data;
         
@@ -625,7 +645,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     // Methodology view: Athlete DNA
-    if (activeTab === 'settings' && settingsView === 'methodology') {
+    if (activeTab === 'settings' && settingsView === 'rider_profile') {
       const fetchProfile = async () => {
         setIsLoadingProfile(true);
         try {
@@ -1802,7 +1822,7 @@ const App: React.FC = () => {
                  <>
                    <div className="flex flex-col gap-2">
                      <button 
-                       onClick={() => setSettingsView('methodology')}
+                       onClick={() => setSettingsView('rider_profile')}
                        className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-amber-500/10 shadow-sm"
                      >
                        <div className="flex items-center gap-4">
@@ -1814,20 +1834,6 @@ const App: React.FC = () => {
                        </div>
                        <ChevronRight size={16} className="text-slate-600 group-hover:text-amber-400 transition-colors" />
                      </button>
-
-                      <button 
-                        onClick={() => setSettingsView('ftp')}
-                        className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-orange-500/10 shadow-sm"
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-400"><Zap size={20} /></div>
-                          <div className="text-left">
-                            <p className="text-[11px] font-black text-white uppercase tracking-widest">Your FTP</p>
-                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{ftp || '---'} Watts</p>
-                          </div>
-                        </div>
-                        <ChevronRight size={16} className="text-slate-600 group-hover:text-orange-400 transition-colors" />
-                      </button>
 
                      <button 
                        onClick={() => setSettingsView('goal')}
@@ -1844,65 +1850,41 @@ const App: React.FC = () => {
                      </button>
 
                      <button 
-                       onClick={() => setSettingsView('data')}
-                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-purple-500/10 shadow-sm"
+                       onClick={() => setSettingsView('ftp')}
+                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-orange-500/10 shadow-sm"
                      >
                        <div className="flex items-center gap-4">
-                         <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400"><Database size={20} /></div>
+                         <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-400"><Zap size={20} /></div>
                          <div className="text-left">
-                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Your Data</p>
-                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Connected Assets</p>
+                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Your FTP</p>
+                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{ftp || '---'} Watts</p>
                          </div>
                        </div>
-                       <ChevronRight size={16} className="text-slate-600 group-hover:text-purple-400 transition-colors" />
+                       <ChevronRight size={16} className="text-slate-600 group-hover:text-orange-400 transition-colors" />
                      </button>
-                   
 
-                      <div className="glass-card p-4 rounded-[1.3rem] border border-blue-500/10 shadow-sm transition-all hover:border-blue-500/20">
-                        <div className="flex items-center gap-4 mb-4">
-                          <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400">
-                            <Trophy size={20} />
-                          </div>
-                          <div className="text-left">
-                            <p className="text-[11px] font-black text-white uppercase tracking-widest">Training Mode</p>
-                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
-                              {trainingMode === 'cycling' ? 'Cycling Only' : 
-                               trainingMode === 'triathlon' ? 'Triathlon (Swim, Cycle, Run)' : 'Running Only'}
-                            </p>
-                          </div>
-                        </div>
-                        
-                        <div className="relative flex bg-slate-950 rounded-xl p-1 w-full border border-white/5">
-                          <motion.div 
-                            className="absolute top-1 bottom-1 rounded-lg bg-emerald-500 shadow-md"
-                            initial={false}
-                            animate={{
-                              x: trainingMode === 'cycling' ? '0%' : trainingMode === 'triathlon' ? '100%' : '200%',
-                            }}
-                            style={{ width: 'calc(33.33% - 4px)' }}
-                            transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                          />
-                          {(['cycling', 'triathlon', 'running'] as TrainingMode[]).map((mode) => (
-                            <button
-                              key={mode}
-                              onClick={() => {
-                                setTrainingMode(mode);
-                                localStorage.setItem('wattson_training_mode', mode);
-                                setGeneratedWeeks([]);
-                                setWeeklyBriefing(null);
-                                fetchWeeklyBriefingData(undefined, true, undefined, mode, 1);
-                              }}
-                              className={`flex-1 relative z-10 py-2 text-[10px] font-black uppercase tracking-widest transition-colors duration-300 ${
-                                trainingMode === mode ? 'text-slate-950' : 'text-slate-400'
-                              }`}
-                            >
-                              {mode === 'cycling' ? 'CYC' : mode === 'triathlon' ? 'TRI' : 'RUN'}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                   
+                     <button 
+                       onClick={() => {
+                         setSettingsView('training_method');
+                         if (!threeMonthReview && !isLoadingThreeMonthReview && activities) {
+                           handleFetchThreeMonthReview();
+                         }
+                       }}
+                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-cyan-500/10 shadow-sm"
+                     >
+                       <div className="flex items-center gap-4">
+                         <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center text-cyan-400 shrink-0"><Sliders size={20} /></div>
+                         <div className="text-left">
+                           <p className="text-[11px] font-black text-white uppercase tracking-widest">Training Method & Mode</p>
+                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                             {trainingMethodology.toUpperCase()} • {trainingMode === 'cycling' ? 'CYCLING' : trainingMode === 'triathlon' ? 'TRIATHLON' : 'RUNNING'}
+                           </p>
+                         </div>
+                       </div>
+                       <ChevronRight size={16} className="text-slate-600 group-hover:text-cyan-400 transition-colors" />
+                     </button>
+                   </div>
+                  
                    <div className="grid grid-cols-2 gap-2 mt-auto pt-4">
                      <button onClick={() => { setSuggestion(null); loadData(creds!); }} className="p-3.5 bg-white/5 rounded-[1.3rem] border border-white/5 text-[9px] font-black uppercase tracking-widest text-slate-500 flex flex-col items-center gap-2 active:scale-95 transition-all">
                         <RotateCcw size={16} /> Sync Engine
@@ -1975,78 +1957,9 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                {settingsView === 'data' && (
-                 <div className="glass-card p-4 rounded-[1.5rem] space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    <div className="space-y-4">
-                      <div className="flex items-start gap-4 p-4 bg-slate-950/40 rounded-2xl border border-white/5">
-                        <div className="w-8 h-8 mt-1 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 shrink-0"><ActivityIcon size={16} /></div>
-                        <div>
-                          <p className="text-[12px] font-bold text-white mb-1">Ride History</p>
-                          <p className="text-[10px] text-slate-400 mb-2">waTTson synchronizes your full training history of interval activity to understand your power curve and endurance.</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">TSS</span>
-                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Intensity Factor</span>
-                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Duration</span>
-                          </div>
-                        </div>
-                      </div>
 
-                      <div className="flex items-start gap-4 p-4 bg-slate-950/40 rounded-2xl border border-white/5">
-                        <div className="w-8 h-8 mt-1 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0"><Zap size={16} /></div>
-                        <div>
-                          <p className="text-[12px] font-bold text-white mb-1">Athlete Metrics</p>
-                          <p className="text-[10px] text-slate-400 mb-2">Constantly updating to ensure your targets are based on your most recent actual test data, not static values.</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">FTP</span>
-                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Weight</span>
-                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Zones</span>
-                          </div>
-                        </div>
-                      </div>
 
-                      <div className="flex items-start gap-4 p-4 bg-slate-950/40 rounded-2xl border border-white/5">
-                        <div className="w-8 h-8 mt-1 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-400 shrink-0"><TrendingUp size={16} /></div>
-                        <div>
-                          <p className="text-[12px] font-bold text-white mb-1">Wellness & Recovery</p>
-                          <p className="text-[10px] text-slate-400 mb-2">The preceding 28 days of biometric health stats tell the engine if it's safe to push you to the limit.</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">HRV</span>
-                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Sleep</span>
-                            <span className="px-2 py-1 bg-white/5 border border-white/5 shadow-inner rounded-md text-[9px] font-bold text-slate-300">Form (TSB)</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="pt-2 px-1 space-y-4">
-                        <div className="p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl flex items-start gap-3">
-                          <Shield size={16} className="text-emerald-400 mt-0.5 shrink-0" />
-                          <div>
-                            <p className="text-[10px] font-black text-white uppercase tracking-widest mb-1">Security Audit Passed</p>
-                            <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
-                              waTTson operates on a **Zero-Persistence** model. Your Intervals.icu API keys are stored only locally in your browser and are never uploaded to a custom server. Data is fetched directly from Intervals.icu to your device.
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="p-4 bg-blue-500/5 border border-blue-500/10 rounded-2xl flex items-start gap-3">
-                          <Bot size={16} className="text-blue-400 mt-0.5 shrink-0" />
-                          <div>
-                            <p className="text-[10px] font-black text-white uppercase tracking-widest mb-1">AI Processing Trace</p>
-                            <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
-                              To provide insights, training data is shared with Google Gemini Pro. The context shared includes TSS, duration, and watts. Personally identifiable information (like location or name) is minimized.
-                            </p>
-                          </div>
-                        </div>
-
-                        <p className="text-[10px] text-slate-500 leading-relaxed italic text-center">
-                          Alpha/Beta Build 1.1.0 • Built for waTTson Athletes
-                        </p>
-                      </div>
-                    </div>
-                 </div>
-               )}
-
-               {settingsView === 'methodology' && (
+               {settingsView === 'rider_profile' && (
                  <div className="glass-card p-5 rounded-[1.8rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     {isLoadingProfile ? (
                       <div className="flex flex-col items-center justify-center py-10 text-center">
@@ -2182,12 +2095,300 @@ const App: React.FC = () => {
                     )}
                  </div>
                )}
+
+               {settingsView === 'training_method' && (
+                 <div className="glass-card p-5 rounded-[1.8rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                   {/* View Switcher Header */}
+                   <div className="flex bg-slate-950/60 p-1.5 rounded-2xl border border-white/5">
+                     <button
+                       onClick={() => setMethodologyTab('selection')}
+                       className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                         methodologyTab === 'selection' 
+                           ? 'bg-cyan-500 text-slate-950 shadow-md font-extrabold' 
+                           : 'text-slate-400 hover:text-white font-bold'
+                       }`}
+                     >
+                       Setup Engine
+                     </button>
+                     <button
+                       onClick={() => {
+                         setMethodologyTab('review');
+                         if (!threeMonthReview && !isLoadingThreeMonthReview && activities) {
+                           handleFetchThreeMonthReview();
+                         }
+                       }}
+                       className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                         methodologyTab === 'review' 
+                           ? 'bg-cyan-500 text-slate-950 shadow-md font-extrabold' 
+                           : 'text-slate-400 hover:text-white font-bold'
+                       }`}
+                     >
+                       90-Day Review
+                     </button>
+                   </div>
+
+                   {/* Tab 1: Setup (Methodology & Mode) */}
+                    {methodologyTab === 'selection' && (
+                      <div className="space-y-6">
+                        {/* Training Mode Section */}
+                        <div className="space-y-3">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Training Mode</span>
+                            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider leading-relaxed">
+                              Target discipline determines your structured session types
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-2">
+                            {(['cycling', 'triathlon', 'running'] as TrainingMode[]).map((mode) => {
+                              const isSelected = trainingMode === mode;
+                              let label = 'Cycling';
+                              let sublabel = 'CYC';
+                              let IconComponent = Bike;
+
+                              if (mode === 'triathlon') {
+                                label = 'Triathlon';
+                                sublabel = 'TRI';
+                                IconComponent = Trophy;
+                              } else if (mode === 'running') {
+                                label = 'Running';
+                                sublabel = 'RUN';
+                                IconComponent = ActivityIcon;
+                              }
+
+                              return (
+                                <button
+                                  key={mode}
+                                  onClick={() => {
+                                    setTrainingMode(mode);
+                                    localStorage.setItem('wattson_training_mode', mode);
+                                    setGeneratedWeeks([]);
+                                    setWeeklyBriefing(null);
+                                    fetchWeeklyBriefingData(undefined, true, undefined, mode, 1);
+                                  }}
+                                  className={`flex flex-col items-center justify-center p-3.5 rounded-2xl border transition-all active:scale-[0.95] ${
+                                    isSelected
+                                      ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.1)]'
+                                      : 'bg-white/[0.02] border-white/5 text-slate-400 hover:border-white/10 hover:text-slate-200'
+                                  }`}
+                                >
+                                  <IconComponent size={18} className="mb-1.5" />
+                                  <span className="text-[10px] font-black uppercase tracking-wider">{sublabel}</span>
+                                  <span className="text-[8px] font-bold opacity-60 uppercase mt-0.5">{label}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Workout Methodology Section */}
+                        <div className="space-y-3 pt-4 border-t border-white/5">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Workout Methodology</span>
+                            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider leading-relaxed">
+                              Distribution style used for power zone generation
+                            </span>
+                          </div>
+
+                          <div className="space-y-2.5">
+                            {[
+                              {
+                                id: 'polarized' as TrainingMethodology,
+                                title: 'Polarized (80 / 20)',
+                                tagline: 'High VO2max & Endurance Focus',
+                                description: '80% low intensity (Zone 1/2) and 20% high intensity (Zone 5/6). Avoids mid-intensity threshold fatigue.'
+                              },
+                              {
+                                id: 'pyramidal' as TrainingMethodology,
+                                title: 'Pyramidal Distribution',
+                                tagline: 'Classic Aerobic tempo & Threshold',
+                                description: '70% Zone 1/2, 20% Zone 3/4 Tempo/SweetSpot, 10% Zone 5+ High Intensity. Builds robust aerobic foundation.'
+                              },
+                              {
+                                id: 'norwegian' as TrainingMethodology,
+                                title: 'Norwegian Lactate Method',
+                                tagline: 'Sub-Threshold Volume & Control',
+                                description: 'High volume sub-threshold intervals strictly controlled below LT2/3.8mmol lactate. Maximizes time at high aerobic power.'
+                              }
+                            ].map((method) => {
+                              const isSelected = trainingMethodology === method.id;
+                              return (
+                                <button
+                                  key={method.id}
+                                  onClick={() => {
+                                    setTrainingMethodology(method.id);
+                                    localStorage.setItem('wattson_training_methodology', method.id);
+                                    setGeneratedWeeks([]);
+                                    setWeeklyBriefing(null);
+                                    setSuggestion(null);
+                                    fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
+                                  }}
+                                  className={`w-full text-left p-4 rounded-2xl border transition-all active:scale-[0.99] ${
+                                    isSelected
+                                      ? 'bg-cyan-500/10 border-cyan-500/40 shadow-[0_0_15px_rgba(6,182,212,0.12)]'
+                                      : 'bg-white/[0.02] border-white/5 hover:border-white/10'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-[11px] font-black text-white uppercase tracking-wider">
+                                      {method.title}
+                                    </span>
+                                    {isSelected && (
+                                      <span className="px-2 py-0.5 rounded-full bg-cyan-500 text-slate-950 text-[8px] font-extrabold uppercase tracking-widest flex items-center gap-1">
+                                        <Check size={9} className="stroke-[3]" /> Active
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[9px] text-cyan-400 font-bold uppercase tracking-widest mb-1">{method.tagline}</p>
+                                  <p className="text-[10px] text-slate-400 leading-relaxed font-semibold">{method.description}</p>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Recalculation Alert */}
+                        <div className="p-3.5 bg-cyan-500/5 border border-cyan-500/10 rounded-2xl text-[9px] text-cyan-400 font-bold leading-relaxed flex items-start gap-2.5">
+                          <Info size={14} className="stroke-[3] shrink-0 mt-0.5" />
+                          <span>
+                            Adjusting either your training mode or workout methodology will trigger waTTson to immediately rebuild your custom daily suggestion and 4-week calendar.
+                          </span>
+                        </div>
+                      </div>
+                    )}                   {/* Tab 2: 3-Month Training Review */}
+                   {methodologyTab === 'review' && (
+                     <div className="space-y-4">
+                       {isLoadingThreeMonthReview ? (
+                         <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
+                           <Loader2 size={28} className="text-cyan-400 animate-spin" />
+                           <p className="text-[11px] font-black text-slate-300 uppercase tracking-widest">Analyzing 90-Day Training Data...</p>
+                           <p className="text-[9px] text-slate-500 font-medium">Evaluating TSS, volume trends, and goal progression with Gemini</p>
+                         </div>
+                       ) : threeMonthReview ? (
+                         <div className="space-y-4">
+                           {/* Status Badge & Title */}
+                           <div className="p-4 rounded-2xl bg-slate-950/60 border border-white/5 space-y-3">
+                             <div className="flex items-center justify-between">
+                               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">90-Day Progress Evaluation</span>
+                               <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
+                                 threeMonthReview.status === 'on_track' 
+                                                                       ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                                   : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                               }`}>
+                                 {threeMonthReview.status === 'on_track' ? (
+                                   <><Check size={12} className="stroke-[3]" /> Contributing to Goal</>
+                                 ) : (
+                                   <><Info size={12} className="stroke-[3]" /> Needs Adjustment</>
+                                 )}
+                               </span>
+                             </div>
+
+                             {/* Stats Summary Bar */}
+                             {threeMonthReview.period_stats && (
+                               <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/5 text-center">
+                                 <div className="bg-white/[0.02] p-2 rounded-xl">
+                                   <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">90d TSS</p>
+                                   <p className="text-[12px] font-black text-white mt-0.5">{threeMonthReview.period_stats.total_tss}</p>
+                                 </div>
+                                 <div className="bg-white/[0.02] p-2 rounded-xl">
+                                   <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Hours</p>
+                                   <p className="text-[12px] font-black text-white mt-0.5">{threeMonthReview.period_stats.total_hours}h</p>
+                                 </div>
+                                 <div className="bg-white/[0.02] p-2 rounded-xl">
+                                   <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Weekly Avg</p>
+                                   <p className="text-[12px] font-black text-white mt-0.5">{threeMonthReview.period_stats.avg_tss_per_week} tss/wk</p>
+                                 </div>
+                               </div>
+                             )}
+                           </div>
+
+                           {/* Conclusion Narrative */}
+                           <div className="space-y-2">
+                             <h4 className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">Executive Conclusion</h4>
+                             <p className="text-[11px] text-slate-200 leading-relaxed font-medium bg-white/[0.01] border border-white/[0.04] p-3.5 rounded-2xl italic">
+                               "{threeMonthReview.headline}"
+                             </p>
+                           </div>
+
+                           {/* Contributing Factors & Changes */}
+                           <div className="space-y-3">
+                             <div className="relative pl-3 space-y-1.5">
+                               <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-emerald-500/40 rounded-full"></div>
+                               <h4 className="text-[10px] font-black text-white uppercase tracking-widest">What's Contributing</h4>
+                               <ul className="text-[10px] text-slate-300 font-medium space-y-1">
+                                 {threeMonthReview.contributing_to_goal && [threeMonthReview.contributing_to_goal].map((factor: string, i: number) => (
+                                   <li key={i} className="flex items-start gap-1.5">
+                                     <span className="text-emerald-400 font-bold">•</span>
+                                     <span>{factor}</span>
+                                   </li>
+                                 ))}
+                               </ul>
+                             </div>
+
+                             <div className="relative pl-3 space-y-1.5">
+                               <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-amber-500/40 rounded-full"></div>
+                               <h4 className="text-[10px] font-black text-white uppercase tracking-widest">Recommended Changes</h4>
+                               <ul className="text-[10px] text-slate-300 font-medium space-y-1">
+                                 {threeMonthReview.needed_changes?.map((change: string, i: number) => (
+                                   <li key={i} className="flex items-start gap-1.5">
+                                     <span className="text-amber-400 font-bold">•</span>
+                                     <span>{change}</span>
+                                   </li>
+                                 ))}
+                               </ul>
+                             </div>
+                           </div>
+
+                           <button
+                             onClick={() => handleFetchThreeMonthReview(true)}
+                             className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 border border-white/5 active:scale-95"
+                           >
+                             <RefreshCw size={12} /> Refresh 90-Day Analysis
+                           </button>
+                         </div>
+                       ) : (
+                         <div className="text-center py-8 space-y-3" id="review-empty">
+                           <p className="text-[11px] text-slate-400 font-medium" id="p-review">No 3-month review generated yet.</p>
+                           <button
+                             onClick={() => handleFetchThreeMonthReview(true)}
+                             id="btn-first" className="px-4 py-2 bg-cyan-500 text-slate-950 font-black rounded-xl text-[10px] uppercase tracking-widest shadow-md hover:bg-cyan-400 transition-all active:scale-95"
+                           >
+                             Run 3-Month Analysis
+                           </button>
+                         </div>
+                       )}
+                     </div>
+                   )}
+                 </div>
+               )}
+                           {/*
+                           <button
+                             onClick={() => handleFetchThreeMonthReview(true)}
+                             className="px-4 py-2 bg-cyan-500 text-slate-950 font-black rounded-xl text-[10px] uppercase tracking-widest shadow-md hover:bg-cyan-400 transition-all active:scale-95"
+                           >
+                             Run 3-Month Analysis
+                           </button>
+                         </div>
+                       )}
+                     </div>
+                   )}
+                 </div>
+               )}
+                      </div>
+                    )}
+                 </div>
+               )}
              </div>
           </div>
         )}
       </div>
 
-      {showGoalEditor && (
+       */}
+              </div>
+           </div>
+         )}
+       </div>
+       {showGoalEditor && (
         <div className="fixed inset-0 z-[210] bg-slate-950/98 backdrop-blur-3xl flex flex-col p-8 animate-in slide-in-from-bottom-4 duration-400" style={{ paddingBottom: 'max(32px, env(safe-area-inset-bottom))' }}>
           <div className="flex items-center justify-between mb-8 mt-2">
             <h2 className="text-2xl text-header italic uppercase leading-none">DNA Focus</h2>
@@ -2576,7 +2777,7 @@ const App: React.FC = () => {
                           onClick={() => {
                             setPlanContext(null);
                             localStorage.removeItem('wattson_plan_context');
-                            setLastAppliedTweak(null);
+                            setLastAppliedTweak("Directives cleared — plan recalibrated to optimize goal progress based on current context");
                             setShowTweakSuccessNotice(false);
                             setGeneratedWeeks([]);
                             setWeeklyBriefing(null);
@@ -2834,7 +3035,7 @@ const App: React.FC = () => {
             { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
             { id: 'rides', icon: Bike, label: 'Rides' },
             { id: 'chat', icon: MessageSquare, label: 'waTTson' },
-            { id: 'settings', icon: Settings, label: 'Profile' }
+            { id: 'settings', icon: User, label: 'Profile' }
           ].map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;

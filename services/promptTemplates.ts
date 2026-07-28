@@ -3,7 +3,7 @@
  * This file provides a clear overview of what is asked of the Gemini models.
  */
 
-import { TrainingMode } from '../types';
+import { TrainingMode, TrainingMethodology } from '../types';
 
 interface RideFeedbackParams {
   activityName: string;
@@ -29,6 +29,7 @@ interface DailySuggestionParams {
   ftp?: number;
   hasPowerOnMostRides?: boolean;
   hrStatsText?: string;
+  methodology?: TrainingMethodology;
 }
 
 interface WeeklyBriefingParams {
@@ -42,6 +43,7 @@ interface WeeklyBriefingParams {
   hasPowerOnMostRides?: boolean;
   hrStatsText?: string;
   trainingMode: TrainingMode;
+  methodology?: TrainingMethodology;
 }
 
 interface ChatMessageParams {
@@ -103,6 +105,14 @@ export const getRideFeedbackPrompt = (p: RideFeedbackParams): string => {
 export const getDailySuggestionPrompt = (p: DailySuggestionParams): string => {
   const isHrBased = p.hasPowerOnMostRides === false;
 
+  const methodologyText = p.methodology === 'polarized'
+    ? `METHODOLOGY REQUIREMENT: POLARIZED TRAINING MODEL. Prioritize ~80% Zone 1/2 low-intensity volume and ~20% high-intensity (VO2max / hard intervals). Avoid middle Zone 3/4 threshold unless specified.`
+    : p.methodology === 'pyramidal'
+    ? `METHODOLOGY REQUIREMENT: PYRAMIDAL TRAINING MODEL. Structure volume pyramid: largest in Zone 1/2, moderate in Tempo/Sweetspot/Threshold, smallest in VO2max.`
+    : p.methodology === 'norwegian'
+    ? `METHODOLOGY REQUIREMENT: NORWEGIAN MODEL (Double Threshold). Emphasize sub-threshold controlled interval work (Sweetspot/Threshold) with strict lactate control paired with heavy Zone 2 base.`
+    : ``;
+
   const ftpText = p.ftp 
     ? `The athlete's FTP is ${p.ftp}W. You MUST scale all recommended workout step power levels (target_watts) and interval details in labels precisely as percentages of ${p.ftp}W. For example: Easy/Recovery should be 50-60% FTP (~${Math.round(p.ftp * 0.55)}W), Zone 2 Aerobic should be 60-75% FTP (~${Math.round(p.ftp * 0.68)}W), Tempo should be 75-90% FTP (~${Math.round(p.ftp * 0.82)}W), Threshold should be 90-105% FTP (~${Math.round(p.ftp * 0.98)}W), and Intervals/VO2max should be >105% FTP (~${Math.round(p.ftp * 1.2)}W).`
     : `The athlete's FTP is not specified. Assume a standard baseline FTP of 250W and scale all power/wattages relative to that baseline.`;
@@ -121,6 +131,7 @@ export const getDailySuggestionPrompt = (p: DailySuggestionParams): string => {
   return `You are waTTson, an elite cycling coach. Suggest a workout for ${p.targetStr}. 
     History (7d): ${p.history}. 
     Goal: "${p.userGoal}". 
+    ${methodologyText}
     
     CRITICAL: 
     1. For each workout option (primary and alternative), you MUST provide structured "workout_steps".
@@ -134,6 +145,18 @@ export const getDailySuggestionPrompt = (p: DailySuggestionParams): string => {
 export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
   const totalDays = p.dayNames.length;
   const isHrBased = p.hasPowerOnMostRides === false;
+
+  const methodologyText = p.methodology === 'polarized'
+    ? `METHODOLOGY REQUIREMENT: POLARIZED TRAINING MODEL. Prioritize ~80% Zone 1/2 low-intensity volume and ~20% high-intensity (VO2max / hard intervals). Avoid middle Zone 3/4 threshold unless specified.`
+    : p.methodology === 'pyramidal'
+    ? `METHODOLOGY REQUIREMENT: PYRAMIDAL TRAINING MODEL. Structure volume pyramid: largest in Zone 1/2, moderate in Tempo/Sweetspot/Threshold, smallest in VO2max.`
+    : p.methodology === 'norwegian'
+    ? `METHODOLOGY REQUIREMENT: NORWEGIAN MODEL (Double Threshold). Emphasize sub-threshold controlled interval work (Sweetspot/Threshold) with strict lactate control paired with heavy Zone 2 base.`
+    : ``;
+
+  const directiveContext = p.planContext && p.planContext.trim() 
+    ? `CUSTOM DIRECTIVES: ${p.planContext.trim()}`
+    : `DIRECTIVE (OPTIMIZED BASELINE): No custom directives active. Generate a plan specifically designed to optimize the next training session and subsequent progression in order to reach the goal ("${p.userGoal || 'Endurance'}") based on the athlete's current physiological context (CTL, ATL, TSB form, readiness, power curve, and recent load).`;
 
   const ftpText = p.ftp 
     ? `The athlete's FTP is ${p.ftp}W. You MUST scale all recommended workout step power levels (target_watts) and interval details in labels precisely as percentages of ${p.ftp}W. For example: Easy/Recovery should be 50-60% FTP (~${Math.round(p.ftp * 0.55)}W), Zone 2 Aerobic should be 60-75% FTP (~${Math.round(p.ftp * 0.68)}W), Tempo should be 75-90% FTP (~${Math.round(p.ftp * 0.82)}W), Threshold should be 90-105% FTP (~${Math.round(p.ftp * 0.98)}W), and Intervals/VO2max should be >105% FTP (~${Math.round(p.ftp * 1.2)}W).
@@ -165,7 +188,8 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
       : "";
 
   return `Plan ${totalDays} days training. Goal: ${p.userGoal || 'Endurance'}. Physiology: ${p.stats}. ${p.startContext || ''}. 
-    ${p.planContext || ''}
+    ${directiveContext}
+    ${methodologyText}
     ${p.pcCtx}
     
     CRITICAL PERFORMANCE RULES FOR HIGH-SPEED GENERATION AND REALISTIC COACHING (MAXIMIZE SPEED):
@@ -229,4 +253,53 @@ export const getUserProfilePrompt = (p: UserProfileParams): string => {
     effective_training_history: A compelling 3-4 sentence storytelling narrative outlining which types of training have been highly effective in the past, referencing actual patterns or adaptations seen in their power bests or recent ride history.
     recommended_approach: A detailed 3-4 sentence storytelling narrative presenting the ultimate recommended training approach/philosophy for the future to maximize gains.
     what_can_be_improved: A deep, supportive 3-4 sentence storytelling narrative about what specifically can be improved, highlighting their limiters and explaining the exact physiological reasoning behind prioritizing these areas.`;
+};
+
+export interface ThreeMonthReviewParams {
+  userGoal: string;
+  ftp?: number;
+  methodology?: TrainingMethodology;
+  periodStats: {
+    totalActivities: number;
+    totalHours: number;
+    totalKm: number;
+    totalTss: number;
+    avgTssPerWeek: number;
+  };
+  recentActivitiesSummary: string;
+}
+
+export const getThreeMonthReviewPrompt = (p: ThreeMonthReviewParams): string => {
+  return `You are waTTson, an elite cycling sports scientist and AI coach. Analyze the athlete's training data over the past 3 months (90 days).
+
+ATHLETE GOAL: "${p.userGoal}"
+FTP BENCHMARK: ${p.ftp || 250}W
+PREFERRED METHODOLOGY: ${p.methodology || 'polarized'}
+
+3-MONTH AGGREGATE TRAINING STATS:
+- Total Activities: ${p.periodStats.totalActivities}
+- Total Volume: ${p.periodStats.totalHours} hours (${p.periodStats.totalKm} km)
+- Total Training Load: ${p.periodStats.totalTss} TSS
+- Average Weekly Load: ${p.periodStats.avgTssPerWeek} TSS/week
+
+90-DAY ACTIVITY LOG (SAMPLE):
+${p.recentActivitiesSummary}
+
+TASK:
+1. Evaluate whether their training over the last 3 months is actively contributing to reaching their goal: "${p.userGoal}".
+2. Evaluate if their intensity distribution matches their chosen methodology (${p.methodology || 'polarized'}).
+3. Detail 3 concrete changes in approach they need to make going forward.
+
+Return JSON matching this schema:
+{
+  "status": "on_track" | "needs_adjustment" | "off_target",
+  "headline": "1-line punchy conclusion",
+  "contributing_to_goal": "2-3 concise sentences evaluating goal contribution",
+  "needed_changes": [
+    "Change 1",
+    "Change 2",
+    "Change 3"
+  ],
+  "intensity_distribution_summary": "1-2 sentences on intensity distribution analysis"
+}`;
 };
