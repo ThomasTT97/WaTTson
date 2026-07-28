@@ -19,6 +19,7 @@ import { ActivityCard } from './components/ActivityCard';
 import { SuggestedWorkoutCard, formatPlannedRideTitle } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
+import { PowerDurationGraph } from './components/PowerDurationGraph';
 import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts } from './components/StepLabel';
 import { CheckCircle } from 'lucide-react';
 import { 
@@ -1804,18 +1805,8 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {activeTab === 'settings' && (
+         {activeTab === 'settings' && (
           <div className="flex flex-col animate-in slide-in-from-right-2 duration-400">
-             {settingsView === 'main' ? null : (
-               <div className="flex items-center justify-start pb-2 px-1 pt-1 mb-2">
-                 <button 
-                   onClick={() => setSettingsView('main')}
-                   className="w-9 h-9 rounded-xl glass-card flex items-center justify-center text-slate-500 border border-white/10 active:scale-95 transition-all"
-                 >
-                   <ChevronLeft size={18} />
-                 </button>
-               </div>
-             )}
 
              <div className="flex flex-col pb-2 px-1">
                {settingsView === 'main' && (
@@ -1829,7 +1820,7 @@ const App: React.FC = () => {
                          <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400"><User size={20} /></div>
                          <div className="text-left">
                            <p className="text-[11px] font-black text-white uppercase tracking-widest">Your Rider Profile</p>
-                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">AI Assessment</p>
+                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Assessment</p>
                          </div>
                        </div>
                        <ChevronRight size={16} className="text-slate-600 group-hover:text-amber-400 transition-colors" />
@@ -1897,7 +1888,25 @@ const App: React.FC = () => {
                )}
 
                {settingsView === 'goal' && (
-                 <div className="glass-card p-4 rounded-[1.5rem] space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                 <div className="glass-card p-5 rounded-[1.8rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                   {/* Header with Integrated Back Button */}
+                   <div className="flex items-center gap-3.5 pb-4 border-b border-white/5">
+                     <button 
+                       onClick={() => setSettingsView('main')}
+                       className="w-9 h-9 rounded-xl glass-card flex items-center justify-center text-slate-400 border border-white/10 active:scale-95 transition-all shrink-0 hover:text-emerald-400 hover:border-emerald-500/20"
+                     >
+                       <ChevronLeft size={18} />
+                     </button>
+                     
+                     <div className="flex-1 min-w-0">
+                       <h3 className="text-lg font-black text-emerald-400 italic uppercase tracking-tight leading-tight">
+                         Your Target Goal
+                       </h3>
+                       <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">
+                         Coaching Target & Ambition
+                       </p>
+                     </div>
+                   </div>
                     <div className="space-y-4">
                       <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
                         waTTson adapts his coaching intensity, interval style, and recovery focus based on your current ambition.
@@ -1914,7 +1923,25 @@ const App: React.FC = () => {
                 )}
 
                 {settingsView === 'ftp' && (
-                  <div className="glass-card p-4 rounded-[1.5rem] space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="glass-card p-5 rounded-[1.8rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    {/* Header with Integrated Back Button */}
+                    <div className="flex items-center gap-3.5 pb-4 border-b border-white/5">
+                      <button 
+                        onClick={() => setSettingsView('main')}
+                        className="w-9 h-9 rounded-xl glass-card flex items-center justify-center text-slate-400 border border-white/10 active:scale-95 transition-all shrink-0 hover:text-orange-400 hover:border-orange-500/20"
+                      >
+                        <ChevronLeft size={18} />
+                      </button>
+                      
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-lg font-black text-orange-400 italic uppercase tracking-tight leading-tight">
+                          Your FTP
+                        </h3>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">
+                          Functional Threshold Power (FTP)
+                        </p>
+                      </div>
+                    </div>
                     <div className="space-y-4">
                       <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
                         Your FTP (Functional Threshold Power) is the engine's core benchmark. While we sync this from Intervals.icu, you can override it here to fine-tune intensity.
@@ -1969,15 +1996,27 @@ const App: React.FC = () => {
                       </div>
                     ) : userProfile ? (
                       <div className="space-y-6">
-                        {/* Rider Type Header */}
-                        <div className="text-center pb-4 border-b border-white/5">
-                          <h3 className="text-xl font-black text-emerald-400 italic uppercase tracking-tight leading-tight">
-                            {userProfile.athlete_type}
-                          </h3>
-                          <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1.5">
-                            Based on recent 30-day performance trends
-                          </p>
+                        {/* Rider Type Header with Integrated Back Button */}
+                        <div className="flex items-center gap-3.5 pb-4 border-b border-white/5">
+                          <button 
+                            onClick={() => setSettingsView('main')}
+                            className="w-9 h-9 rounded-xl glass-card flex items-center justify-center text-slate-400 border border-white/10 active:scale-95 transition-all shrink-0 hover:text-emerald-400 hover:border-emerald-500/20"
+                          >
+                            <ChevronLeft size={18} />
+                          </button>
+                          
+                          <div className="flex-1 min-w-0">
+                            <h3 className="text-lg font-black text-emerald-400 italic uppercase tracking-tight leading-tight">
+                              {userProfile.athlete_type}
+                            </h3>
+                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">
+                              Rider Profile Assessment
+                            </p>
+                          </div>
                         </div>
+
+                        {/* Power-Duration Graph */}
+                        <PowerDurationGraph powerCurves={powerCurves} athleteType={userProfile.athlete_type} ftp={ftp} />
 
                         {/* Rider Story Narrative */}
                         {userProfile.rider_story && (
@@ -2098,7 +2137,26 @@ const App: React.FC = () => {
 
                {settingsView === 'training_method' && (
                  <div className="glass-card p-5 rounded-[1.8rem] space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                   {/* View Switcher Header */}
+                    {/* Header with Integrated Back Button */}
+                    <div className="flex items-center gap-3.5 pb-4 border-b border-white/5">
+                      <button 
+                        onClick={() => setSettingsView('main')}
+                        className="w-9 h-9 rounded-xl glass-card flex items-center justify-center text-slate-400 border border-white/10 active:scale-95 transition-all shrink-0 hover:text-cyan-400 hover:border-cyan-500/20"
+                      >
+                        <ChevronLeft size={18} />
+                      </button>
+                      
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-lg font-black text-cyan-400 italic uppercase tracking-tight leading-tight">
+                          Training Engine
+                        </h3>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">
+                          Methodology & Mode Selection
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* View Switcher Header */}
                    <div className="flex bg-slate-950/60 p-1.5 rounded-2xl border border-white/5">
                      <button
                        onClick={() => setMethodologyTab('selection')}
