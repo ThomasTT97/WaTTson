@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Activity, 
@@ -1425,8 +1426,8 @@ const App: React.FC = () => {
                                 return compareSameDayForTimeline(a, b);
                               });
 
-                            const displayedTomorrowItems = isOtherFutureExpanded
-                              ? tomorrowItems
+                            const displayedUpcomingItems = isOtherFutureExpanded
+                              ? chronFutureItems
                               : tomorrowItems.slice(-1);
 
                             return (
@@ -1438,7 +1439,7 @@ const App: React.FC = () => {
                                       className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#12141c] hover:bg-blue-900/20 border border-blue-500/30 text-blue-400 text-[9.5px] font-black uppercase tracking-[0.2em] rounded-lg shrink-0 whitespace-nowrap transition-colors cursor-pointer"
                                     >
                                       PLANNED RIDES
-                                      {otherFutureItems.length > 0 && (
+                                      {chronFutureItems.length > 0 && (
                                         isOtherFutureExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />
                                       )}
                                     </button>
@@ -1529,15 +1530,15 @@ const App: React.FC = () => {
                                   )}
 
                                   {/* Tomorrow Section (Immediately above Today) */}
-                                  {displayedTomorrowItems.length > 0 && (
+                                  {displayedUpcomingItems.length > 0 && (
                                     <div className="flex flex-col space-y-2 pt-1">
                                       <div className="flex items-center gap-2 px-1">
                                         <span className="inline-block px-2.5 py-0.5 bg-[#12141c] border border-blue-500/40 text-blue-400 text-[9.5px] font-black uppercase tracking-[0.2em] rounded-lg shrink-0 whitespace-nowrap shadow-sm">
-                                          {toLocalDateStr(displayedTomorrowItems[0].date) === tomorrowDateStr ? "TOMORROW" : "NEXT RIDE"}
+                                          {toLocalDateStr(displayedUpcomingItems[0].date) === tomorrowDateStr ? "TOMORROW" : "NEXT RIDE"}
                                         </span>
                                         <div className="flex-1 h-px bg-gradient-to-r from-blue-500/30 to-transparent" />
                                       </div>
-                                      {displayedTomorrowItems.map((item) => (
+                                      {displayedUpcomingItems.map((item) => (
                                         <React.Fragment key={item.key}>
                                           {item.dayData && (
                                             <SuggestedWorkoutCard 
@@ -2020,6 +2021,25 @@ const App: React.FC = () => {
                             </ul>
                           </div>
                         </div>
+
+                        {powerCurves && powerCurves.length > 0 && (
+                          <div className="glass-card p-5 rounded-[1.8rem] border border-white/5 mt-4">
+                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Power Curve (Best Watts)</h4>
+                            <div className="h-48 w-full">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={powerCurves[0].bests}>
+                                  <XAxis dataKey="duration" hide />
+                                  <YAxis hide />
+                                  <Tooltip 
+                                    contentStyle={{ backgroundColor: '#0f172a', border: 'none', borderRadius: '1rem' }} 
+                                    itemStyle={{ color: '#fff', fontSize: '12px' }}
+                                  />
+                                  <Line type="monotone" dataKey="watts" stroke="#34d399" strokeWidth={2} dot={false} />
+                                </LineChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </div>
+                        )}
 
                         <div className="pt-4 border-t border-white/5 px-2">
                           <p className="text-[11px] text-slate-400 font-bold leading-relaxed italic">
