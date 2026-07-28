@@ -13,6 +13,10 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0'
     },
     define: {
+      // Polyfill process.env.GEMINI_API_KEY for the @google/genai SDK
+      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.API_KEY || ''),
+      // Polyfill INTERVALS_API_KEY so we can skip the login screen if set in Cloudflare
+      'process.env.INTERVALS_API_KEY': JSON.stringify(env.INTERVALS_API_KEY || ''),
       'process.env.NODE_ENV': JSON.stringify(mode)
     },
     build: {

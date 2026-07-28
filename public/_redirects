@@ -1,3 +1,0 @@
-/api/intervals/* https://intervals.icu/api/:splat 200
-/api/gemini https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent 200
-/* /index.html 200
