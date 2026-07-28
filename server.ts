@@ -25,14 +25,21 @@ async function startServer() {
         return res.status(500).json({ error: "GEMINI_API_KEY environment variable is not configured." });
       }
 
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({ 
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
       const response = await ai.models.generateContent({
         contents,
         config,
-        model: model || "gemini-3.5-flash"
+        model: model || "gemini-3.6-flash"
       });
 
-      res.json(response);
+      res.json({ text: response.text });
     } catch (error: any) {
       console.error("Server Gemini Error:", error);
       res.status(500).json({ error: error.message || "An error occurred with Gemini execution." });

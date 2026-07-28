@@ -1,4 +1,3 @@
-import { Type } from "@google/genai";
 import { 
   Activity, 
   ActivityInterval, 
@@ -12,7 +11,8 @@ import {
   RecoveryAdvice,
   TrainingMode,
   TrainingMethodology,
-  ThreeMonthReview
+  ThreeMonthReview,
+  Type
 } from "../types";
 import {
   getRideFeedbackPrompt,
@@ -70,7 +70,7 @@ const setCache = (key: string, data: any) => {
 };
 
 /**
- * General helper to call Gemini with a fallback chain.
+ * General helper to call Gemini via the server-side proxy.
  */
 const callGemini = async (params: any): Promise<any> => {
   const response = await fetch('/api/gemini', {
@@ -80,10 +80,12 @@ const callGemini = async (params: any): Promise<any> => {
     },
     body: JSON.stringify(params)
   });
+  
   if (!response.ok) {
-    const errData = await response.json();
-    throw new Error(errData.error || "Gemini service error");
+    const error = await response.json();
+    throw new Error(error.error || "Gemini API error");
   }
+  
   return await response.json();
 };
 

@@ -1,10 +1,8 @@
-
 export async function onRequest(context) {
   const { request, params, env } = context;
   const url = new URL(request.url);
   
   // Extract the path after /api/intervals/
-  // params.path is an array because of [[path]].ts
   const subpath = params.path ? params.path.join('/') : '';
   const queryString = url.search;
   
@@ -31,9 +29,7 @@ export async function onRequest(context) {
   try {
     const apiResponse = await fetch(targetUrl, fetchOptions);
     
-    // Create a new response to modify headers
     const responseHeaders = new Headers(apiResponse.headers);
-    // Remove headers that might cause issues when proxied
     responseHeaders.delete("content-encoding");
     responseHeaders.delete("content-length");
     

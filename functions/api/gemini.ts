@@ -1,4 +1,3 @@
-
 import { GoogleGenAI } from "@google/genai";
 
 export async function onRequestPost(context) {
@@ -14,14 +13,22 @@ export async function onRequestPost(context) {
       });
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = new GoogleGenAI({ 
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
     const response = await ai.models.generateContent({
       contents,
       config,
-      model: model || "gemini-1.5-flash"
+      model: model || "gemini-3.6-flash"
     });
 
-    return new Response(JSON.stringify(response), {
+    return new Response(JSON.stringify({ text: response.text }), {
       headers: { "Content-Type": "application/json" }
     });
   } catch (error: any) {
