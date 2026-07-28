@@ -14,7 +14,7 @@ import {
 import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile, getAnnualPowerCurves, uploadWorkout } from './services/intervalsService';
 import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile } from './services/geminiService';
 import { ActivityCard } from './components/ActivityCard';
-import { SuggestedWorkoutCard } from './components/SuggestedWorkoutCard';
+import { SuggestedWorkoutCard, formatPlannedRideTitle } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
 import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts } from './components/StepLabel';
@@ -174,6 +174,8 @@ const App: React.FC = () => {
   const [requestChangeInput, setRequestChangeInput] = useState('');
   const [lastAppliedTweak, setLastAppliedTweak] = useState<string | null>(null);
   const [showTweakSuccessNotice, setShowTweakSuccessNotice] = useState(false);
+  const [editingDirectiveIdx, setEditingDirectiveIdx] = useState<number | null>(null);
+  const [editingDirectiveText, setEditingDirectiveText] = useState('');
 
   const [planMode, setPlanMode] = useState<'power' | 'hr'>(() => {
     return (localStorage.getItem('wattson_plan_mode') as 'power' | 'hr') || 'power';
@@ -207,6 +209,8 @@ const App: React.FC = () => {
   const [syncSuccess, setSyncSuccess] = useState(false);
   const [reasoningPopup, setReasoningPopup] = useState<{title: string, content: string} | null>(null);
   const [showReleaseNotes, setShowReleaseNotes] = useState(false);
+
+  const isPlanUpdating = loadingWeeklyBriefing || loadingWeeks[1] || false;
 
   const APP_VERSION = "1.1.0";
 
@@ -293,7 +297,16 @@ const App: React.FC = () => {
     setPlanContext(newContext);
     safeSetItem('wattson_plan_context', newContext);
     setActiveTab('rides');
-    fetchWeeklyBriefingData(newContext, true, undefined, undefined, weekIndex);
+    
+    if (!weekIndex) {
+      // Global tweak: clear existing weeks and fetch just week 1 for speed
+      setGeneratedWeeks([]);
+      setWeeklyBriefing(null);
+      fetchWeeklyBriefingData(newContext, true, undefined, undefined, 1);
+    } else {
+      // Tweak for a specific week
+      fetchWeeklyBriefingData(newContext, true, undefined, undefined, weekIndex);
+    }
   };
 
   const handleSyncToIntervalsFromApp = async (day: any, absoluteIndex: number) => {
@@ -548,7 +561,7 @@ const App: React.FC = () => {
         : "";
         
       let startContext = `CURRENT DATE: ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}. `;
-      startContext += `Plan MUST start from TODAY, which is ${todayName} (Day 1 = Today). Note: The athlete may have completed a workout today (${hasActivityToday ? '1 or more activities completed today' : 'no activities completed yet today'}). If their request or custom directives specify multiple workouts or commutes per day, include any remaining or planned workouts for Today in Day 1. When scheduling 2 commutes for a day, the first commute MUST be named "Commute AM" and the second commute MUST be named "Commute PM". `;
+      startContext += `Plan MUST start from TODAY, which is ${todayName} (Day 1 = Today). Note: The athlete may have completed a workout today (${hasActivityToday ? '1 or more activities completed today' : 'no activities completed yet today'}). ALWAYS output ALL workouts for Today (both the ones already completed and the ones remaining) so the UI can match them properly. CRITICAL FOR TODAY (DAY 1): If the custom directives or request mention adding, changing, scheduling, or modifying a workout or commute for TODAY, you MUST generate and include that requested workout in Day 1 regardless of whether any workouts were already completed today. If their request or custom directives specify multiple workouts or commutes per day, include all of them for Today in Day 1. When scheduling 2 commutes for a day, the first commute MUST be named "Commute AM" and the second commute MUST be named "Commute PM". `;
 
       const ctxToUse = customPlanContext !== undefined ? customPlanContext : (planContext || undefined);
       const activeMode = mode || planMode;
@@ -781,7 +794,9 @@ const App: React.FC = () => {
           if (hasPlanUpdate && directive) {
             setPlanContext(directive);
             safeSetItem('wattson_plan_context', directive);
-            fetchWeeklyBriefingData(directive, true);
+            setGeneratedWeeks([]);
+            setWeeklyBriefing(null);
+            fetchWeeklyBriefingData(directive, true, undefined, undefined, 1);
           }
           setIsChatLoading(false);
         }
@@ -823,6 +838,7 @@ const App: React.FC = () => {
       dayData?: WeeklyBriefing['days'][0];
       activityData?: Activity;
       absoluteIndex?: number;
+      sessionIdx?: number;
     }[] = [];
 
     const todaySuggestedList: typeof items = [];
@@ -846,14 +862,15 @@ const App: React.FC = () => {
         const isTodayDay = dateStr === todayStr;
 
         if (isTodayDay) {
-          if (day && day.intensity !== 'Rest' && !day.focus?.toLowerCase().includes('rest') && day.load_target > 0) {
+          if (day) {
             todaySuggestedList.push({
               type: 'today_suggested',
               key: `suggested-today-${idx}`,
               date: targetDate,
               label: "Today's Target Workout",
               dayData: day,
-              absoluteIndex: dayOffset
+              absoluteIndex: dayOffset,
+              sessionIdx: idx
             });
           }
         } else if (targetDate > today) {
@@ -863,7 +880,8 @@ const App: React.FC = () => {
             date: targetDate,
             label: "Suggested Workout",
             dayData: day,
-            absoluteIndex: dayOffset
+            absoluteIndex: dayOffset,
+            sessionIdx: idx
           });
         }
       });
@@ -903,6 +921,8 @@ const App: React.FC = () => {
     // Match actual activities today against suggested workouts today so completed rides replace corresponding suggested sessions (e.g. morning commute)
     let remainingTodaySuggested = [...todaySuggestedList];
     const sortedTodayActual = [...todayActualList].sort((a, b) => a.date.getTime() - b.date.getTime());
+    const ctxLower = (planContext || '').toLowerCase();
+    const hasExplicitTodayRequest = ctxLower.includes('today') || ctxLower.includes('add') || ctxLower.includes('change') || ctxLower.includes('extra') || ctxLower.includes('second') || ctxLower.includes('rest');
 
     sortedTodayActual.forEach(actual => {
       const nameLower = (actual.activityData?.name || '').toLowerCase();
@@ -916,8 +936,8 @@ const App: React.FC = () => {
         matchIdx = remainingTodaySuggested.findIndex(s => s.dayData?.focus.toLowerCase().includes('commute'));
       }
       
-      // Fallback: match first remaining suggested ride for today
-      if (matchIdx === -1 && remainingTodaySuggested.length > 0) {
+      // Fallback: match first remaining suggested ride for today ONLY if there is no explicit request to add/change a ride for today
+      if (matchIdx === -1 && !hasExplicitTodayRequest && remainingTodaySuggested.length > 0) {
         matchIdx = 0;
       }
       
@@ -966,42 +986,24 @@ const App: React.FC = () => {
   }, [activeTab, sortedTimelineItems]);
 
   const nextRideFromPlan = useMemo(() => {
-    if (!weeklyBriefing || !weeklyBriefing.days) return null;
+    const upcoming = timelineItems.filter(i => (i.type === 'today_suggested' || i.type === 'future_suggested') && i.dayData);
+    const sortedUpcoming = [...upcoming].sort((a, b) => {
+      // First by date
+      const dateDiff = a.date.getTime() - b.date.getTime();
+      if (dateDiff !== 0) return dateDiff;
+      // If same date, preserve relative index in day
+      return (a.absoluteIndex ?? 0) - (b.absoluteIndex ?? 0);
+    });
     
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayStr = toLocalDateStr(today);
-
-    const uniqueDayLabels: string[] = [];
-    weeklyBriefing.days.forEach(d => {
-      if (d.day && !uniqueDayLabels.includes(d.day)) {
-        uniqueDayLabels.push(d.day);
-      }
-    });
-
-    const daysWithDates = weeklyBriefing.days.map((day, idx) => {
-      const dayOffset = uniqueDayLabels.indexOf(day.day) !== -1 ? uniqueDayLabels.indexOf(day.day) : idx;
-      const targetDate = new Date(today);
-      targetDate.setDate(today.getDate() + dayOffset);
-      const isRest = day?.intensity === 'Rest' || day?.focus.toLowerCase().includes('rest') || day?.load_target === 0;
-      return {
-        day,
-        date: targetDate,
-        isRest,
-        absoluteIndex: dayOffset
-      };
-    });
-
-    const upcomingRides = daysWithDates.filter(d => {
-      if (d.isRest) return false;
-      if (toLocalDateStr(d.date) === todayStr) {
-        return true;
-      }
-      return d.date > today;
-    });
-
-    return upcomingRides[0] || null;
-  }, [weeklyBriefing, activities]);
+    if (sortedUpcoming.length === 0) return null;
+    
+    return {
+      day: sortedUpcoming[0].dayData!,
+      date: sortedUpcoming[0].date,
+      isRest: false, // We already filtered out rests when creating timelineItems for suggested rides
+      absoluteIndex: sortedUpcoming[0].absoluteIndex ?? 0
+    };
+  }, [timelineItems]);
 
 
 
@@ -1149,10 +1151,10 @@ const App: React.FC = () => {
             {/* Section 1: WHY - The Goal */}
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 px-1">
-                <span className="px-2 py-0.5 bg-emerald-500 text-slate-950 text-[8.5px] font-black uppercase tracking-[0.15em] rounded-md shrink-0">
+                <span className="px-2.5 py-0.5 bg-emerald-500 text-slate-950 text-[9.5px] font-black uppercase tracking-[0.15em] rounded-lg shrink-0">
                   Why
                 </span>
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                <span className="text-[11px] font-black text-slate-200 uppercase tracking-wider">
                   The Goal
                 </span>
               </div>
@@ -1178,20 +1180,20 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Section 2: HOW - Next Ride & Week */}
+            {/* Section 2: HOW - Next Ride */}
             <div className="space-y-1.5 pt-0.5">
               <div className="flex items-center gap-2 px-1">
-                <span className="px-2 py-0.5 bg-emerald-500 text-slate-950 text-[8.5px] font-black uppercase tracking-[0.15em] rounded-md shrink-0">
+                <span className="px-2.5 py-0.5 bg-blue-500 text-slate-950 text-[9.5px] font-black uppercase tracking-[0.15em] rounded-lg shrink-0">
                   How
                 </span>
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                  Next Ride & Week
+                <span className="text-[11px] font-black text-slate-200 uppercase tracking-wider">
+                  Next Ride
                 </span>
               </div>
 
               <div className="space-y-2">
                 {/* Visual indicator when plan is updating or updated */}
-                {loadingWeeklyBriefing && (
+                {isPlanUpdating && (
                   <div className="glass-card p-3 rounded-2xl border border-emerald-500/40 bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-950 animate-pulse flex items-center gap-3 shadow-lg">
                     <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
                       <Loader2 size={16} className="animate-spin text-emerald-400" />
@@ -1214,7 +1216,7 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                {!loadingWeeklyBriefing && showTweakSuccessNotice && lastAppliedTweak && (
+                {!isPlanUpdating && showTweakSuccessNotice && lastAppliedTweak && (
                   <div className="glass-card p-2.5 px-3 rounded-2xl border border-emerald-500/30 bg-slate-900/80 flex items-center justify-between gap-2 shadow-md animate-in fade-in duration-300">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
@@ -1237,92 +1239,29 @@ const App: React.FC = () => {
                 )}
 
                 {/* Next Ride Card */}
-                {nextRideFromPlan ? (
-                  <div 
-                    onClick={() => {
-                      setActiveTab('rides');
-                      setSelectedSuggestedDay(nextRideFromPlan.day);
-                    }}
-                    className="glass-card p-3 rounded-2xl border border-emerald-500/20 bg-gradient-to-r from-emerald-950/20 via-slate-900/60 to-slate-950 active:scale-[0.99] transition-all cursor-pointer group relative overflow-hidden flex items-center justify-between gap-3 shadow-sm"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0 group-hover:scale-105 transition-transform">
-                        <Bike size={17} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest bg-emerald-500/10 px-1.5 py-0.5 rounded">
-                            Next • {getFriendlyNextRideDay(nextRideFromPlan.date)}
-                          </span>
-                          <span className="text-[8px] font-extrabold text-amber-400 uppercase tracking-wider">
-                            {nextRideFromPlan.day.intensity}
-                          </span>
-                        </div>
-                        <h3 className="text-xs font-black text-white group-hover:text-emerald-400 transition-colors truncate mt-1">
-                          {nextRideFromPlan.day.focus}
-                        </h3>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <div className="text-right">
-                        <span className="text-xs font-mono font-black text-white block">{nextRideFromPlan.day.duration_target}m</span>
-                        <span className="text-[9px] font-mono font-bold text-emerald-400">{nextRideFromPlan.day.load_target} TSS</span>
-                      </div>
-                      <ChevronRight size={14} className="text-slate-500 group-hover:text-emerald-400 transition-colors" />
-                    </div>
-                  </div>
-                ) : null}
-
-                {/* Coming Week Summary Row */}
-                {(() => {
-                  const comingWeekDays = weeklyBriefing?.days ? weeklyBriefing.days.slice(0, 7) : [];
-                  const comingWeekRides = comingWeekDays.filter(d => d.intensity !== 'Rest' && !d.focus.toLowerCase().includes('rest') && d.load_target > 0);
-                  const comingWeekTss = comingWeekDays.reduce((acc, d) => acc + (d.load_target || 0), 0);
-                  const comingWeekMins = comingWeekDays.reduce((acc, d) => acc + (d.duration_target || 0), 0);
-                  const comingWeekHours = Math.round(comingWeekMins / 60 * 10) / 10;
-
+                {nextRideFromPlan ? (() => {
+                  const isTodayRide = nextRideFromPlan.date.toDateString() === new Date().toDateString();
                   return (
-                    <div 
-                      onClick={() => setActiveTab('rides')}
-                      className="glass-card p-2.5 rounded-2xl border border-white/10 bg-slate-900/40 hover:border-emerald-500/20 active:scale-[0.99] transition-all cursor-pointer group space-y-2"
-                    >
-                      <div className="flex items-center justify-between px-0.5">
-                        <span className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
-                          <Calendar size={11} className="text-blue-400" /> Planned Week Outlook
-                        </span>
-                        <span className="text-[8.5px] font-bold text-emerald-400 flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
-                          View Rides <ChevronRight size={10} />
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-2 bg-black/30 p-2 rounded-xl border border-white/5 text-center">
-                        <div>
-                          <span className="text-[7.5px] font-black uppercase text-slate-500 tracking-wider block">Volume</span>
-                          <span className="text-xs font-black text-white font-mono mt-0.5 block">{comingWeekHours}h</span>
-                        </div>
-                        <div>
-                          <span className="text-[7.5px] font-black uppercase text-slate-500 tracking-wider block">Target Load</span>
-                          <span className="text-xs font-black text-blue-400 font-mono mt-0.5 block">{comingWeekTss} TSS</span>
-                        </div>
-                        <div>
-                          <span className="text-[7.5px] font-black uppercase text-slate-500 tracking-wider block">Sessions</span>
-                          <span className="text-xs font-black text-emerald-400 font-mono mt-0.5 block">{comingWeekRides.length} rides</span>
-                        </div>
-                      </div>
-                    </div>
+                    <SuggestedWorkoutCard 
+                      day={nextRideFromPlan.day}
+                      absoluteIndex={nextRideFromPlan.absoluteIndex ?? 0}
+                      onClick={(day) => {
+                        setSelectedSuggestedDay(day);
+                      }}
+                      isToday={isTodayRide}
+                    />
                   );
-                })()}
+                })() : null}
               </div>
             </div>
 
             {/* Section 3: RESULTS - Last Ride & Stats */}
             <div className="space-y-1.5 pt-0.5">
               <div className="flex items-center gap-2 px-1">
-                <span className="px-2 py-0.5 bg-emerald-500 text-slate-950 text-[8.5px] font-black uppercase tracking-[0.15em] rounded-md shrink-0">
+                <span className="px-2.5 py-0.5 bg-emerald-500 text-slate-950 text-[9.5px] font-black uppercase tracking-[0.15em] rounded-lg shrink-0">
                   Results
                 </span>
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                <span className="text-[11px] font-black text-slate-200 uppercase tracking-wider">
                   Last Ride & Stats
                 </span>
               </div>
@@ -1335,70 +1274,44 @@ const App: React.FC = () => {
                     : null;
                   
                   if (!lastActivity) return null;
-                  const lastDate = new Date(lastActivity.start_date_local);
+                  const isLastActivityToday = new Date(lastActivity.start_date_local).toDateString() === new Date().toDateString();
 
                   return (
-                    <div 
-                      onClick={() => {
-                        setSelectedActivity(lastActivity);
-                        setActiveTab('rides');
-                      }}
-                      className="glass-card p-2.5 px-3 rounded-2xl border border-white/10 hover:border-emerald-500/20 bg-slate-900/40 cursor-pointer transition-all flex items-center justify-between gap-2"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex flex-col items-center justify-center shrink-0 leading-none">
-                          <span className="text-[6.5px] font-black uppercase text-slate-400">
-                            {lastDate.toLocaleDateString(undefined, { weekday: 'short' })}
-                          </span>
-                          <span className="text-[11px] font-black text-emerald-400">
-                            {lastDate.getDate()}
-                          </span>
-                        </div>
-                        <div className="min-w-0">
-                          <span className="text-[7.5px] font-black uppercase tracking-wider text-slate-500 block leading-none mb-0.5">Recent Activity</span>
-                          <h4 className="text-[11px] font-black text-white truncate">
-                            {lastActivity.name}
-                          </h4>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <div className="text-right">
-                          <span className="text-[11px] font-black text-emerald-400 font-mono italic block">
-                            {(lastActivity.icu_training_load || lastActivity.icu_tss || 0)} TSS
-                          </span>
-                          <span className="text-[8.5px] font-mono text-slate-400 font-bold">
-                            {Math.round((lastActivity.moving_time || 0)/60)}m • {(lastActivity.weighted_average_watts || lastActivity.average_watts || 0)}W
-                          </span>
-                        </div>
-                        <ChevronRight size={12} className="text-slate-500" />
-                      </div>
-                    </div>
+                    <ActivityCard 
+                      activity={lastActivity}
+                      onClick={(act) => setSelectedActivity(act)}
+                      isToday={isLastActivityToday}
+                    />
                   );
                 })()}
 
-                {/* 5-Metric Stats Grid */}
-                <div className="grid grid-cols-5 gap-1.5">
-                  <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center">
-                    <span className="text-[6.5px] font-black uppercase text-slate-400 tracking-wider">Fitness</span>
-                    <span className="text-xs font-black italic text-blue-400 font-mono mt-0.5">{stats.ctl}</span>
+                {/* 5-Metric Stats Grid (2 rows) */}
+                <div className="flex flex-col space-y-1.5">
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <div className="glass-card p-2 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center shadow-sm">
+                      <span className="text-[7px] font-black uppercase text-slate-400 tracking-wider">Fitness</span>
+                      <span className="text-[13px] font-black italic text-blue-400 font-mono mt-0.5">{stats.ctl}</span>
+                    </div>
+                    <div className="glass-card p-2 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center shadow-sm">
+                      <span className="text-[7px] font-black uppercase text-slate-400 tracking-wider">Fatigue</span>
+                      <span className="text-[13px] font-black italic text-amber-400 font-mono mt-0.5">{stats.atl}</span>
+                    </div>
+                    <div className="glass-card p-2 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center shadow-sm">
+                      <span className="text-[7px] font-black uppercase text-slate-400 tracking-wider">Form</span>
+                      <span className={`text-[13px] font-black italic font-mono mt-0.5 ${stats.form >= 5 ? 'text-emerald-400' : stats.form < -25 ? 'text-rose-400' : stats.form < -10 ? 'text-amber-400' : 'text-slate-200'}`}>
+                        {stats.form > 0 ? `+${stats.form}` : stats.form}
+                      </span>
+                    </div>
                   </div>
-                  <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center">
-                    <span className="text-[6.5px] font-black uppercase text-slate-400 tracking-wider">Fatigue</span>
-                    <span className="text-xs font-black italic text-amber-400 font-mono mt-0.5">{stats.atl}</span>
-                  </div>
-                  <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center">
-                    <span className="text-[6.5px] font-black uppercase text-slate-400 tracking-wider">Form</span>
-                    <span className={`text-xs font-black italic font-mono mt-0.5 ${stats.form >= 5 ? 'text-emerald-400' : stats.form < -25 ? 'text-rose-400' : stats.form < -10 ? 'text-amber-400' : 'text-slate-200'}`}>
-                      {stats.form > 0 ? `+${stats.form}` : stats.form}
-                    </span>
-                  </div>
-                  <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center">
-                    <span className="text-[6.5px] font-black uppercase text-slate-400 tracking-wider">7D Time</span>
-                    <span className="text-xs font-black italic text-white font-mono mt-0.5">{stats.total7DayTime}h</span>
-                  </div>
-                  <div className="glass-card p-1.5 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center">
-                    <span className="text-[6.5px] font-black uppercase text-slate-400 tracking-wider">7D Load</span>
-                    <span className="text-xs font-black italic text-emerald-400 font-mono mt-0.5">{stats.total7DayLoad}</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <div className="glass-card p-2 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center shadow-sm">
+                      <span className="text-[7px] font-black uppercase text-slate-400 tracking-wider">7D Time</span>
+                      <span className="text-[13px] font-black italic text-white font-mono mt-0.5">{stats.total7DayTime}h</span>
+                    </div>
+                    <div className="glass-card p-2 rounded-xl border border-white/5 flex flex-col items-center justify-center bg-slate-900/40 text-center shadow-sm">
+                      <span className="text-[7px] font-black uppercase text-slate-400 tracking-wider">7D Load</span>
+                      <span className="text-[13px] font-black italic text-emerald-400 font-mono mt-0.5">{stats.total7DayLoad}</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1423,11 +1336,27 @@ const App: React.FC = () => {
                   {(() => {
                     const futureItems = sortedTimelineItems.filter(i => i.type === 'future_suggested');
                     const rawTodayItems = sortedTimelineItems.filter(i => i.type === 'today_suggested' || i.type === 'today_actual');
+                    
+                    const compareSameDayForTimeline = (a: any, b: any) => {
+                      const fA = (a.dayData?.focus || '').toLowerCase();
+                      const fB = (b.dayData?.focus || '').toLowerCase();
+                      
+                      const isAPM = fA.includes('pm') || fA.includes('afternoon') || fA.includes('evening');
+                      const isAAM = fA.includes('am') || fA.includes('morning');
+                      const isBPM = fB.includes('pm') || fB.includes('afternoon') || fB.includes('evening');
+                      const isBAM = fB.includes('am') || fB.includes('morning');
+
+                      if (isAPM && isBAM) return -1;
+                      if (isBPM && isAAM) return 1;
+
+                      return (b.sessionIdx ?? b.absoluteIndex ?? 0) - (a.sessionIdx ?? a.absoluteIndex ?? 0);
+                    };
+
                     const todayItems = [...rawTodayItems].sort((a, b) => {
                       if (a.type === 'today_suggested' && b.type === 'today_actual') return -1;
                       if (a.type === 'today_actual' && b.type === 'today_suggested') return 1;
                       if (a.type === 'today_suggested' && b.type === 'today_suggested') {
-                        return (a.key.localeCompare(b.key));
+                        return compareSameDayForTimeline(a, b);
                       }
                       if (a.type === 'today_actual' && b.type === 'today_actual') {
                         return b.date.getTime() - a.date.getTime();
@@ -1446,22 +1375,57 @@ const App: React.FC = () => {
                         {/* Integrated Training Plan Section */}
                         <div className="flex flex-col space-y-3 relative">
                           {/* Planned Upcoming Sessions (1 Week Forward, Above Today) */}
-                          {week1FutureItems.length > 0 && (() => {
+                          {(week1FutureItems.length > 0 || isPlanUpdating) && (() => {
                             const chronFutureItems = [...week1FutureItems].sort((a, b) => a.date.getTime() - b.date.getTime());
-                            const nextRideItem = chronFutureItems[0];
-                            // Sort remaining future items descending so furthest future is at the complete top
-                            const otherFutureItems = chronFutureItems.slice(1).sort((a, b) => b.date.getTime() - a.date.getTime());
+                            const todayObj = new Date();
+                            todayObj.setHours(0, 0, 0, 0);
+                            const tomorrowDate = new Date(todayObj);
+                            tomorrowDate.setDate(todayObj.getDate() + 1);
+                            const tomorrowDateStr = toLocalDateStr(tomorrowDate);
+
+                            // All items scheduled for tomorrow
+                            let tomorrowItems = chronFutureItems.filter(i => toLocalDateStr(i.date) === tomorrowDateStr);
+
+                            // Fallback: If no items strictly on tomorrow, take all items on the earliest upcoming date
+                            if (tomorrowItems.length === 0 && chronFutureItems.length > 0) {
+                              const nextDateStr = toLocalDateStr(chronFutureItems[0].date);
+                              tomorrowItems = chronFutureItems.filter(i => toLocalDateStr(i.date) === nextDateStr);
+                            }
+
+                            tomorrowItems.sort((a, b) => {
+                              const dDiff = b.date.getTime() - a.date.getTime();
+                              if (dDiff !== 0) return dDiff;
+                              return compareSameDayForTimeline(a, b);
+                            });
+
+                            const tomorrowKeys = new Set(tomorrowItems.map(i => i.key));
+
+                            // Other future items are all future items NOT in tomorrowItems, sorted descending by date
+                            const otherFutureItems = chronFutureItems
+                              .filter(i => !tomorrowKeys.has(i.key))
+                              .sort((a, b) => {
+                                const dDiff = b.date.getTime() - a.date.getTime();
+                                if (dDiff !== 0) return dDiff;
+                                return compareSameDayForTimeline(a, b);
+                              });
+
+                            const displayedTomorrowItems = isOtherFutureExpanded
+                              ? tomorrowItems
+                              : tomorrowItems.slice(-1);
 
                             return (
                               <div className="flex flex-col space-y-2.5 pt-1">
                                 <div className="flex items-center justify-between gap-2 px-1">
                                   <div className="flex items-center gap-2">
-                                    <span className="inline-block px-2.5 py-0.5 bg-[#12141c] border border-blue-500/30 text-blue-400 text-[9.5px] font-black uppercase tracking-[0.2em] rounded-lg shrink-0 whitespace-nowrap">
+                                    <button
+                                      onClick={() => setIsOtherFutureExpanded(!isOtherFutureExpanded)}
+                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#12141c] hover:bg-blue-900/20 border border-blue-500/30 text-blue-400 text-[9.5px] font-black uppercase tracking-[0.2em] rounded-lg shrink-0 whitespace-nowrap transition-colors cursor-pointer"
+                                    >
                                       PLANNED RIDES
-                                    </span>
-                                    <span className="text-[9.5px] font-bold text-slate-400">
-                                      {week1RideCount} rides • {week1TotalTss} TSS
-                                    </span>
+                                      {otherFutureItems.length > 0 && (
+                                        isOtherFutureExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />
+                                      )}
+                                    </button>
                                   </div>
 
                                   <button
@@ -1478,7 +1442,7 @@ const App: React.FC = () => {
 
                                 <div className="space-y-2 pt-0.5">
                                   {/* Loading state indicator when plan is updating */}
-                                  {loadingWeeklyBriefing && (
+                                  {isPlanUpdating && (
                                     <div className="glass-card p-3 rounded-2xl border border-emerald-500/40 bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-950 animate-pulse flex items-center gap-3 shadow-lg my-1">
                                       <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
                                         <Loader2 size={16} className="animate-spin text-emerald-400" />
@@ -1502,7 +1466,7 @@ const App: React.FC = () => {
                                   )}
 
                                   {/* Success notification banner after plan completes update */}
-                                  {!loadingWeeklyBriefing && showTweakSuccessNotice && lastAppliedTweak && (
+                                  {!isPlanUpdating && showTweakSuccessNotice && lastAppliedTweak && (
                                     <div className="glass-card p-2.5 px-3 rounded-2xl border border-emerald-500/30 bg-slate-900/80 flex items-center justify-between gap-2 shadow-md animate-in fade-in duration-300 my-1">
                                       <div className="flex items-center gap-2.5 min-w-0">
                                         <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
@@ -1524,69 +1488,51 @@ const App: React.FC = () => {
                                     </div>
                                   )}
                                    {/* Other Future Rides (Collapsible - Placed on Top for chronological order down to today) */}
-                                  {otherFutureItems.length > 0 && (
+                                  {otherFutureItems.length > 0 && isOtherFutureExpanded && (
                                     <div className="flex flex-col space-y-2">
-                                      <button
-                                        onClick={() => setIsOtherFutureExpanded(!isOtherFutureExpanded)}
-                                        className="w-full p-2.5 px-3 rounded-2xl bg-slate-900/80 hover:bg-slate-900 border border-white/10 flex items-center justify-between cursor-pointer transition-all group select-none"
+                                      <motion.div
+                                        initial={{ opacity: 0, height: 0 }}
+                                        animate={{ opacity: 1, height: 'auto' }}
+                                        exit={{ opacity: 0, height: 0 }}
+                                        className="space-y-2 overflow-hidden"
                                       >
-                                        <div className="flex items-center gap-2.5">
-                                          <div className="p-1 rounded-lg bg-white/5 border border-white/10 text-slate-400 group-hover:text-white transition-colors">
-                                            {isOtherFutureExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                          </div>
-                                          <div className="flex items-baseline gap-2">
-                                            <span className="text-xs font-black uppercase tracking-wide text-white">
-                                              Other Planned Rides ({otherFutureItems.length})
-                                            </span>
-                                            <span className="text-[9.5px] font-bold text-slate-400">
-                                              • {otherFutureItems.reduce((acc, i) => acc + (i.dayData?.load_target || 0), 0)} TSS
-                                            </span>
-                                          </div>
-                                        </div>
-                                        <span className="text-[8.5px] font-black uppercase tracking-wider text-slate-500 group-hover:text-slate-300">
-                                          {isOtherFutureExpanded ? 'Collapse' : 'Expand'}
-                                        </span>
-                                      </button>
-
-                                      {isOtherFutureExpanded && (
-                                        <motion.div
-                                          initial={{ opacity: 0, height: 0 }}
-                                          animate={{ opacity: 1, height: 'auto' }}
-                                          exit={{ opacity: 0, height: 0 }}
-                                          className="space-y-2 pt-1 overflow-hidden"
-                                        >
-                                          {otherFutureItems.map((item) => (
-                                            <React.Fragment key={item.key}>
-                                              {item.dayData && (
-                                                <SuggestedWorkoutCard 
-                                                  day={item.dayData}
-                                                  absoluteIndex={item.absoluteIndex ?? 0}
-                                                  onClick={(day) => setSelectedSuggestedDay(day)}
-                                                  isToday={false}
-                                                />
-                                              )}
-                                            </React.Fragment>
-                                          ))}
-                                        </motion.div>
-                                      )}
+                                        {otherFutureItems.map((item) => (
+                                          <React.Fragment key={item.key}>
+                                            {item.dayData && (
+                                              <SuggestedWorkoutCard 
+                                                day={item.dayData}
+                                                absoluteIndex={item.absoluteIndex ?? 0}
+                                                onClick={(day) => setSelectedSuggestedDay(day)}
+                                                isToday={false}
+                                              />
+                                            )}
+                                          </React.Fragment>
+                                        ))}
+                                      </motion.div>
                                     </div>
                                   )}
 
-                                  {/* Next Ride / Tomorrow (Immediately above Today) */}
-                                  {nextRideItem && nextRideItem.dayData && (
+                                  {/* Tomorrow Section (Immediately above Today) */}
+                                  {displayedTomorrowItems.length > 0 && (
                                     <div className="flex flex-col space-y-2 pt-1">
                                       <div className="flex items-center gap-2 px-1">
                                         <span className="inline-block px-2.5 py-0.5 bg-[#12141c] border border-blue-500/40 text-blue-400 text-[9.5px] font-black uppercase tracking-[0.2em] rounded-lg shrink-0 whitespace-nowrap shadow-sm">
-                                          TOMORROW
+                                          {toLocalDateStr(displayedTomorrowItems[0].date) === tomorrowDateStr ? "TOMORROW" : "NEXT RIDE"}
                                         </span>
                                         <div className="flex-1 h-px bg-gradient-to-r from-blue-500/30 to-transparent" />
                                       </div>
-                                      <SuggestedWorkoutCard 
-                                        day={nextRideItem.dayData}
-                                        absoluteIndex={nextRideItem.absoluteIndex ?? 0}
-                                        onClick={(day) => setSelectedSuggestedDay(day)}
-                                        isToday={false}
-                                      />
+                                      {displayedTomorrowItems.map((item) => (
+                                        <React.Fragment key={item.key}>
+                                          {item.dayData && (
+                                            <SuggestedWorkoutCard 
+                                              day={item.dayData}
+                                              absoluteIndex={item.absoluteIndex ?? 0}
+                                              onClick={(day) => setSelectedSuggestedDay(day)}
+                                              isToday={false}
+                                            />
+                                          )}
+                                        </React.Fragment>
+                                      ))}
                                     </div>
                                   )}
                                 </div>
@@ -1942,7 +1888,9 @@ const App: React.FC = () => {
                               onClick={() => {
                                 setTrainingMode(mode);
                                 localStorage.setItem('wattson_training_mode', mode);
-                                fetchWeeklyBriefingData(undefined, true, undefined, mode);
+                                setGeneratedWeeks([]);
+                                setWeeklyBriefing(null);
+                                fetchWeeklyBriefingData(undefined, true, undefined, mode, 1);
                               }}
                               className={`flex-1 relative z-10 py-2 text-[10px] font-black uppercase tracking-widest transition-colors duration-300 ${
                                 trainingMode === mode ? 'text-slate-950' : 'text-slate-400'
@@ -2257,7 +2205,9 @@ const App: React.FC = () => {
               safeSetItem('wattson_goal', userGoal); 
               setSuggestion(null); 
               setShowGoalEditor(false); 
-              fetchWeeklyBriefingData(undefined, true);
+              setGeneratedWeeks([]);
+              setWeeklyBriefing(null);
+              fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
             }}
             className="w-full py-5 bg-emerald-500 text-slate-950 font-bold text-[10px] uppercase tracking-[0.2em] rounded-[1.8rem] shadow-2xl active:scale-95 transition-all"
           >
@@ -2370,7 +2320,7 @@ const App: React.FC = () => {
                   </div>
                   
                   <h3 className="text-lg font-black text-white italic tracking-tighter mb-5 uppercase text-center leading-tight px-4">
-                    {selectedSuggestedDay.focus}
+                    {formatPlannedRideTitle(selectedSuggestedDay.focus)}
                   </h3>
                   
                   {isReworking ? (
@@ -2510,55 +2460,133 @@ const App: React.FC = () => {
                           {activeDirectivesList.map((directive, idx) => (
                             <div 
                               key={`${idx}-${directive}`}
-                              className="bg-[#0a0d14] border border-emerald-500/20 hover:border-emerald-500/40 rounded-xl p-2.5 sm:p-3 flex items-center justify-between gap-2.5 transition-all shadow-sm"
+                              className="bg-[#0a0d14] border border-emerald-500/20 hover:border-emerald-500/40 rounded-xl p-2.5 sm:p-3 transition-all shadow-sm flex flex-col gap-2"
                             >
-                              <div className="flex items-start gap-2 min-w-0">
-                                <span className="text-emerald-400 font-black text-[9px] mt-0.5 shrink-0 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md">
-                                  #{idx + 1}
-                                </span>
-                                <span className="text-xs text-slate-200 font-medium leading-snug break-words">
-                                  {directive}
-                                </span>
-                              </div>
-                              <button
-                                onClick={() => {
-                                  const updated = activeDirectivesList.filter((_, i) => i !== idx);
-                                  if (updated.length === 0) {
-                                    setPlanContext(null);
-                                    localStorage.removeItem('wattson_plan_context');
-                                    setLastAppliedTweak(null);
-                                    setShowTweakSuccessNotice(false);
-                                    fetchWeeklyBriefingData(undefined, true);
-                                    setShowDirectivesSubModal(false);
-                                    setShowRequestChangeModal(false);
-                                  } else {
-                                    const newContext = updated.join(' ; ');
-                                    setPlanContext(newContext);
-                                    safeSetItem('wattson_plan_context', newContext);
-                                    fetchWeeklyBriefingData(newContext, true);
-                                  }
-                                }}
-                                title="Delete directive"
-                                className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all shrink-0 active:scale-90 cursor-pointer"
-                              >
-                                <Trash2 size={14} />
-                              </button>
+                              {editingDirectiveIdx === idx ? (
+                                <div className="w-full flex flex-col gap-2">
+                                  <textarea
+                                    value={editingDirectiveText}
+                                    onChange={(e) => setEditingDirectiveText(e.target.value)}
+                                    className="w-full bg-slate-950 border border-emerald-500/40 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 min-h-[60px] resize-none"
+                                  />
+                                  <div className="flex items-center justify-end gap-2">
+                                    <button
+                                      onClick={() => {
+                                        setEditingDirectiveIdx(null);
+                                      }}
+                                      className="px-3 py-1 rounded bg-slate-800 text-slate-300 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-700 transition-colors"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        if (!editingDirectiveText.trim()) return;
+                                        const updated = [...activeDirectivesList];
+                                        updated[idx] = editingDirectiveText.trim();
+                                        const newContext = updated.join(' ; ');
+                                        setPlanContext(newContext);
+                                        safeSetItem('wattson_plan_context', newContext);
+                                        setLastAppliedTweak(`Updated: "${editingDirectiveText.trim()}"`);
+                                        setShowTweakSuccessNotice(false);
+                                        setGeneratedWeeks([]);
+                                        setWeeklyBriefing(null);
+                                        fetchWeeklyBriefingData(newContext, true, undefined, undefined, 1);
+                                        setEditingDirectiveIdx(null);
+                                      }}
+                                      className="px-3 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-500/30 transition-colors"
+                                    >
+                                      Save
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-start justify-between gap-2.5">
+                                  <div className="flex items-start gap-2 min-w-0">
+                                    <span className="text-emerald-400 font-black text-[9px] mt-0.5 shrink-0 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md">
+                                      #{idx + 1}
+                                    </span>
+                                    <span className="text-xs text-slate-200 font-medium leading-snug break-words">
+                                      {directive}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                      onClick={() => {
+                                        setEditingDirectiveIdx(idx);
+                                        setEditingDirectiveText(directive);
+                                      }}
+                                      title="Edit directive"
+                                      className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all active:scale-90 cursor-pointer"
+                                    >
+                                      <Edit size={14} />
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const updated = activeDirectivesList.filter((_, i) => i !== idx);
+                                        if (updated.length === 0) {
+                                          setPlanContext(null);
+                                          localStorage.removeItem('wattson_plan_context');
+                                          setLastAppliedTweak(null);
+                                          setShowTweakSuccessNotice(false);
+                                          setGeneratedWeeks([]);
+                                          setWeeklyBriefing(null);
+                                          fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
+                                          setShowDirectivesSubModal(false);
+                                          setShowRequestChangeModal(false);
+                                        } else {
+                                          const newContext = updated.join(' ; ');
+                                          setPlanContext(newContext);
+                                          safeSetItem('wattson_plan_context', newContext);
+                                          setGeneratedWeeks([]);
+                                          setWeeklyBriefing(null);
+                                          fetchWeeklyBriefingData(newContext, true, undefined, undefined, 1);
+                                        }
+                                      }}
+                                      title="Delete directive"
+                                      className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all active:scale-90 cursor-pointer"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
+
+                        <button
+                          onClick={() => {
+                            if (planContext) {
+                              setLastAppliedTweak("Updated Directives");
+                              setShowTweakSuccessNotice(false);
+                              setGeneratedWeeks([]);
+                              setWeeklyBriefing(null);
+                              fetchWeeklyBriefingData(planContext, true, undefined, undefined, 1);
+                            }
+                            setShowDirectivesSubModal(false);
+                            setShowRequestChangeModal(false);
+                          }}
+                          className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl transition-all active:scale-95 shadow-lg flex items-center justify-center gap-1.5 cursor-pointer mt-1"
+                        >
+                          <Sparkles size={13} />
+                          <span>Apply Directives & Recalibrate</span>
+                        </button>
+
                         <button
                           onClick={() => {
                             setPlanContext(null);
                             localStorage.removeItem('wattson_plan_context');
                             setLastAppliedTweak(null);
                             setShowTweakSuccessNotice(false);
-                            fetchWeeklyBriefingData(undefined, true);
+                            setGeneratedWeeks([]);
+                            setWeeklyBriefing(null);
+                            fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
                             setShowDirectivesSubModal(false);
                             setShowRequestChangeModal(false);
                           }}
-                          className="w-full py-2.5 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 font-black text-xs uppercase tracking-wider rounded-xl transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                          className="w-full py-2 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 font-black text-[10px] uppercase tracking-wider rounded-xl transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
                         >
-                          <Trash2 size={13} />
+                          <Trash2 size={12} />
                           <span>Delete All Directives</span>
                         </button>
                       </div>
@@ -2659,17 +2687,26 @@ const App: React.FC = () => {
               <div className="space-y-2 pt-0.5">
                 <button
                   onClick={() => {
-                    if (!requestChangeInput.trim()) return;
-                    handleAddTweakFromApp(requestChangeInput.trim());
+                    if (requestChangeInput.trim()) {
+                      handleAddTweakFromApp(requestChangeInput.trim());
+                    } else if (planContext) {
+                      setLastAppliedTweak("Applied Directives");
+                      setShowTweakSuccessNotice(false);
+                      setGeneratedWeeks([]);
+                      setWeeklyBriefing(null);
+                      fetchWeeklyBriefingData(planContext, true, undefined, undefined, 1);
+                    } else {
+                      return;
+                    }
                     setShowRequestChangeModal(false);
                     setShowDirectivesSubModal(false);
                     setRequestChangeInput('');
                   }}
-                  disabled={!requestChangeInput.trim()}
+                  disabled={!requestChangeInput.trim() && !planContext}
                   className="w-full py-2.5 sm:py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl sm:rounded-2xl disabled:opacity-40 transition-all active:scale-95 shadow-lg flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Sparkles size={13} />
-                  <span>Apply Change</span>
+                  <span>{requestChangeInput.trim() ? "Apply Change" : "Apply Changes"}</span>
                 </button>
 
                 <button 
