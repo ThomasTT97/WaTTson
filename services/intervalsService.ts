@@ -237,13 +237,13 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
     const response = await fetch(url, { method: 'GET', headers });
     if (!response.ok) return [];
     const data = await response.json();
-    const intervals = data.icu_intervals || data.intervals;
-    if (!Array.isArray(intervals)) return [];
+    const intervals = data.icu_intervals || data.intervals || data.laps;
+    if (!Array.isArray(intervals) || intervals.length === 0) return [];
     
     return intervals.map((l: any) => {
       // Map raw intervals.icu properties to ActivityInterval
-      const avgWatts = l.avg_watts !== undefined ? l.avg_watts : (l.average_watts !== undefined ? l.average_watts : 0);
-      const avgHr = l.avg_heartrate !== undefined ? l.avg_heartrate : (l.average_heartrate !== undefined ? l.average_heartrate : 0);
+      const avgWatts = l.avg_watts !== undefined ? l.avg_watts : (l.average_watts !== undefined ? l.average_watts : (l.average_power !== undefined ? l.average_power : (l.avg_power !== undefined ? l.avg_power : 0)));
+      const avgHr = l.avg_heartrate !== undefined ? l.avg_heartrate : (l.average_heartrate !== undefined ? l.average_heartrate : (l.avg_hr !== undefined ? l.avg_hr : (l.average_hr !== undefined ? l.average_hr : 0)));
       const movingTime = l.moving_time !== undefined ? l.moving_time : (l.elapsed_time !== undefined ? l.elapsed_time : (l.duration !== undefined ? l.duration : 0));
       
       // Map interval type to WORK | RECOVERY | WARMUP | COOLDOWN
@@ -356,7 +356,8 @@ export const detectIntervalsFromLaps = (activity: Activity, intervals: ActivityI
     }
   }
 
-  // Find the primary/most significant interval group
+  // Find the primary/most significant interval group using a Significance Score
+  // This avoids accidental short/burst intervals overtaking a structured sweet spot or threshold set.
   const sortedGroups = groups
     .filter(g => {
       const pctFtp = g.watts / ftp;
@@ -364,25 +365,26 @@ export const detectIntervalsFromLaps = (activity: Activity, intervals: ActivityI
       return pctFtp >= 0.72 || g.watts > ftp * 0.72;
     })
     .sort((a, b) => {
-      // Prioritize by power zone level, then count, then duration
-      const zoneWeight = (g: typeof a) => {
-        const pct = g.watts / ftp;
-        if (pct >= 1.50) return 7; // Sprint
-        if (pct >= 1.20) return 6; // Anaerobic
-        if (pct >= 1.05) return 5; // VO2 Max
-        if (pct >= 0.90) return 4; // Threshold
-        if (pct >= 0.84) return 3; // Sweet Spot
-        if (pct >= 0.75) return 2; // Tempo
-        return 1;
+      const getSignificanceScore = (g: typeof a) => {
+        const pctFtp = g.watts / ftp;
+        const totalDuration = g.count * g.duration;
+        
+        // Base intensity weight - we favor sweet-spot, threshold, and VO2 max over raw short sprints
+        let intensityWeight = 1.0;
+        if (pctFtp >= 1.50) intensityWeight = 1.1; // Sprint
+        else if (pctFtp >= 1.20) intensityWeight = 1.35; // Anaerobic
+        else if (pctFtp >= 1.05) intensityWeight = 1.55; // VO2 Max
+        else if (pctFtp >= 0.90) intensityWeight = 1.65; // Threshold
+        else if (pctFtp >= 0.84) intensityWeight = 1.45; // Sweet Spot
+        else if (pctFtp >= 0.75) intensityWeight = 1.25; // Tempo
+        
+        // Reps multiplier - we favor structured repeating sets
+        const repsWeight = g.count === 1 ? 0.75 : (g.count === 2 ? 1.15 : (g.count >= 3 ? 1.4 : 1.0));
+        
+        return totalDuration * intensityWeight * repsWeight;
       };
-      
-      const weightA = zoneWeight(a);
-      const weightB = zoneWeight(b);
-      
-      if (weightA !== weightB) {
-        return weightB - weightA;
-      }
-      return b.count - a.count;
+
+      return getSignificanceScore(b) - getSignificanceScore(a);
     });
 
   const mainGroup = sortedGroups.find(g => {
@@ -456,7 +458,7 @@ export const fetchAthleteProfile = async (creds: IntervalsCredentials): Promise<
  * Fetches power curve data for a specific year.
  */
 export const fetchPowerCurve = async (creds: IntervalsCredentials, year: number): Promise<any> => {
-  if (creds.apiKey === 'demo') return { year, bests: getMockPowerBests() };
+  if (creds.apiKey === 'demo') return { year, bests: getMockPowerBests(year) };
   const { apiKey, athleteId } = creds;
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
   const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
@@ -483,7 +485,7 @@ export const getAnnualPowerCurves = async (creds: IntervalsCredentials, yearsCou
   const years = Array.from({ length: yearsCount }, (_, i) => currentYear - i);
   const results = [];
 
-  const durations = [1, 10, 20, 30, 60, 120, 180, 240, 300, 480, 600, 1200, 3600, 5400, 7200, 10800];
+  const durations = [1, 5, 10, 20, 30, 60, 120, 180, 240, 300, 480, 600, 1200, 1800, 2700, 3600, 5400, 7200, 10800];
 
   for (const year of years) {
     const data = await fetchPowerCurve(creds, year);
@@ -502,7 +504,7 @@ export const getAnnualPowerCurves = async (creds: IntervalsCredentials, yearsCou
       });
       results.push({ year, bests });
     } else if (creds.apiKey === 'demo') {
-      results.push({ year, bests: getMockPowerBests() });
+      results.push({ year, bests: getMockPowerBests(year) });
     }
     // Small delay to be safe
     if (creds.apiKey !== 'demo') await new Promise(r => setTimeout(r, 200));
@@ -616,21 +618,78 @@ export const getMockPlannedWorkout = (dateStr: string): PlannedWorkout => ({
   icu_training_load: 75
 });
 
-export const getMockPowerBests = () => [
-  { duration: 1, watts: 1100 },
-  { duration: 10, watts: 950 },
-  { duration: 20, watts: 820 },
-  { duration: 30, watts: 750 },
-  { duration: 60, watts: 600 },
-  { duration: 120, watts: 480 },
-  { duration: 180, watts: 420 },
-  { duration: 240, watts: 390 },
-  { duration: 300, watts: 370 },
-  { duration: 480, watts: 330 },
-  { duration: 600, watts: 310 },
-  { duration: 1200, watts: 280 },
-  { duration: 3600, watts: 240 },
-  { duration: 5400, watts: 220 },
-  { duration: 7200, watts: 200 },
-  { duration: 10800, watts: 180 }
-];
+export const getMockPowerBests = (year?: number) => {
+  const currentYear = new Date().getFullYear();
+  const targetYear = year || currentYear;
+  
+  if (targetYear === currentYear) {
+    // Dit seizoen
+    return [
+      { duration: 1, watts: 1423 },
+      { duration: 5, watts: 1363 },
+      { duration: 10, watts: 1101 },
+      { duration: 20, watts: 961 },
+      { duration: 30, watts: 855 },
+      { duration: 60, watts: 653 },
+      { duration: 120, watts: 537 },
+      { duration: 180, watts: 438 },
+      { duration: 240, watts: 416 },
+      { duration: 300, watts: 406 },
+      { duration: 480, watts: 376 },
+      { duration: 600, watts: 356 },
+      { duration: 1200, watts: 319 },
+      { duration: 1800, watts: 311 },
+      { duration: 2700, watts: 297 },
+      { duration: 3600, watts: 286 },
+      { duration: 5400, watts: 278 },
+      { duration: 7200, watts: 237 },
+      { duration: 10800, watts: 224 }
+    ];
+  } else if (targetYear === currentYear - 1) {
+    // Vorig seizoen
+    return [
+      { duration: 1, watts: 1472 },
+      { duration: 5, watts: 1395 },
+      { duration: 10, watts: 1255 },
+      { duration: 20, watts: 1024 },
+      { duration: 30, watts: 859 },
+      { duration: 60, watts: 698 },
+      { duration: 120, watts: 509 },
+      { duration: 180, watts: 445 },
+      { duration: 240, watts: 391 },
+      { duration: 300, watts: 366 },
+      { duration: 480, watts: 357 },
+      { duration: 600, watts: 359 },
+      { duration: 1200, watts: 306 },
+      { duration: 1800, watts: 295 },
+      { duration: 2700, watts: 292 },
+      { duration: 3600, watts: 285 },
+      { duration: 5400, watts: 278 },
+      { duration: 7200, watts: 246 },
+      { duration: 10800, watts: 229 }
+    ];
+  } else {
+    // Aller tijden
+    return [
+      { duration: 1, watts: 1472 },
+      { duration: 5, watts: 1395 },
+      { duration: 10, watts: 1308 },
+      { duration: 20, watts: 1095 },
+      { duration: 30, watts: 895 },
+      { duration: 60, watts: 729 },
+      { duration: 120, watts: 584 },
+      { duration: 180, watts: 476 },
+      { duration: 240, watts: 444 },
+      { duration: 300, watts: 433 },
+      { duration: 480, watts: 390 },
+      { duration: 600, watts: 374 },
+      { duration: 1200, watts: 344 },
+      { duration: 1800, watts: 341 },
+      { duration: 2700, watts: 320 },
+      { duration: 3600, watts: 314 },
+      { duration: 5400, watts: 302 },
+      { duration: 7200, watts: 268 },
+      { duration: 10800, watts: 255 }
+    ];
+  }
+};

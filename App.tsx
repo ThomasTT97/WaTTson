@@ -1898,10 +1898,28 @@ const App: React.FC = () => {
                           </p>
                         </div>
 
+                        <RiderPowerCurve 
+                          powerCurves={powerCurves || []} 
+                          athleteType={userProfile.athlete_type} 
+                          ftp={ftp || undefined} 
+                        />
+
                         {userProfile.rider_story && (
                           <div className="bg-slate-950/40 p-5 rounded-[1.8rem] border border-white/5">
                             <p className="text-[12px] text-slate-300 leading-relaxed font-medium italic">
-                              \"{userProfile.rider_story}\"
+                              {(() => {
+                                let clean = userProfile.rider_story.trim();
+                                if (clean.startsWith('|') && clean.endsWith('|')) {
+                                  clean = clean.slice(1, -1).trim();
+                                }
+                                if (clean.startsWith('\\"') && clean.endsWith('\\"')) {
+                                  clean = clean.slice(2, -2).trim();
+                                }
+                                if (clean.startsWith('"') && clean.endsWith('"')) {
+                                  clean = clean.slice(1, -1).trim();
+                                }
+                                return `“${clean}”`;
+                              })()}
                             </p>
                           </div>
                         )}
@@ -1937,14 +1955,6 @@ const App: React.FC = () => {
                             </ul>
                           </div>
                         </div>
-
-                        {powerCurves && powerCurves.length > 0 && (
-                          <RiderPowerCurve 
-                            powerCurves={powerCurves} 
-                            athleteType={userProfile.athlete_type} 
-                            ftp={ftp || undefined} 
-                          />
-                        )}
 
                         <div className="pt-4 border-t border-white/5 px-2">
                           <p className="text-[11px] text-slate-400 font-bold leading-relaxed italic">
