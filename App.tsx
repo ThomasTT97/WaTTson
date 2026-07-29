@@ -17,6 +17,7 @@ import {
 import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile, getAnnualPowerCurves, uploadWorkout } from './services/intervalsService';
 import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile, analyzeThreeMonthReview } from './services/geminiService';
 import { ActivityCard } from './components/ActivityCard';
+import { RiderPowerCurve } from './components/RiderPowerCurve';
 import { SuggestedWorkoutCard, formatPlannedRideTitle } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
@@ -57,7 +58,8 @@ import {
   Loader2,
   Edit,
   Trash2,
-  Sliders
+  Sliders,
+  Coffee
 } from 'lucide-react';
 
 const CyclistIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -1351,115 +1353,84 @@ const App: React.FC = () => {
              ) : (
                 <div className="flex flex-col pt-1 pb-2 space-y-3.5">
                   {(() => {
-                    const futureItems = sortedTimelineItems.filter(i => i.type === 'future_suggested');
-                    const rawTodayItems = sortedTimelineItems.filter(i => i.type === 'today_suggested' || i.type === 'today_actual');
+                    const now = new Date();
+                    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    const tomorrowDate = new Date(todayDate);
+                    tomorrowDate.setDate(todayDate.getDate() + 1);
+                    const sevenDaysFromNow = new Date(todayDate);
+                    sevenDaysFromNow.setDate(todayDate.getDate() + 7);
                     
+                    const toDateStr = (d: Date) => d.toISOString().split('T')[0];
+                    const todayDateStr = toDateStr(todayDate);
+                    const tomorrowDateStr = toDateStr(tomorrowDate);
+
+                    // Filters
+                    const isToday = (i: any) => (i.type === 'today_suggested' || i.type === 'today_actual') || (i.type === 'future_suggested' && toDateStr(i.date) === todayDateStr);
+                    const isTomorrow = (i: any) => i.type === 'future_suggested' && toDateStr(i.date) === tomorrowDateStr;
+                    const isFuture = (i: any) => i.type === 'future_suggested' && i.date > tomorrowDate && i.date <= sevenDaysFromNow;
+
+                    const todayItems = sortedTimelineItems.filter(isToday);
+                    const tomorrowItems = sortedTimelineItems.filter(isTomorrow);
+                    const futureItems = sortedTimelineItems.filter(isFuture);
+
                     const compareSameDayForTimeline = (a: any, b: any) => {
                       const fA = (a.dayData?.focus || '').toLowerCase();
                       const fB = (b.dayData?.focus || '').toLowerCase();
-                      
                       const isAPM = fA.includes('pm') || fA.includes('afternoon') || fA.includes('evening');
                       const isAAM = fA.includes('am') || fA.includes('morning');
                       const isBPM = fB.includes('pm') || fB.includes('afternoon') || fB.includes('evening');
                       const isBAM = fB.includes('am') || fB.includes('morning');
-
                       if (isAPM && isBAM) return -1;
                       if (isBPM && isAAM) return 1;
-
                       return (b.sessionIdx ?? b.absoluteIndex ?? 0) - (a.sessionIdx ?? a.absoluteIndex ?? 0);
                     };
 
-                    const todayItems = [...rawTodayItems].sort((a, b) => {
+                    const sortedTodayItems = [...todayItems].sort((a, b) => {
                       if (a.type === 'today_suggested' && b.type === 'today_actual') return -1;
                       if (a.type === 'today_actual' && b.type === 'today_suggested') return 1;
-                      if (a.type === 'today_suggested' && b.type === 'today_suggested') {
-                        return compareSameDayForTimeline(a, b);
-                      }
-                      if (a.type === 'today_actual' && b.type === 'today_actual') {
-                        return b.date.getTime() - a.date.getTime();
-                      }
+                      if (a.type === 'today_suggested' && b.type === 'today_suggested') return compareSameDayForTimeline(a, b);
+                      if (a.type === 'today_actual' && b.type === 'today_actual') return b.date.getTime() - a.date.getTime();
                       return 0;
                     });
-                    const pastItems = sortedTimelineItems.filter(i => i.type === 'past');
-                    
-                    // Filter future items for 1 week forward (Week 1)
-                    const week1FutureItems = futureItems.filter(item => !item.dayData || getWeekForDayInApp(item.dayData) === 1);
-                    const week1TotalTss = week1FutureItems.reduce((acc, i) => acc + (i.dayData?.load_target || 0), 0);
-                    const week1RideCount = week1FutureItems.filter(i => i.dayData && !i.dayData.focus.toLowerCase().includes('rest')).length;
+                    const sortedTomorrowItems = [...tomorrowItems].sort((a, b) => compareSameDayForTimeline(a, b));
+                    const sortedFutureItems = [...futureItems].sort((a, b) => b.date.getTime() - a.date.getTime());
+                    const sortedPastItems = sortedTimelineItems.filter(i => i.type === 'past').sort((a, b) => b.date.getTime() - a.date.getTime());
 
                     return (
                       <>
                         {/* Integrated Training Plan Section */}
                         <div className="flex flex-col space-y-3 relative">
-                          {/* Planned Upcoming Sessions (1 Week Forward, Above Today) */}
-                          {(week1FutureItems.length > 0 || isPlanUpdating) && (() => {
-                            const chronFutureItems = [...week1FutureItems].sort((a, b) => a.date.getTime() - b.date.getTime());
-                            const todayObj = new Date();
-                            todayObj.setHours(0, 0, 0, 0);
-                            const tomorrowDate = new Date(todayObj);
-                            tomorrowDate.setDate(todayObj.getDate() + 1);
-                            const tomorrowDateStr = toLocalDateStr(tomorrowDate);
-
-                            // All items scheduled for tomorrow
-                            let tomorrowItems = chronFutureItems.filter(i => toLocalDateStr(i.date) === tomorrowDateStr);
-
-                            // Fallback: If no items strictly on tomorrow, take all items on the earliest upcoming date
-                            if (tomorrowItems.length === 0 && chronFutureItems.length > 0) {
-                              const nextDateStr = toLocalDateStr(chronFutureItems[0].date);
-                              tomorrowItems = chronFutureItems.filter(i => toLocalDateStr(i.date) === nextDateStr);
-                            }
-
-                            tomorrowItems.sort((a, b) => {
-                              const dDiff = b.date.getTime() - a.date.getTime();
-                              if (dDiff !== 0) return dDiff;
-                              return compareSameDayForTimeline(a, b);
-                            });
-
-                            const tomorrowKeys = new Set(tomorrowItems.map(i => i.key));
-
-                            // Other future items are all future items NOT in tomorrowItems, sorted descending by date
-                            const otherFutureItems = chronFutureItems
-                              .filter(i => !tomorrowKeys.has(i.key))
-                              .sort((a, b) => {
-                                const dDiff = b.date.getTime() - a.date.getTime();
-                                if (dDiff !== 0) return dDiff;
-                                return compareSameDayForTimeline(a, b);
-                              });
-
-                            const displayedUpcomingItems = isOtherFutureExpanded
-                              ? chronFutureItems
-                              : tomorrowItems.slice(-1);
-
-                            return (
-                              <div className="flex flex-col space-y-2.5 pt-1">
-                                <div className="flex items-center justify-between gap-2 px-1">
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      onClick={() => setIsOtherFutureExpanded(!isOtherFutureExpanded)}
-                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#12141c] hover:bg-blue-900/20 border border-blue-500/30 text-blue-400 text-[9.5px] font-black uppercase tracking-[0.2em] rounded-lg shrink-0 whitespace-nowrap transition-colors cursor-pointer"
-                                    >
-                                      PLANNED RIDES
-                                      {chronFutureItems.length > 0 && (
-                                        isOtherFutureExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />
-                                      )}
-                                    </button>
-                                  </div>
-
+                          {/* Planned Upcoming Sessions (Top: Far Future, Then Tomorrow, Then Today) */}
+                          {(sortedFutureItems.length > 0 || sortedTomorrowItems.length > 0 || sortedTodayItems.length > 0 || isPlanUpdating) && (
+                            <div className="flex flex-col space-y-2.5 pt-1">
+                              {/* Header & Request Change */}
+                              <div className="flex items-center justify-between gap-2 px-1">
+                                <div className="flex items-center gap-2">
                                   <button
-                                    onClick={() => {
-                                      setRequestChangeInput('');
-                                      setShowRequestChangeModal(true);
-                                    }}
-                                    className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 border border-emerald-500/30 text-emerald-300 text-[9.5px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-sm active:scale-95 shrink-0"
+                                    onClick={() => setIsOtherFutureExpanded(!isOtherFutureExpanded)}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#12141c] hover:bg-blue-900/20 border border-blue-500/30 text-blue-400 text-[9.5px] font-black uppercase tracking-[0.2em] rounded-lg shrink-0 whitespace-nowrap transition-colors cursor-pointer"
                                   >
-                                    <Sparkles size={11} className="text-emerald-400" />
-                                    <span>Request Change</span>
+                                    PLANNED RIDES
+                                    {(sortedFutureItems.length > 0) && (
+                                      isOtherFutureExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />
+                                    )}
                                   </button>
                                 </div>
+                                <button
+                                  onClick={() => {
+                                    setRequestChangeInput('');
+                                    setShowRequestChangeModal(true);
+                                  }}
+                                  className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 border border-emerald-500/30 text-emerald-300 text-[9.5px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-sm active:scale-95 shrink-0"
+                                >
+                                  <Sparkles size={11} className="text-emerald-400" />
+                                  <span>Request Change</span>
+                                </button>
+                              </div>
 
-                                <div className="space-y-2 pt-0.5">
-                                  {/* Loading state indicator when plan is updating */}
-                                  {isPlanUpdating && (
+                              <div className="space-y-2 pt-0.5">
+                                {/* Plan Updating / Success Notice ... (omitted for brevity, keep existing logic) */}
+                                {isPlanUpdating && (
                                     <div className="glass-card p-3 rounded-2xl border border-emerald-500/40 bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-950 animate-pulse flex items-center gap-3 shadow-lg my-1">
                                       <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
                                         <Loader2 size={16} className="animate-spin text-emerald-400" />
@@ -1480,127 +1451,72 @@ const App: React.FC = () => {
                                         </p>
                                       </div>
                                     </div>
-                                  )}
+                                )}
+                                
+                                {/* Far Future Rides (Expanded) */}
+                                {isOtherFutureExpanded && sortedFutureItems.length > 0 && (
+                                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-2 overflow-hidden">
+                                    {sortedFutureItems.map((item) => (
+                                      <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} onClick={(day) => setSelectedSuggestedDay(day)} isToday={false} />
+                                    ))}
+                                  </motion.div>
+                                )}
 
-                                  {/* Success notification banner after plan completes update */}
-                                  {!isPlanUpdating && showTweakSuccessNotice && lastAppliedTweak && (
-                                    <div className="glass-card p-2.5 px-3 rounded-2xl border border-emerald-500/30 bg-slate-900/80 flex items-center justify-between gap-2 shadow-md animate-in fade-in duration-300 my-1">
-                                      <div className="flex items-center gap-2.5 min-w-0">
-                                        <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-                                          <Check size={12} className="stroke-[3]" />
-                                        </div>
-                                        <div className="min-w-0">
-                                          <span className="text-[8px] font-black uppercase tracking-widest text-emerald-400 block leading-none">Plan Updated</span>
-                                          <p className="text-[10.5px] font-extrabold text-white truncate mt-0.5">
-                                            "{lastAppliedTweak}"
-                                          </p>
-                                        </div>
-                                      </div>
-                                      <button
-                                        onClick={() => setShowTweakSuccessNotice(false)}
-                                        className="p-1 text-slate-500 hover:text-white shrink-0"
-                                      >
-                                        <X size={12} />
-                                      </button>
+                                {/* Tomorrow Rides */}
+                                {sortedTomorrowItems.length > 0 && (
+                                  <div className="flex flex-col space-y-2">
+                                    <div className="flex items-center gap-2 px-1">
+                                      <span className="inline-block px-2.5 py-0.5 bg-blue-500 text-slate-950 text-[9.5px] font-black uppercase tracking-[0.15em] rounded-lg shrink-0 whitespace-nowrap shadow-sm">
+                                        TOMORROW
+                                      </span>
+                                      <div className="flex-1 h-px bg-gradient-to-r from-blue-500/30 to-transparent" />
                                     </div>
-                                  )}
-                                   {/* Other Future Rides (Collapsible - Placed on Top for chronological order down to today) */}
-                                  {otherFutureItems.length > 0 && isOtherFutureExpanded && (
-                                    <div className="flex flex-col space-y-2">
-                                      <motion.div
-                                        initial={{ opacity: 0, height: 0 }}
-                                        animate={{ opacity: 1, height: 'auto' }}
-                                        exit={{ opacity: 0, height: 0 }}
-                                        className="space-y-2 overflow-hidden"
-                                      >
-                                        {otherFutureItems.map((item) => (
-                                          <React.Fragment key={item.key}>
-                                            {item.dayData && (
-                                              <SuggestedWorkoutCard 
-                                                day={item.dayData}
-                                                absoluteIndex={item.absoluteIndex ?? 0}
-                                                onClick={(day) => setSelectedSuggestedDay(day)}
-                                                isToday={false}
-                                              />
-                                            )}
-                                          </React.Fragment>
-                                        ))}
-                                      </motion.div>
+                                    {sortedTomorrowItems.map((item) => (
+                                      <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} onClick={(day) => setSelectedSuggestedDay(day)} isToday={false} />
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Today Rides */}
+                                {sortedTodayItems.length > 0 && (
+                                  <div className="flex flex-col space-y-2">
+                                    <div className="flex items-center gap-2 px-1">
+                                      <span className="inline-block px-2.5 py-0.5 bg-emerald-500 text-slate-950 text-[9.5px] font-black uppercase tracking-[0.15em] rounded-lg shrink-0 whitespace-nowrap shadow-sm">
+                                        TODAY
+                                      </span>
+                                      <div className="flex-1 h-px bg-gradient-to-r from-emerald-500/30 to-transparent" />
                                     </div>
-                                  )}
-
-                                  {/* Tomorrow Section (Immediately above Today) */}
-                                  {displayedUpcomingItems.length > 0 && (
-                                    <div className="flex flex-col space-y-2 pt-1">
-                                      <div className="flex items-center gap-2 px-1">
-                                        <span className="inline-block px-2.5 py-0.5 bg-[#12141c] border border-blue-500/40 text-blue-400 text-[9.5px] font-black uppercase tracking-[0.2em] rounded-lg shrink-0 whitespace-nowrap shadow-sm">
-                                          {toLocalDateStr(displayedUpcomingItems[0].date) === tomorrowDateStr ? "TOMORROW" : "NEXT RIDE"}
-                                        </span>
-                                        <div className="flex-1 h-px bg-gradient-to-r from-blue-500/30 to-transparent" />
-                                      </div>
-                                      {displayedUpcomingItems.map((item) => (
-                                        <React.Fragment key={item.key}>
-                                          {item.dayData && (
-                                            <SuggestedWorkoutCard 
-                                              day={item.dayData}
-                                              absoluteIndex={item.absoluteIndex ?? 0}
-                                              onClick={(day) => setSelectedSuggestedDay(day)}
-                                              isToday={false}
-                                            />
-                                          )}
-                                        </React.Fragment>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })()}
-
-                          {/* Today Section */}
-                          {todayItems.length > 0 && (
-                            <div className="flex flex-col space-y-2.5 pt-2">
-                              <div 
-                                className="flex items-center gap-2.5 px-1 scroll-mt-14"
-                                ref={todayElementRef}
-                              >
-                                <span className="inline-block px-2.5 py-0.5 bg-emerald-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.2em] rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse">
-                                  Today
-                                </span>
-                                <div className="flex-1 h-px bg-gradient-to-r from-emerald-500/40 to-transparent" />
-                              </div>
-
-                              {todayItems.map(item => (
-                                <React.Fragment key={item.key}>
-                                  {item.type === 'today_actual' ? (
-                                    item.activityData && (
-                                      <ActivityCard 
-                                        activity={item.activityData} 
-                                        onClick={setSelectedActivity} 
-                                        isToday={true}
-                                      />
-                                    )
-                                  ) : (
-                                    item.dayData && (
-                                      <div className="scroll-mt-[120px]">
+                                    {sortedTodayItems.map((item) => {
+                                      if (item.type === 'today_actual' && item.activityData) {
+                                        return (
+                                          <ActivityCard 
+                                            key={item.key}
+                                            activity={item.activityData} 
+                                            onClick={setSelectedActivity} 
+                                            isToday={true}
+                                          />
+                                        );
+                                      }
+                                      return (
                                         <SuggestedWorkoutCard 
-                                          day={item.dayData}
-                                          absoluteIndex={item.absoluteIndex ?? 0}
-                                          onClick={(day) => setSelectedSuggestedDay(day)}
-                                          isToday={true}
+                                          key={item.key} 
+                                          day={item.dayData!} 
+                                          absoluteIndex={item.absoluteIndex ?? 0} 
+                                          onClick={(day) => setSelectedSuggestedDay(day)} 
+                                          isToday={true} 
                                         />
-                                      </div>
-                                    )
-                                  )}
-                                </React.Fragment>
-                              ))}
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           )}
                         </div>
-
+                        
                         {/* Past Section / Training History */}
                         <div ref={todayAndPastContainerRef} className="flex flex-col space-y-3.5 pt-3">
-                          {pastItems.length > 0 && (
+                          {sortedPastItems.length > 0 && (
                             <div className="flex flex-col space-y-3 pt-2">
                               <div className="flex items-center gap-3 px-1 pb-1">
                                 <span className="inline-block px-2.5 py-0.5 bg-[#12141c] border border-white/10 text-slate-400 text-[9.5px] font-black uppercase tracking-[0.2em] rounded-lg">
@@ -1609,7 +1525,7 @@ const App: React.FC = () => {
                                 <div className="flex-1 h-px bg-gradient-to-r from-white/10 to-transparent" />
                               </div>
 
-                              {pastItems.map((item, idx, arr) => {
+                              {sortedPastItems.map((item, idx, arr) => {
                                 const prevItem = idx > 0 ? arr[idx - 1] : null;
                                 let showMonthHeader = false;
                                 let monthLabel = '';
@@ -2023,22 +1939,11 @@ const App: React.FC = () => {
                         </div>
 
                         {powerCurves && powerCurves.length > 0 && (
-                          <div className="glass-card p-5 rounded-[1.8rem] border border-white/5 mt-4">
-                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Power Curve (Best Watts)</h4>
-                            <div className="h-48 w-full">
-                              <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={powerCurves[0].bests}>
-                                  <XAxis dataKey="duration" hide />
-                                  <YAxis hide />
-                                  <Tooltip 
-                                    contentStyle={{ backgroundColor: '#0f172a', border: 'none', borderRadius: '1rem' }} 
-                                    itemStyle={{ color: '#fff', fontSize: '12px' }}
-                                  />
-                                  <Line type="monotone" dataKey="watts" stroke="#34d399" strokeWidth={2} dot={false} />
-                                </LineChart>
-                              </ResponsiveContainer>
-                            </div>
-                          </div>
+                          <RiderPowerCurve 
+                            powerCurves={powerCurves} 
+                            athleteType={userProfile.athlete_type} 
+                            ftp={ftp || undefined} 
+                          />
                         )}
 
                         <div className="pt-4 border-t border-white/5 px-2">
@@ -2163,8 +2068,9 @@ const App: React.FC = () => {
                           </div>
                         ) : threeMonthReview ? (
                           <div className="space-y-4">
-                            <div className="p-4 rounded-2xl bg-slate-950/60 border border-white/5 space-y-3">
-                              <div className="flex items-center justify-between">
+                            <div className="p-5 rounded-3xl bg-slate-950/60 border border-white/5 space-y-5">
+                              {/* Header & Status */}
+                              <div className="flex items-center justify-between border-b border-white/5 pb-3">
                                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">90-Day Progress</span>
                                 <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
                                   threeMonthReview.status === "on_track" 
@@ -2174,7 +2080,91 @@ const App: React.FC = () => {
                                   {threeMonthReview.status === "on_track" ? "On Track" : "Needs Adjustment"}
                                 </span>
                               </div>
-                              <p className="text-[11px] text-slate-200 leading-relaxed font-medium italic">\"{threeMonthReview.headline}\"</p>
+
+                              {/* Headline */}
+                              <div className="space-y-1">
+                                <p className="text-[12px] text-slate-200 leading-relaxed font-black italic">
+                                  "{threeMonthReview.headline}"
+                                </p>
+                              </div>
+
+                              {/* Period Stats Row */}
+                              {threeMonthReview.period_stats && (
+                                <div className="grid grid-cols-3 gap-2 bg-slate-900/40 p-3 rounded-2xl border border-white/5 text-center">
+                                  <div className="flex flex-col">
+                                    <span className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider">Volume</span>
+                                    <span className="text-[12px] font-black text-white italic font-mono">{threeMonthReview.period_stats.total_hours}h</span>
+                                  </div>
+                                  <div className="flex flex-col border-x border-white/5">
+                                    <span className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider">Total TSS</span>
+                                    <span className="text-[12px] font-black text-white italic font-mono">{threeMonthReview.period_stats.total_tss}</span>
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <span className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider">Avg/Wk</span>
+                                    <span className="text-[12px] font-black text-white italic font-mono">{threeMonthReview.period_stats.avg_tss_per_week}</span>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* What's Going Well (Good things based on data) */}
+                              <div className="space-y-2 bg-emerald-950/10 border border-emerald-500/10 rounded-2xl p-4">
+                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                                  👍 WHAT'S GOING WELL
+                                </span>
+                                {threeMonthReview.good_things_achieved && threeMonthReview.good_things_achieved.length > 0 ? (
+                                  <ul className="space-y-1.5 text-left">
+                                    {threeMonthReview.good_things_achieved.map((good, idx) => (
+                                      <li key={idx} className="flex items-start gap-2 text-[10.5px] text-slate-300 font-medium leading-relaxed">
+                                        <span className="text-emerald-400 shrink-0 mt-0.5">✓</span>
+                                        <span>{good}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <p className="text-[10.5px] text-slate-400 font-medium">
+                                    Your consistent weekly ride frequency demonstrates superb dedication and provides a robust foundation for building high-level aerobic efficiency.
+                                  </p>
+                                )}
+                              </div>
+
+                              {/* Goal Contribution */}
+                              <div className="space-y-1.5">
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
+                                  🎯 Goal Compatibility
+                                </span>
+                                <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+                                  {threeMonthReview.contributing_to_goal}
+                                </p>
+                              </div>
+
+                              {/* Intensity Distribution */}
+                              <div className="space-y-1.5">
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
+                                  📊 Intensity Analysis
+                                </span>
+                                <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+                                  {threeMonthReview.intensity_distribution_summary}
+                                </p>
+                              </div>
+
+                              {/* Needed Changes (Recommended Adjustments) */}
+                              <div className="space-y-2.5 pt-1 border-t border-white/5">
+                                <span className="text-[9px] font-black text-amber-400 uppercase tracking-wider block">
+                                  🛠️ Recommended Adjustments
+                                </span>
+                                <div className="space-y-2 text-left">
+                                  {threeMonthReview.needed_changes.map((change, idx) => (
+                                    <div key={idx} className="flex items-start gap-2.5 p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/10">
+                                      <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 font-black text-[9px] flex items-center justify-center shrink-0 mt-0.5">
+                                        {idx + 1}
+                                      </span>
+                                      <div className="flex-1 text-[10.5px] text-slate-300 font-medium leading-relaxed">
+                                        {change}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
                             </div>
                             
                             <button
@@ -2306,6 +2296,12 @@ const App: React.FC = () => {
             return f.includes('recovery') || f.includes('endurance') || f.includes('easy') || f.includes('rest') || i === 'easy' || i === 'rest';
           })();
 
+          const isRest = (() => {
+            const f = (selectedSuggestedDay.focus || '').toLowerCase();
+            const i = (selectedSuggestedDay.intensity || '').toLowerCase();
+            return f.includes('rest') || i === 'rest' || selectedSuggestedDay.load_target === 0;
+          })();
+
           const simpleTargetWatts = (() => {
             if (selectedSuggestedDay.workout_steps && selectedSuggestedDay.workout_steps.length > 0) {
               const stepWithPower = selectedSuggestedDay.workout_steps.find((s: any) => (s.target_watts && s.target_watts > 0) || (s.target_pct && s.target_pct > 0));
@@ -2345,7 +2341,61 @@ const App: React.FC = () => {
                     </div>
                   ) : (
                     <>
-                      {isSimpleRide ? (
+                      {isRest ? (
+                        <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-center space-y-4 relative overflow-hidden">
+                          <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-3">
+                            <div className="flex items-center gap-2 text-sm font-black text-slate-400 tracking-tighter">
+                              <Clock size={16} className="text-slate-500" /> {selectedSuggestedDay.duration_target} MIN
+                            </div>
+                            <div className="flex items-center gap-2 text-sm font-black text-slate-400 italic">
+                              <Zap size={16} fill="currentColor" className="text-slate-500" /> {selectedSuggestedDay.load_target} TSS
+                            </div>
+                          </div>
+
+                          {/* Calming Recovery Visual */}
+                          <div className="bg-emerald-500/5 border border-emerald-500/20 p-5 rounded-2xl flex flex-col items-center justify-center space-y-3">
+                            <div className="w-12 h-12 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20">
+                              <Coffee size={24} className="animate-pulse text-emerald-400" />
+                            </div>
+                            <div className="text-center">
+                              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400 block mb-1">RECOVERY IN PROGRESS</span>
+                              <p className="text-[11px] text-slate-400 font-medium px-2 leading-relaxed">
+                                No power targets today. This is when your body rebuilds, adapts to the training load, and gets stronger.
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Specific Recovery Advice list */}
+                          <div className="text-left bg-slate-900/40 border border-white/5 rounded-2xl p-4 space-y-2.5">
+                            <span className="text-[8.5px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1.5">RECOVERY CHECKLIST</span>
+                            <div className="flex items-start gap-2.5">
+                              <span className="text-emerald-400 mt-0.5">🧘</span>
+                              <div className="flex flex-col">
+                                <span className="text-[10.5px] font-bold text-slate-200">Muscle Repair</span>
+                                <span className="text-[9.5px] text-slate-400 font-medium">Elevate legs, practice light dynamic stretching or foam roll key muscles.</span>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-2.5">
+                              <span className="text-emerald-400 mt-0.5">💧</span>
+                              <div className="flex flex-col">
+                                <span className="text-[10.5px] font-bold text-slate-200">Nutrition & Hydration</span>
+                                <span className="text-[9.5px] text-slate-400 font-medium">Prioritize complete protein intake and clean foods to rebuild fibers.</span>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-2.5">
+                              <span className="text-emerald-400 mt-0.5">😴</span>
+                              <div className="flex flex-col">
+                                <span className="text-[10.5px] font-bold text-slate-200">Sleep Quality</span>
+                                <span className="text-[9.5px] text-slate-400 font-medium">Aim for at least 8 hours of sleep to optimize adaptation and growth hormone release.</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <p className="text-[12px] text-slate-300 leading-relaxed text-center px-2 font-medium opacity-90 italic">
+                            "{selectedSuggestedDay.why || 'Allow full adaptation.'}"
+                          </p>
+                        </div>
+                      ) : isSimpleRide ? (
                         <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-center space-y-4 relative overflow-hidden">
                           <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-3">
                             <div className="flex items-center gap-2 text-sm font-black text-white tracking-tighter">

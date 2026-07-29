@@ -87,7 +87,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
         </button>
         <div>
           <h2 className="text-lg font-black text-white italic tracking-tight leading-none uppercase truncate max-w-[250px]">
-            {getRideType(activity)}
+            {getRideType(activity, intervals)}
           </h2>
           <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-1">
             {dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} • {activity.type} • {activity.name}

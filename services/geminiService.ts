@@ -22,6 +22,7 @@ import {
   getUserProfilePrompt,
   getThreeMonthReviewPrompt
 } from "./promptTemplates";
+import { detectIntervalsFromLaps } from "./intervalsService";
 
 
 /**
@@ -158,6 +159,17 @@ export const getRideFeedback = async (
     : "No planned workout for this ride.";
 
   let lapsCtx = "No specific laps/intervals data recorded on the device. Please analyze the overall session metrics (duration, power, NP, intensity, etc.) to deduce if there were any structured efforts, or if it was a steady/variable ride. Make sure to discuss these inferred efforts (or lack thereof).";
+  const detectedRideType = detectIntervalsFromLaps(activity, intervals) || undefined;
+  
+  if (detectedRideType) {
+    try {
+      const customTypes = localStorage.getItem('wattson_custom_ride_types') || '{}';
+      const parsed = JSON.parse(customTypes);
+      parsed[activity.id] = detectedRideType;
+      localStorage.setItem('wattson_custom_ride_types', JSON.stringify(parsed));
+    } catch (e) {}
+  }
+
   if (intervals && intervals.length > 0) {
     const formatLapTime = (secs: number) => {
       const m = Math.floor(secs / 60);
@@ -171,7 +183,7 @@ export const getRideFeedback = async (
       .join('; ');
     
     if (formattedLaps.length > 0) {
-      lapsCtx = `Actual Executed Laps: ${formattedLaps}`;
+      lapsCtx = `Actual Executed Laps: ${formattedLaps}${detectedRideType ? `\n\nDetected Interval Set: ${detectedRideType}` : ''}`;
     }
   }
 
@@ -189,7 +201,8 @@ export const getRideFeedback = async (
     lapsCtx,
     ftp,
     hasPowerOnMostRides: true,
-    hrStatsText: ""
+    hrStatsText: "",
+    detectedRideType
   });
 
   const response = await callGemini({
@@ -882,10 +895,11 @@ export const analyzeThreeMonthReview = async (
           status: { type: Type.STRING, enum: ['on_track', 'needs_adjustment', 'off_target'] },
           headline: { type: Type.STRING },
           contributing_to_goal: { type: Type.STRING },
+          good_things_achieved: { type: Type.ARRAY, items: { type: Type.STRING } },
           needed_changes: { type: Type.ARRAY, items: { type: Type.STRING } },
           intensity_distribution_summary: { type: Type.STRING }
         },
-        required: ['status', 'headline', 'contributing_to_goal', 'needed_changes', 'intensity_distribution_summary']
+        required: ['status', 'headline', 'contributing_to_goal', 'good_things_achieved', 'needed_changes', 'intensity_distribution_summary']
       }
     }
   });

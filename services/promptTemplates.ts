@@ -20,6 +20,7 @@ interface RideFeedbackParams {
   ftp?: number;
   hasPowerOnMostRides?: boolean;
   hrStatsText?: string;
+  detectedRideType?: string;
 }
 
 interface DailySuggestionParams {
@@ -80,6 +81,11 @@ export const getRideFeedbackPrompt = (p: RideFeedbackParams): string => {
     : `${ftpText}
        For the 'label', use a descriptive format: for stable rides e.g. "5 min 180w", for intervals e.g. "3 times: 5 min 300w + 2 min 180w". Always use "min" for minutes consistently!`;
 
+  const detectedIntervalsCtx = p.detectedRideType
+    ? `CRITICAL - STRUCTURED INTERVALS DETECTED: This ride was programmatically analyzed and recognized as a structured interval session of type: "${p.detectedRideType}".
+       You MUST explicitly discuss these specific intervals in your Coach Insight 'summary' field (e.g. mention the exact repetition count, the duration of the intervals, and the power/watts achieved, like "5x 2m @ 360W"). Point out how well they executed these target intervals (pacing consistency, heart rate behavior, power maintenance), and discuss the specific physiological benefits of training in this zone (e.g. expanding VO2 Max, boosting lactic tolerance, raising threshold power). NEVER say there were no structured intervals!`
+    : ``;
+
   return `You are waTTson, an elite cycling coach. 
     Analyze this ride: "${p.activityName}". 
     TSS: ${p.tss}. 
@@ -92,9 +98,10 @@ export const getRideFeedbackPrompt = (p: RideFeedbackParams): string => {
     
     ${p.plannedWorkoutCtx}
     ${p.lapsCtx}
+    ${detectedIntervalsCtx}
     
     Return JSON with:
-    summary: A 2-4 sentence coaching summary. Start with a punchy hook. If laps/intervals data is provided, explicitly comment on the execution of the intervals (e.g., consistency, power target adherence). If no laps are provided, deduce the efforts from the overall metrics and discuss them.
+    summary: A 2-4 sentence coaching summary. Start with a punchy hook. If laps/intervals data or a Recognized Workout Interval Pattern is provided, you MUST explicitly comment on the execution of those intervals (e.g., consistency, power target adherence, physiological benefits). If no laps are provided, deduce the efforts from the overall metrics and discuss them.
     goal_contribution: A clear explanation of how this session contributes to ${p.userGoal}.
     one_thing_to_improve: Exactly 1 action-oriented, helpful conclusion of something they could do better on their next training session based on this ride's data (e.g. "Focus on keeping your cadence above 85 rpm on climbs", "Make sure to fuel with 60g carbs per hour for rides over 90 min", "Control your heart rate during recovery intervals to maximize adaptation"). If the user missed targets during the intervals, point it out.
     workout_steps: If a planned workout exists, provide the structured steps intended for this workout. 
@@ -270,7 +277,7 @@ export interface ThreeMonthReviewParams {
 }
 
 export const getThreeMonthReviewPrompt = (p: ThreeMonthReviewParams): string => {
-  return `You are waTTson, an elite cycling sports scientist and AI coach. Analyze the athlete's training data over the past 3 months (90 days).
+  return `You are waTTson, an elite cycling sports scientist and AI coach. Analyze the athlete's training data over the past 3 months (90 days) with thoroughness and specific, actionable insights.
 
 ATHLETE GOAL: "${p.userGoal}"
 FTP BENCHMARK: ${p.ftp || 250}W
@@ -286,20 +293,25 @@ PREFERRED METHODOLOGY: ${p.methodology || 'polarized'}
 ${p.recentActivitiesSummary}
 
 TASK:
-1. Evaluate whether their training over the last 3 months is actively contributing to reaching their goal: "${p.userGoal}".
-2. Evaluate if their intensity distribution matches their chosen methodology (${p.methodology || 'polarized'}).
-3. Detail 3 concrete changes in approach they need to make going forward.
+1. Identify and praise the specific positive achievements based on their data. Mention stats like volume, consistency, or total TSS where applicable.
+2. Evaluate whether their training over the last 3 months is contributing to their goal: "${p.userGoal}". This must be a detailed, long evaluation (4-5 sentences) with specific data points.
+3. Evaluate if their intensity distribution matches their chosen methodology (${p.methodology || 'polarized'}). Look for "gray zone" riding (riding too hard on easy days, too easy on hard days) vs true polarized/pyramidal splits.
+4. Detail 3 concrete, highly specific, long changes in approach they need to make going forward. Each change should be an actionable instruction (e.g. "Do 2 weekly zone  zone 2 rides of at least 90 mins to build aerobic base instead of sweet spot", etc.) rather than a generic summary.
 
 Return JSON matching this schema:
 {
   "status": "on_track" | "needs_adjustment" | "off_target",
   "headline": "1-line punchy conclusion",
-  "contributing_to_goal": "2-3 concise sentences evaluating goal contribution",
-  "needed_changes": [
-    "Change 1",
-    "Change 2",
-    "Change 3"
+  "contributing_to_goal": "A detailed, comprehensive evaluation (4-5 sentences) of how their training contributes to their goal, highlighting what is going well and what needs alignment.",
+  "good_things_achieved": [
+    "Specific positive thing 1 with data/numbers (e.g. 'Strong aerobic consistency with 32 hours accumulated')",
+    "Specific positive thing 2 with data/numbers (e.g. 'Solid weekly TSS rhythm averaging 250 TSS')"
   ],
-  "intensity_distribution_summary": "1-2 sentences on intensity distribution analysis"
+  "needed_changes": [
+    "Specific, highly actionable advice 1 with instructions on duration/power zones",
+    "Specific, highly actionable advice 2 with instructions on duration/power zones",
+    "Specific, highly actionable advice 3 with instructions on duration/power zones"
+  ],
+  "intensity_distribution_summary": "A detailed 2-3 sentence analysis of their intensity distribution, specifically checking for sweet-spot/gray-zone creeping."
 }`;
 };

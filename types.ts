@@ -6,6 +6,7 @@ export interface ThreeMonthReview {
   status: 'on_track' | 'needs_adjustment' | 'off_target';
   headline: string;
   contributing_to_goal: string;
+  good_things_achieved?: string[];
   needed_changes: string[];
   intensity_distribution_summary: string;
   period_stats?: {

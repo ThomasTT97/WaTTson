@@ -238,11 +238,184 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
     if (!response.ok) return [];
     const data = await response.json();
     const intervals = data.icu_intervals || data.intervals;
-    return Array.isArray(intervals) ? intervals : [];
+    if (!Array.isArray(intervals)) return [];
+    
+    return intervals.map((l: any) => {
+      // Map raw intervals.icu properties to ActivityInterval
+      const avgWatts = l.avg_watts !== undefined ? l.avg_watts : (l.average_watts !== undefined ? l.average_watts : 0);
+      const avgHr = l.avg_heartrate !== undefined ? l.avg_heartrate : (l.average_heartrate !== undefined ? l.average_heartrate : 0);
+      const movingTime = l.moving_time !== undefined ? l.moving_time : (l.elapsed_time !== undefined ? l.elapsed_time : (l.duration !== undefined ? l.duration : 0));
+      
+      // Map interval type to WORK | RECOVERY | WARMUP | COOLDOWN
+      let type: 'WORK' | 'RECOVERY' | 'WARMUP' | 'COOLDOWN' = 'WORK';
+      const rawType = (l.type || '').toUpperCase();
+      if (rawType === 'RECOVERY') type = 'RECOVERY';
+      else if (rawType === 'WARMUP') type = 'WARMUP';
+      else if (rawType === 'COOLDOWN') type = 'COOLDOWN';
+      else if (rawType === 'WORK' || rawType === 'ACTIVE') type = 'WORK';
+      else {
+        // Fallback or guess based on label or power
+        const label = (l.label || '').toUpperCase();
+        if (label.includes('WARM') || label.includes('WU')) type = 'WARMUP';
+        else if (label.includes('REC') || label.includes('REST')) type = 'RECOVERY';
+        else if (label.includes('WORK') || label.includes('INT') || label.includes('EFFORT')) type = 'WORK';
+      }
+
+      return {
+        id: String(l.id || Math.random().toString(36).substr(2, 9)),
+        start_index: l.start_index || 0,
+        end_index: l.end_index || 0,
+        average_watts: avgWatts,
+        average_heartrate: avgHr,
+        moving_time: movingTime,
+        type,
+        label: l.label
+      };
+    });
   } catch (error) { 
     console.error("fetchActivityIntervals error:", error);
     return []; 
   }
+};
+
+/**
+ * Analyzes intervals/laps to detect structured workout sets and names the ride accordingly.
+ */
+export const detectIntervalsFromLaps = (activity: Activity, intervals: ActivityInterval[]): string | null => {
+  if (!intervals || intervals.length === 0) return null;
+
+  let ftp = 250;
+  try {
+    const savedFtp = localStorage.getItem('wattson_ftp');
+    if (savedFtp) {
+      ftp = parseInt(savedFtp, 10);
+    }
+  } catch {}
+
+  const totalTime = activity.moving_time || 3600;
+
+  // Safe property resolution helpers
+  const getLapPower = (l: any) => l.average_watts ?? l.avg_watts ?? l.average_power ?? l.watts ?? 0;
+  const getLapTime = (l: any) => l.moving_time ?? l.duration ?? l.elapsed_time ?? 0;
+
+  // Filter for WORK laps/intervals
+  const workLaps = intervals.filter(l => {
+    const pwr = getLapPower(l);
+    const dur = getLapTime(l);
+
+    // Skip if duration is too short (< 10s) or is basically the entire ride (> 85% of total time)
+    if (dur < 10 || dur > totalTime * 0.85) return false;
+
+    const rawType = (l.type || '').toUpperCase();
+    const isWorkType = rawType === 'WORK' || rawType === 'ACTIVE';
+    const isWorkLabel = l.label && (
+      l.label.toLowerCase().includes('work') || 
+      l.label.toLowerCase().includes('interval') ||
+      l.label.toLowerCase().includes('effort')
+    );
+    
+    // Check if the average power of the lap is significantly high
+    const avgActivityPower = activity.average_watts || activity.icu_average_watts || 150;
+    const isHighPower = pwr > avgActivityPower * 1.12 || pwr >= ftp * 0.82;
+    
+    return isWorkType || isWorkLabel || isHighPower;
+  });
+
+  if (workLaps.length === 0) return null;
+
+  // Group similar intervals
+  const groups: { duration: number; watts: number; count: number; intervals: any[] }[] = [];
+  for (const lap of workLaps) {
+    const lPwr = getLapPower(lap);
+    const lDur = getLapTime(lap);
+
+    let matchedGroup = groups.find(g => {
+      const durDiff = Math.abs(g.duration - lDur);
+      const wattsDiff = Math.abs(g.watts - lPwr);
+      
+      // durMatch: duration within 35 seconds or 25%
+      const durMatch = durDiff <= 35 || durDiff / Math.max(g.duration, lDur) <= 0.25;
+      // wattsMatch: power within 30W or 15%
+      const wattsMatch = wattsDiff <= 30 || wattsDiff / Math.max(g.watts, lPwr || 1) <= 0.15;
+      
+      return durMatch && wattsMatch;
+    });
+
+    if (matchedGroup) {
+      matchedGroup.count += 1;
+      matchedGroup.intervals.push(lap);
+      matchedGroup.duration = Math.round(matchedGroup.intervals.reduce((sum, l) => sum + getLapTime(l), 0) / matchedGroup.count);
+      matchedGroup.watts = Math.round(matchedGroup.intervals.reduce((sum, l) => sum + getLapPower(l), 0) / matchedGroup.count);
+    } else {
+      groups.push({
+        duration: lDur,
+        watts: lPwr,
+        count: 1,
+        intervals: [lap]
+      });
+    }
+  }
+
+  // Find the primary/most significant interval group
+  const sortedGroups = groups
+    .filter(g => {
+      const pctFtp = g.watts / ftp;
+      // Keep groups that are at least Tempo intensity (>= 72% FTP) or high power
+      return pctFtp >= 0.72 || g.watts > ftp * 0.72;
+    })
+    .sort((a, b) => {
+      // Prioritize by power zone level, then count, then duration
+      const zoneWeight = (g: typeof a) => {
+        const pct = g.watts / ftp;
+        if (pct >= 1.50) return 7; // Sprint
+        if (pct >= 1.20) return 6; // Anaerobic
+        if (pct >= 1.05) return 5; // VO2 Max
+        if (pct >= 0.90) return 4; // Threshold
+        if (pct >= 0.84) return 3; // Sweet Spot
+        if (pct >= 0.75) return 2; // Tempo
+        return 1;
+      };
+      
+      const weightA = zoneWeight(a);
+      const weightB = zoneWeight(b);
+      
+      if (weightA !== weightB) {
+        return weightB - weightA;
+      }
+      return b.count - a.count;
+    });
+
+  const mainGroup = sortedGroups.find(g => {
+    // For short intervals (< 5 min), require at least 2 reps to be a "set"
+    if (g.duration < 300) {
+      return g.count >= 2;
+    }
+    // For long intervals (>= 5 min), 1 rep is fine (e.g. 1x20 min threshold)
+    return g.count >= 1;
+  });
+
+  if (!mainGroup) return null;
+
+  const pctFtp = mainGroup.watts / ftp;
+  let zoneName = 'Endurance';
+  if (pctFtp >= 1.50 && mainGroup.duration < 30) zoneName = 'Sprint';
+  else if (pctFtp >= 1.20 && mainGroup.duration < 90) zoneName = 'Anaerobic';
+  else if (pctFtp >= 1.05) zoneName = 'VO2 Max';
+  else if (pctFtp >= 0.90) zoneName = 'Threshold';
+  else if (pctFtp >= 0.84) zoneName = 'Sweet Spot';
+  else if (pctFtp >= 0.75) zoneName = 'Tempo';
+
+  const formatDurationShort = (secs: number) => {
+    if (secs < 60) return `${secs}s`;
+    const mins = Math.floor(secs / 60);
+    const remainingSecs = Math.round(secs % 60);
+    return remainingSecs > 0 ? `${mins}m ${remainingSecs}s` : `${mins}m`;
+  };
+
+  const durStr = formatDurationShort(mainGroup.duration);
+  const wattsStr = mainGroup.watts > 0 ? ` @ ${Math.round(mainGroup.watts)}W` : '';
+  
+  return `${zoneName} Ride (${mainGroup.count}x ${durStr}${wattsStr})`;
 };
 
 export const fetchPlannedWorkout = async (dateStr: string, creds: IntervalsCredentials): Promise<PlannedWorkout | null> => {

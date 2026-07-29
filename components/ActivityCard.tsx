@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
-import { Activity } from '../types';
+import { Activity, ActivityInterval } from '../types';
 import { Zap, Clock, ChevronRight, Activity as ActivityIcon, Heart, TrendingUp } from 'lucide-react';
+import { detectIntervalsFromLaps } from '../services/intervalsService';
 
 interface ActivityCardProps {
   activity: Activity;
@@ -8,7 +9,32 @@ interface ActivityCardProps {
   isToday?: boolean;
 }
 
-export const getRideType = (activity: Activity): string => {
+export const getRideType = (activity: Activity, intervals?: ActivityInterval[]): string => {
+  // Check the custom ride types cache first
+  try {
+    const customTypes = localStorage.getItem('wattson_custom_ride_types');
+    if (customTypes) {
+      const parsed = JSON.parse(customTypes);
+      if (parsed[activity.id]) {
+        return parsed[activity.id];
+      }
+    }
+  } catch (e) {}
+
+  // If intervals are provided, try to detect programmatically
+  if (intervals && intervals.length > 0) {
+    const detected = detectIntervalsFromLaps(activity, intervals);
+    if (detected) {
+      try {
+        const customTypes = localStorage.getItem('wattson_custom_ride_types') || '{}';
+        const parsed = JSON.parse(customTypes);
+        parsed[activity.id] = detected;
+        localStorage.setItem('wattson_custom_ride_types', JSON.stringify(parsed));
+      } catch (e) {}
+      return detected;
+    }
+  }
+
   let baseType = 'Endurance';
 
   // 1. Check if the activity name itself contains clear indications of the target types
@@ -122,7 +148,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
     ? `${Math.floor(1000 / (activity as any).average_speed / 60)}:${Math.floor((1000 / (activity as any).average_speed) % 60).toString().padStart(2, '0')}/km`
     : null;
 
-  const displayName = getRideType(activity);
+  const displayName = getRideType(activity, (activity as any).icu_intervals || (activity as any).intervals);
     
   const displayDistance = activity.distance || (activity as any).icu_distance || 0;
   load = Math.round(activity.icu_training_load ?? activity.icu_tss ?? activity.training_load ?? (activity as any).load ?? (activity as any).tss ?? 0);
