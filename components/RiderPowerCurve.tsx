@@ -281,7 +281,7 @@ export const RiderPowerCurve: React.FC<RiderPowerCurveProps> = ({ powerCurves, a
       {/* The Chart */}
       <div className="h-56 w-full relative">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 10, right: 5, left: -25, bottom: 5 }}>
+          <LineChart data={chartData} margin={{ top: 10, right: 5, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.02)" vertical={false} />
             <XAxis
               dataKey="label"
@@ -366,10 +366,22 @@ export const RiderPowerCurve: React.FC<RiderPowerCurveProps> = ({ powerCurves, a
       </div>
 
       {/* Key Test Durations Benchmarks Matrix */}
-      <div className="space-y-2">
-        <h5 className="text-[9px] font-black text-slate-500 uppercase tracking-widest px-1">
-          Power Profile Matrix
-        </h5>
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+          <h5 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+            Power Profile Matrix
+          </h5>
+          <div className="flex items-center gap-3 text-[8.5px] font-black uppercase tracking-wider">
+            <div className="flex items-center gap-1 text-[#10b981]">
+              <span className="text-[10px] leading-none">▲</span>
+              <span>Above Peak Fitness</span>
+            </div>
+            <div className="flex items-center gap-1 text-rose-500">
+              <span className="text-[10px] leading-none">▼</span>
+              <span>Under Peak Fitness</span>
+            </div>
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-2">
           {keyIntervals.map(ki => {
             const isHighlighted = isPhenotypeValue(ki.sec);

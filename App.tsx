@@ -21,6 +21,8 @@ import { RiderPowerCurve } from './components/RiderPowerCurve';
 import { SuggestedWorkoutCard, formatPlannedRideTitle } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
+import { WorkoutLibraryModal } from './components/WorkoutLibraryModal';
+import { LibraryWorkout } from './services/workoutLibrary';
 import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts } from './components/StepLabel';
 import { CheckCircle } from 'lucide-react';
 import { 
@@ -116,6 +118,39 @@ const APP_CHANGELOG = [
   "Improvement: Maximized screen real-estate by removing dead space.",
   "Update: Reorganized Training Plan and Recovery Advice on the home screen for better visibility."
 ];
+
+const getCoachingInsight = (day: any, profile: any, goal: string) => {
+  const focus = (day.focus || '').toLowerCase();
+  const intensity = (day.intensity || '').toLowerCase();
+  const athleteType = profile?.athlete_type || 'Kermesse Specialist & Punchy All-Rounder';
+  const cleanGoal = goal || 'Improve cycling performance';
+  
+  if (focus.includes('recovery') || focus.includes('easy') || intensity.includes('easy')) {
+    return `As a ${athleteType}, your muscular system generates massive anaerobic torque during peak efforts. This Active Recovery Spin is crucial to stimulate blood flow and clear metabolic waste from your fast-twitch fibers, facilitating muscle protein synthesis without adding systemic stress, directly supporting your goal: ${cleanGoal}.`;
+  }
+  
+  if (focus.includes('endurance') || focus.includes('base') || focus.includes('aerobic')) {
+    return `Building a wide aerobic base is the absolute bedrock for holding high speeds and surviving late-race selections. For a ${athleteType}, this Endurance ride optimizes mitochondrial density and fat oxidation, saving your high-powered anaerobic matches for when you need them to execute your goal: ${cleanGoal}.`;
+  }
+  
+  if (focus.includes('vo2') || focus.includes('interval') || focus.includes('aerobic capacity')) {
+    return `This high-intensity session targets your natural strengths as a ${athleteType}. Elevating your maximal aerobic capacity allows you to recover quicker from repeated high-power bursts, making this workout highly specific to achieving your goal: ${cleanGoal}.`;
+  }
+
+  if (focus.includes('anaerobic') || focus.includes('sprint') || focus.includes('capacity')) {
+    return `This explosive session targets your peak power and glycolytic capacity. As a ${athleteType}, your punchy nature is a primary race-winning weapon. Sharpening this system is crucial for achieving your goal: ${cleanGoal}.`;
+  }
+  
+  if (focus.includes('sweet') || focus.includes('threshold') || focus.includes('sst') || focus.includes('tempo')) {
+    return `This sustained session raising your functional threshold power directly expands your steady-state speed. For a ${athleteType}, this helps you sustain longer speeds during breakaways or bridging attempts to deliver on your goal: ${cleanGoal}.`;
+  }
+
+  if (focus.includes('rest')) {
+    return `Complete rest is where the actual physiological adaptation occurs. For a high-torque ${athleteType}, allowing full muscle glycogen replenishment and nervous system recovery is the secret key to successfully meeting your goal: ${cleanGoal}.`;
+  }
+
+  return `This session is calculated to balance your current cumulative training stress, maintaining fitness progression toward your target: ${cleanGoal}.`;
+};
 
 const App: React.FC = () => {
   const [creds, setCreds] = useState<IntervalsCredentials | null>(() => {
@@ -230,6 +265,7 @@ const App: React.FC = () => {
     }
   };
   const [showWorkoutDetail, setShowWorkoutDetail] = useState(false);
+  const [showWorkoutLibraryModal, setShowWorkoutLibraryModal] = useState(false);
   const [syncingWorkout, setSyncingWorkout] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState(false);
   const [reasoningPopup, setReasoningPopup] = useState<{title: string, content: string} | null>(null);
@@ -610,9 +646,25 @@ const App: React.FC = () => {
 
           const range = weekRanges[weekIndex - 1];
           
-          // Reconstruct the days array: [days before week] + [new week days] + [days after week]
-          const daysBefore = prev.days.slice(0, range.start);
-          const daysAfter = prev.days.slice(range.start + (weekRanges[weekIndex - 1].end - weekRanges[weekIndex - 1].start));
+          // Compute precise session-to-day offsets using chronological assignment to avoid slicing issues due to double sessions/commutes
+          const prevDayOffsets: number[] = [];
+          let currentOffset = 0;
+          let prevDayStr = '';
+          prev.days.forEach((day, i) => {
+            if (i > 0) {
+              const curDayNormalized = (day.day || '').trim().toLowerCase();
+              const prevDayNormalized = prevDayStr.trim().toLowerCase();
+              if (curDayNormalized !== prevDayNormalized) {
+                currentOffset += 1;
+              }
+            }
+            prevDayOffsets.push(currentOffset);
+            prevDayStr = day.day || '';
+          });
+
+          // Partition the previous days array by whether they fall before, within, or after the target week range
+          const daysBefore = prev.days.filter((_, i) => prevDayOffsets[i] < range.start);
+          const daysAfter = prev.days.filter((_, i) => prevDayOffsets[i] >= range.end);
           
           const newDays = [...daysBefore, ...data.days, ...daysAfter];
           
@@ -680,6 +732,44 @@ const App: React.FC = () => {
     ];
     keys.forEach(k => localStorage.removeItem(k));
     window.location.reload();
+  };
+
+  const handleApplyLibraryWorkout = (workout: LibraryWorkout) => {
+    const todayStr = toLocalDateStr(new Date());
+    const newSuggestion: DailySuggestion = {
+      date: todayStr,
+      readiness_score: stats.readiness || 8,
+      readiness_analysis: "Custom workout applied from the Workout Library.",
+      reasoning: `You hand-selected the curated "${workout.title}" workout from your Workout Library.`,
+      primary: {
+        title: workout.title,
+        description: workout.description,
+        intensity: workout.intensity === 'Rest' ? 'Rest' : (workout.intensity === 'Easy' ? 'Low' : workout.intensity === 'Medium' ? 'Moderate' : 'High'),
+        duration_minutes: workout.duration_minutes,
+        type: workout.category.toLowerCase().includes('interval') || workout.workout_steps.length > 3 ? 'intervals' : 'endurance',
+        tss: workout.tss,
+        workout_steps: workout.workout_steps.map(step => ({
+          duration: step.duration,
+          target_watts: Math.round(step.target_pct * (ftp || 250)),
+          label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+        }))
+      },
+      alternative: {
+        title: "Active Recovery Spin",
+        description: "An easy, steady recovery spin to facilitate blood flow and recovery.",
+        intensity: "Low",
+        duration_minutes: 30,
+        type: "endurance",
+        tss: 15,
+        workout_steps: [
+          { duration: 5, target_watts: Math.round(0.45 * (ftp || 250)), label: "5m Spin up warmup" },
+          { duration: 20, target_watts: Math.round(0.52 * (ftp || 250)), label: "20m Steady recovery spin" },
+          { duration: 5, target_watts: Math.round(0.40 * (ftp || 250)), label: "5m Easy cooldown" }
+        ]
+      }
+    };
+    setSuggestion(newSuggestion);
+    safeSetItem('wattson_daily_cache', JSON.stringify(newSuggestion));
   };
 
   const stats = useMemo(() => {
@@ -871,15 +961,25 @@ const App: React.FC = () => {
 
     // 1. Process suggested workouts from weekly briefing
     if (weeklyBriefing && weeklyBriefing.days) {
-      const uniqueDayLabels: string[] = [];
-      weeklyBriefing.days.forEach(d => {
-        if (d.day && !uniqueDayLabels.includes(d.day)) {
-          uniqueDayLabels.push(d.day);
+      // Calculate consecutive day offsets to prevent multi-week collision
+      const dayOffsets: number[] = [];
+      let currentOffset = 0;
+      let prevDayStr = '';
+      
+      weeklyBriefing.days.forEach((day, idx) => {
+        if (idx > 0) {
+          const curDayNormalized = (day.day || '').trim().toLowerCase();
+          const prevDayNormalized = prevDayStr.trim().toLowerCase();
+          if (curDayNormalized !== prevDayNormalized) {
+            currentOffset += 1;
+          }
         }
+        dayOffsets.push(currentOffset);
+        prevDayStr = day.day || '';
       });
 
       weeklyBriefing.days.forEach((day, idx) => {
-        const dayOffset = uniqueDayLabels.indexOf(day.day) !== -1 ? uniqueDayLabels.indexOf(day.day) : idx;
+        const dayOffset = dayOffsets[idx];
         const targetDate = new Date(today);
         targetDate.setDate(today.getDate() + dayOffset);
         
@@ -1147,13 +1247,22 @@ const App: React.FC = () => {
           )}
 
           {activeTab !== 'chat' && (
-            <button 
-              onClick={() => { setSuggestion(null); loadData(creds!); }}
-              disabled={isSyncing}
-              className="w-10 h-10 rounded-xl glass-card flex items-center justify-center text-emerald-400 border border-emerald-500/20 active:scale-95 transition-all shadow-[0_0_15px_rgba(34,211,238,0.15)]"
-            >
-              <RefreshCw size={16} className={isSyncing ? 'animate-spin text-emerald-400' : ''} />
-            </button>
+            <>
+              <button 
+                onClick={() => setShowWorkoutLibraryModal(true)}
+                className="w-10 h-10 rounded-xl glass-card flex items-center justify-center text-blue-400 border border-blue-500/20 active:scale-95 transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]"
+                title="Workout Library"
+              >
+                <BookOpen size={16} />
+              </button>
+              <button 
+                onClick={() => { setSuggestion(null); loadData(creds!); }}
+                disabled={isSyncing}
+                className="w-10 h-10 rounded-xl glass-card flex items-center justify-center text-emerald-400 border border-emerald-500/20 active:scale-95 transition-all shadow-[0_0_15px_rgba(34,211,238,0.15)]"
+              >
+                <RefreshCw size={16} className={isSyncing ? 'animate-spin text-emerald-400' : ''} />
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -1794,6 +1903,20 @@ const App: React.FC = () => {
                       </div>
                       <ChevronRight size={16} className="text-slate-600 group-hover:text-cyan-400 transition-colors" />
                     </button>
+
+                    <button 
+                      onClick={() => setShowWorkoutLibraryModal(true)}
+                      className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-blue-500/10 shadow-sm"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400"><BookOpen size={20} /></div>
+                        <div className="text-left">
+                          <p className="text-[11px] font-black text-white uppercase tracking-widest">Workout Library</p>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Curated Training Catalog</p>
+                        </div>
+                      </div>
+                      <ChevronRight size={16} className="text-slate-600 group-hover:text-blue-400 transition-colors" />
+                    </button>
                     
                     <div className="mt-8 pt-4 border-t border-white/5">
                       <button 
@@ -1888,79 +2011,100 @@ const App: React.FC = () => {
                         <p className="text-[9px] text-slate-500 font-medium mt-1">Analyzing performance trends</p>
                       </div>
                     ) : userProfile ? (
-                      <div className="space-y-5">
-                        <div className="glass-card p-6 rounded-[2rem] text-center border border-emerald-500/10">
-                          <h3 className="text-xl font-black text-emerald-400 italic uppercase tracking-tight leading-tight">
-                            {userProfile.athlete_type}
-                          </h3>
-                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
-                            Current performance profile
-                          </p>
+                      <div className="space-y-6">
+                        {/* Compact Cyclist Archetype Hero */}
+                        <div className="bg-gradient-to-r from-emerald-500/10 to-slate-950/40 p-4 rounded-2xl border border-emerald-500/15 flex items-center justify-between gap-4 relative overflow-hidden">
+                          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl -mr-6 -mt-6" />
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[8px] font-black text-emerald-500 uppercase tracking-[0.2em] block mb-0.5">CYCLIST ARCHETYPE</span>
+                            <h3 className="text-sm sm:text-base font-black text-white italic uppercase tracking-tight leading-tight">
+                              {userProfile.athlete_type}
+                            </h3>
+                          </div>
                         </div>
 
+                        {/* Power Curve Analysis */}
                         <RiderPowerCurve 
                           powerCurves={powerCurves || []} 
                           athleteType={userProfile.athlete_type} 
                           ftp={ftp || undefined} 
                         />
 
-                        {userProfile.rider_story && (
-                          <div className="bg-slate-950/40 p-5 rounded-[1.8rem] border border-white/5">
-                            <p className="text-[12px] text-slate-300 leading-relaxed font-medium italic">
-                              {(() => {
-                                let clean = userProfile.rider_story.trim();
-                                if (clean.startsWith('|') && clean.endsWith('|')) {
-                                  clean = clean.slice(1, -1).trim();
-                                }
-                                if (clean.startsWith('\\"') && clean.endsWith('\\"')) {
-                                  clean = clean.slice(2, -2).trim();
-                                }
-                                if (clean.startsWith('"') && clean.endsWith('"')) {
-                                  clean = clean.slice(1, -1).trim();
-                                }
-                                return `“${clean}”`;
-                              })()}
+                        {/* Comments on Rider Type & Training Strategy */}
+                        <div className="glass-card p-5 rounded-[1.8rem] border border-white/5 space-y-4">
+                          <div>
+                            <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                              <Sparkles size={12} className="text-emerald-400" />
+                              Coaching Insights & Training Blueprint
+                            </h4>
+                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mt-0.5">
+                              Expert analysis of your physiological engine and training stimulus adaptation
                             </p>
                           </div>
-                        )}
 
-                        <div className="grid grid-cols-1 gap-3">
-                          <div className="glass-card p-5 rounded-[1.8rem] border border-emerald-500/10 relative overflow-hidden">
-                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500/40"></div>
-                            <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-3">Key Strengths</h4>
-                            <ul className="text-[11px] text-slate-400 leading-relaxed font-semibold space-y-2">
-                              {userProfile.strengths.map((s, i) => (
-                                <li key={i} className="flex items-start gap-2">
-                                  <div className="w-4 h-4 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0 mt-0.5">
-                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                          <div className="space-y-4 pt-1">
+                            {/* Comment on Rider Type */}
+                            <div className="space-y-1.5">
+                              <span className="text-[8px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                Rider Type Analysis
+                              </span>
+                              <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+                                {userProfile.rider_story ? (
+                                  userProfile.rider_story.trim().replace(/^["|\\']+|["|\\']+$/g, '')
+                                ) : (
+                                  `As a ${userProfile.athlete_type}, you possess a distinctive physiological footprint. Your training adaptation response indicates high capacity for development with structured training.`
+                                )}
+                              </p>
+                            </div>
+
+                            {/* Split Divider */}
+                            <div className="h-px bg-white/5" />
+
+                            {/* How to Train to Become Better */}
+                            <div className="space-y-2">
+                              <span className="text-[8px] font-black text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                                How to Train to Become Better
+                              </span>
+                              
+                              {userProfile.recommended_focus && (
+                                <p className="text-[11px] text-slate-300 leading-relaxed font-semibold italic bg-slate-950/30 p-3 rounded-xl border border-white/5">
+                                  {userProfile.recommended_focus}
+                                </p>
+                              )}
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                                {userProfile.effective_methods && userProfile.effective_methods.length > 0 && (
+                                  <div className="space-y-1">
+                                    <span className="text-[8px] font-black text-emerald-500 uppercase tracking-wider block mb-1">✓ Recommended Stimuli</span>
+                                    <ul className="text-[10.5px] text-slate-400 font-semibold space-y-1">
+                                      {userProfile.effective_methods.slice(0, 3).map((m, i) => (
+                                        <li key={i} className="flex items-start gap-1.5">
+                                          <span className="text-emerald-500 select-none shrink-0">•</span>
+                                          <span>{m}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
                                   </div>
-                                  <span>{s}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
+                                )}
 
-                          <div className="glass-card p-5 rounded-[1.8rem] border border-rose-500/10 relative overflow-hidden">
-                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-rose-500/40"></div>
-                            <h4 className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-3">Limiters</h4>
-                            <ul className="text-[11px] text-slate-400 leading-relaxed font-semibold space-y-2">
-                              {userProfile.areas_for_improvement.map((a, i) => (
-                                <li key={i} className="flex items-start gap-2">
-                                  <div className="w-4 h-4 rounded-full bg-rose-500/10 flex items-center justify-center shrink-0 mt-0.5">
-                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-rose-400"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                                {userProfile.areas_for_improvement && userProfile.areas_for_improvement.length > 0 && (
+                                  <div className="space-y-1">
+                                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider block mb-1">⚠ Focus Areas</span>
+                                    <ul className="text-[10.5px] text-slate-400 font-semibold space-y-1">
+                                      {userProfile.areas_for_improvement.slice(0, 3).map((a, i) => (
+                                        <li key={i} className="flex items-start gap-1.5">
+                                          <span className="text-rose-400 select-none shrink-0">•</span>
+                                          <span>{a}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
                                   </div>
-                                  <span>{a}</span>
-                                </li>
-                              ))}
-                            </ul>
+                                )}
+                              </div>
+                            </div>
                           </div>
-                        </div>
-
-                        <div className="pt-4 border-t border-white/5 px-2">
-                          <p className="text-[11px] text-slate-400 font-bold leading-relaxed italic">
-                            <span className="text-purple-400 uppercase tracking-widest text-[9px] font-black block mb-0.5">waTTson's Focus:</span>
-                            {userProfile.recommended_focus}
-                          </p>
                         </div>
                       </div>
                     ) : (
@@ -2328,26 +2472,31 @@ const App: React.FC = () => {
           })();
 
           return (
-            <div className="fixed inset-0 z-[220] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedSuggestedDay(null)}>
-              <div className="bg-slate-950/80 w-full max-w-sm rounded-[2.5rem] p-6 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
-                <button onClick={() => setSelectedSuggestedDay(null)} className="absolute top-5 right-5 text-slate-500 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full">
-                  <X size={18} />
+            <div className="fixed inset-0 z-[220] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200" onClick={() => setSelectedSuggestedDay(null)}>
+              <div className="bg-slate-950/95 w-full max-w-sm rounded-[2rem] p-5 sm:p-6 relative border border-white/10 shadow-2xl flex flex-col max-h-[92dvh] overflow-hidden" onClick={e => e.stopPropagation()}>
+                <button onClick={() => setSelectedSuggestedDay(null)} className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full">
+                  <X size={16} />
                 </button>
-                <div className="flex flex-col items-center">
-                  <div className="w-10 h-10 rounded-xl bg-slate-900/50 flex flex-col items-center justify-center shrink-0 border border-white/5 shadow-inner mb-4">
-                    <span className="text-[7.5px] font-black text-slate-500 uppercase leading-none mb-0.5 tracking-tighter">{weekday}</span>
-                    <span className="text-base font-black text-white italic leading-none">{dayNum}</span>
+                
+                {/* Header (locked in place) */}
+                <div className="flex flex-col items-center shrink-0 mb-4 text-center">
+                  <div className="w-9 h-9 rounded-xl bg-slate-900/50 flex flex-col items-center justify-center shrink-0 border border-white/5 shadow-inner mb-2.5">
+                    <span className="text-[7px] font-black text-slate-500 uppercase leading-none mb-0.5 tracking-tighter">{weekday}</span>
+                    <span className="text-sm font-black text-white italic leading-none">{dayNum}</span>
                   </div>
                   
-                  <h3 className="text-lg font-black text-white italic tracking-tighter mb-5 uppercase text-center leading-tight px-4">
+                  <h3 className="text-base sm:text-lg font-black text-white italic tracking-tighter uppercase leading-tight px-4">
                     {formatPlannedRideTitle(selectedSuggestedDay.focus)}
                   </h3>
-                  
+                </div>
+
+                {/* Scrollable body content */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 min-h-0 space-y-3.5">
                   {isReworking ? (
-                    <div className="w-full py-8 flex flex-col items-center justify-center bg-black/60 rounded-3xl border border-white/5 text-center px-4">
-                      <Loader2 size={24} className="animate-spin text-emerald-400 mb-3" />
-                      <span className="text-[11px] font-black text-white uppercase tracking-wider mb-1">Calibrating Workout...</span>
-                      <span className="text-[9px] font-bold text-slate-500 uppercase font-mono tracking-widest">Applying custom adjustments</span>
+                    <div className="w-full py-6 flex flex-col items-center justify-center bg-black/60 rounded-3xl border border-white/5 text-center px-4">
+                      <Loader2 size={20} className="animate-spin text-emerald-400 mb-2.5" />
+                      <span className="text-[10px] font-black text-white uppercase tracking-wider mb-1">Calibrating Workout...</span>
+                      <span className="text-[8px] font-bold text-slate-500 uppercase font-mono tracking-widest">Applying custom adjustments</span>
                     </div>
                   ) : (
                     <>
@@ -2404,6 +2553,16 @@ const App: React.FC = () => {
                           <p className="text-[12px] text-slate-300 leading-relaxed text-center px-2 font-medium opacity-90 italic">
                             "{selectedSuggestedDay.why || 'Allow full adaptation.'}"
                           </p>
+
+                          <div className="mt-2.5 pt-3.5 border-t border-white/5 text-left bg-purple-500/5 border border-purple-500/10 rounded-2xl p-3.5 space-y-2">
+                            <div className="flex items-center gap-1.5 text-purple-400">
+                              <Sparkles size={11} className="animate-pulse" />
+                              <span className="text-[9px] font-black uppercase tracking-widest">waTTson Coach Insight</span>
+                            </div>
+                            <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+                              {getCoachingInsight(selectedSuggestedDay, userProfile, userGoal)}
+                            </p>
+                          </div>
                         </div>
                       ) : isSimpleRide ? (
                         <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-center space-y-4 relative overflow-hidden">
@@ -2433,6 +2592,16 @@ const App: React.FC = () => {
                           <p className="text-[12px] text-slate-300 leading-relaxed text-center px-2 font-medium opacity-90 italic">
                             "{selectedSuggestedDay.why || 'Focus on steady cadence and fluid pedaling.'}"
                           </p>
+
+                          <div className="mt-2 text-left bg-purple-500/5 border border-purple-500/10 rounded-2xl p-3.5 space-y-2">
+                            <div className="flex items-center gap-1.5 text-purple-400">
+                              <Sparkles size={11} className="animate-pulse" />
+                              <span className="text-[9px] font-black uppercase tracking-widest">waTTson Coach Insight</span>
+                            </div>
+                            <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+                              {getCoachingInsight(selectedSuggestedDay, userProfile, userGoal)}
+                            </p>
+                          </div>
                         </div>
                       ) : (
                         <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-left space-y-4 relative overflow-hidden">
@@ -2459,20 +2628,30 @@ const App: React.FC = () => {
                               </p>
                             )}
                           </div>
+
+                          <div className="mt-2 pt-3 text-left border-t border-white/5 bg-purple-500/5 border border-purple-500/10 rounded-2xl p-3.5 space-y-2">
+                            <div className="flex items-center gap-1.5 text-purple-400">
+                              <Sparkles size={11} className="animate-pulse" />
+                              <span className="text-[9px] font-black uppercase tracking-widest">waTTson Coach Insight</span>
+                            </div>
+                            <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+                              {getCoachingInsight(selectedSuggestedDay, userProfile, userGoal)}
+                            </p>
+                          </div>
                         </div>
                       )}
                     </>
                   )}
+                </div>
 
-                  {/* Close Action */}
-                  <div className="mt-5 flex flex-col gap-2 w-full">
-                    <button 
-                      onClick={() => setSelectedSuggestedDay(null)}
-                      className="w-full py-3 bg-[#1a1c22] rounded-2xl text-[11px] font-black text-slate-300 hover:text-white hover:bg-slate-800 transition-all uppercase tracking-[0.2em] active:scale-95"
-                    >
-                      CLOSE
-                    </button>
-                  </div>
+                {/* Footer close button (locked in place) */}
+                <div className="mt-4 shrink-0 w-full pt-1.5 border-t border-white/5">
+                  <button 
+                    onClick={() => setSelectedSuggestedDay(null)}
+                    className="w-full py-2.5 bg-[#1a1c22] hover:bg-slate-800 rounded-xl text-[10px] font-black text-slate-300 hover:text-white transition-all uppercase tracking-[0.2em] active:scale-95"
+                  >
+                    CLOSE
+                  </button>
                 </div>
               </div>
             </div>
@@ -2899,6 +3078,14 @@ const App: React.FC = () => {
         onClose={() => setShowChangelog(false)}
         version={APP_VERSION}
         changes={APP_CHANGELOG}
+      />
+
+      <WorkoutLibraryModal
+        isOpen={showWorkoutLibraryModal}
+        onClose={() => setShowWorkoutLibraryModal(false)}
+        ftp={ftp || 250}
+        creds={creds!}
+        onApplyAsSuggestion={handleApplyLibraryWorkout}
       />
 
       {/* Floating Modern Navigation Dock */}

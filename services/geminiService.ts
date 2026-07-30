@@ -23,6 +23,7 @@ import {
   getThreeMonthReviewPrompt
 } from "./promptTemplates";
 import { detectIntervalsFromLaps } from "./intervalsService";
+import { matchWorkoutToLibrary } from "./workoutLibrary";
 
 
 /**
@@ -68,6 +69,143 @@ const setCache = (key: string, data: any) => {
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch {}
+};
+
+/**
+ * Post-processes generated workout steps to automatically decompose any excessively
+ * long high-intensity blocks (VO2max, Threshold, Sweet Spot) into realistic intervals.
+ */
+export const sanitizeWorkoutSteps = (steps: any[] | undefined, ftp?: number): any[] | undefined => {
+  if (!steps || !Array.isArray(steps) || steps.length === 0) return steps;
+
+  const effectiveFtp = ftp || 250;
+  const sanitized: any[] = [];
+
+  const updateLabelDuration = (label: string, newMin: number): string => {
+    // Replace something like "15 min" or "15min" or "15 m" or "15m" at the start of the label with `${newMin} min`
+    const replaced = label.replace(/^(\d+)\s*(?:minutes|minute|mins|min|m)\b/i, `${newMin} min`);
+    if (replaced !== label) return replaced;
+    // Fallback: if not at the start, replace anywhere
+    return label.replace(/\b(\d+)\s*(?:minutes|minute|mins|min|m)\b/gi, `${newMin} min`);
+  };
+
+  for (const step of steps) {
+    const duration = step.duration;
+    const label = step.label || '';
+    const labelLower = label.toLowerCase();
+
+    // Determine target percent of FTP for this step
+    let targetPct = step.target_pct;
+    if (targetPct === undefined || targetPct === null) {
+      if (step.target_watts) {
+        targetPct = step.target_watts / effectiveFtp;
+      } else {
+        // Estimate based on label
+        if (labelLower.includes('vo2') || labelLower.includes('aerobic capacity')) {
+          targetPct = 1.20;
+        } else if (labelLower.includes('threshold') || labelLower.includes('lthr')) {
+          targetPct = 0.98;
+        } else if (labelLower.includes('sweet spot') || labelLower.includes('sweetspot') || labelLower.includes('sst')) {
+          targetPct = 0.88;
+        } else if (labelLower.includes('tempo')) {
+          targetPct = 0.82;
+        } else if (labelLower.includes('endurance') || labelLower.includes('zone 2') || labelLower.includes('z2')) {
+          targetPct = 0.68;
+        } else {
+          targetPct = 0.55;
+        }
+      }
+    }
+
+    // Identify the zone of this step and check if it violates maximum continuous limits
+    const isVo2Max = targetPct >= 1.05 || labelLower.includes('vo2') || labelLower.includes('aerobic capacity') || labelLower.includes('anaerobic');
+    const isThreshold = !isVo2Max && (targetPct >= 0.90 || labelLower.includes('threshold') || labelLower.includes('lthr'));
+    const isSweetSpotOrTempo = !isVo2Max && !isThreshold && (targetPct >= 0.75 || labelLower.includes('sweet spot') || labelLower.includes('sweetspot') || labelLower.includes('sst') || labelLower.includes('tempo'));
+
+    if (isVo2Max && duration > 6) {
+      // Decompose long VO2 Max efforts (typically anything > 6 minutes continuous)
+      const reps = Math.max(2, Math.round(duration / 3.5));
+      const repDuration = Math.round(duration / reps);
+      const recoveryDuration = Math.max(2, Math.min(3, repDuration));
+      
+      const workLabel = updateLabelDuration(label, repDuration);
+      const recoveryLabel = `${recoveryDuration} min Recovery ${Math.round(0.55 * effectiveFtp)}w`;
+
+      for (let r = 0; r < reps; r++) {
+        const newStep = {
+          ...step,
+          duration: repDuration,
+          label: workLabel
+        };
+        sanitized.push(newStep);
+        if (r < reps - 1) {
+          const recStep: any = {
+            duration: recoveryDuration,
+            label: recoveryLabel
+          };
+          if (step.target_watts !== undefined) recStep.target_watts = Math.round(0.55 * effectiveFtp);
+          if (step.target_pct !== undefined) recStep.target_pct = 0.55;
+          sanitized.push(recStep);
+        }
+      }
+    } else if (isThreshold && duration > 20) {
+      // Decompose long Threshold efforts (typically anything > 20 minutes continuous)
+      const reps = Math.max(2, Math.round(duration / 10));
+      const repDuration = Math.round(duration / reps);
+      const recoveryDuration = Math.max(3, Math.round(repDuration / 3));
+
+      const workLabel = updateLabelDuration(label, repDuration);
+      const recoveryLabel = `${recoveryDuration} min Recovery ${Math.round(0.55 * effectiveFtp)}w`;
+
+      for (let r = 0; r < reps; r++) {
+        const newStep = {
+          ...step,
+          duration: repDuration,
+          label: workLabel
+        };
+        sanitized.push(newStep);
+        if (r < reps - 1) {
+          const recStep: any = {
+            duration: recoveryDuration,
+            label: recoveryLabel
+          };
+          if (step.target_watts !== undefined) recStep.target_watts = Math.round(0.55 * effectiveFtp);
+          if (step.target_pct !== undefined) recStep.target_pct = 0.55;
+          sanitized.push(recStep);
+        }
+      }
+    } else if (isSweetSpotOrTempo && duration > 30) {
+      // Decompose long Sweet Spot or Tempo efforts (typically anything > 30 minutes continuous)
+      const reps = Math.max(2, Math.round(duration / 15));
+      const repDuration = Math.round(duration / reps);
+      const recoveryDuration = Math.max(3, Math.round(repDuration / 4));
+
+      const workLabel = updateLabelDuration(label, repDuration);
+      const recoveryLabel = `${recoveryDuration} min Recovery ${Math.round(0.55 * effectiveFtp)}w`;
+
+      for (let r = 0; r < reps; r++) {
+        const newStep = {
+          ...step,
+          duration: repDuration,
+          label: workLabel
+        };
+        sanitized.push(newStep);
+        if (r < reps - 1) {
+          const recStep: any = {
+            duration: recoveryDuration,
+            label: recoveryLabel
+          };
+          if (step.target_watts !== undefined) recStep.target_watts = Math.round(0.55 * effectiveFtp);
+          if (step.target_pct !== undefined) recStep.target_pct = 0.55;
+          sanitized.push(recStep);
+        }
+      }
+    } else {
+      sanitized.push(step);
+    }
+  }
+
+  return sanitized;
 };
 
 /**
@@ -233,6 +371,9 @@ export const getRideFeedback = async (
     }
   });
   const result = safeParseJSON(response.text);
+  if (result && result.workout_steps) {
+    result.workout_steps = sanitizeWorkoutSteps(result.workout_steps, ftp || 250);
+  }
   setCache(cacheKey, result);
   return result;
 };
@@ -336,6 +477,51 @@ export const getDailySuggestion = async (
   });
   const parsed = safeParseJSON(response.text);
   const result = { ...parsed, date: targetStr };
+  if (result) {
+    if (result.primary && result.primary.intensity !== 'Rest') {
+      const matched = matchWorkoutToLibrary(result.primary.title || result.primary.description || '', result.primary.duration_minutes || 45, result.primary.intensity || 'Medium');
+      if (matched) {
+        result.primary = {
+          title: matched.title,
+          description: matched.description,
+          intensity: matched.intensity,
+          duration_minutes: matched.duration_minutes,
+          type: matched.category.toLowerCase().includes('interval') || matched.workout_steps.length > 3 ? 'intervals' : 'endurance',
+          tss: matched.tss,
+          workout_steps: matched.workout_steps.map(step => ({
+            duration: step.duration,
+            target_watts: Math.round(step.target_pct * (ftp || 250)),
+            label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+          }))
+        };
+      } else if (result.primary.workout_steps) {
+        result.primary.workout_steps = sanitizeWorkoutSteps(result.primary.workout_steps, ftp || 250);
+        result.primary.duration_minutes = result.primary.workout_steps ? result.primary.workout_steps.reduce((sum: number, s: any) => sum + s.duration, 0) : result.primary.duration_minutes;
+      }
+    }
+
+    if (result.alternative && result.alternative.intensity !== 'Rest') {
+      const matched = matchWorkoutToLibrary(result.alternative.title || result.alternative.description || '', result.alternative.duration_minutes || 45, result.alternative.intensity || 'Medium');
+      if (matched) {
+        result.alternative = {
+          title: matched.title,
+          description: matched.description,
+          intensity: matched.intensity,
+          duration_minutes: matched.duration_minutes,
+          type: matched.category.toLowerCase().includes('interval') || matched.workout_steps.length > 3 ? 'intervals' : 'endurance',
+          tss: matched.tss,
+          workout_steps: matched.workout_steps.map(step => ({
+            duration: step.duration,
+            target_watts: Math.round(step.target_pct * (ftp || 250)),
+            label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+          }))
+        };
+      } else if (result.alternative.workout_steps) {
+        result.alternative.workout_steps = sanitizeWorkoutSteps(result.alternative.workout_steps, ftp || 250);
+        result.alternative.duration_minutes = result.alternative.workout_steps ? result.alternative.workout_steps.reduce((sum: number, s: any) => sum + s.duration, 0) : result.alternative.duration_minutes;
+      }
+    }
+  }
   setCache(cacheKey, result);
   return result;
 };
@@ -578,6 +764,41 @@ export const getWeeklyBriefing = async (
   const rawResult = safeParseJSON(response.text) as WeeklyBriefing;
   const result = normalizeBriefingDays(rawResult);
   result.ftp = ftp || 250;
+  if (result.days) {
+    result.days = result.days.map(day => {
+      const isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || (day.focus || '').toLowerCase().includes('off');
+      const isCommute = (day.day || '').toLowerCase().includes('commute') || (day.focus || '').toLowerCase().includes('commute');
+      
+      if (day.workout_steps && !isRest && !isCommute) {
+        const matched = matchWorkoutToLibrary(day.focus || '', day.duration_target || 45, day.intensity || 'Medium');
+        if (matched) {
+          const scaledSteps = matched.workout_steps.map(step => ({
+            duration: step.duration,
+            target_watts: Math.round(step.target_pct * (ftp || 250)),
+            target_pct: step.target_pct,
+            label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+          }));
+          return {
+            ...day,
+            focus: matched.title,
+            workout_steps: scaledSteps,
+            duration_target: matched.duration_minutes,
+            why: `${matched.category} focus: ${matched.description}`
+          };
+        }
+      }
+      if (day.workout_steps) {
+        const sanitizedSteps = sanitizeWorkoutSteps(day.workout_steps, ftp || 250);
+        const duration_target = sanitizedSteps ? sanitizedSteps.reduce((sum, s) => sum + s.duration, 0) : day.duration_target;
+        return {
+          ...day,
+          workout_steps: sanitizedSteps,
+          duration_target: duration_target || day.duration_target
+        };
+      }
+      return day;
+    });
+  }
   setCache(cacheKey, result);
   return result;
 };
