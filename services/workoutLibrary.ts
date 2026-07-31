@@ -14,10 +14,11 @@ export interface LibraryWorkout {
 }
 
 export const WORKOUT_LIBRARY: LibraryWorkout[] = [
+  // --- RECOVERY ---
   {
     id: 'active_recovery_spin',
-    title: 'Active Recovery Spin',
-    description: 'An easy, steady spin designed to promote blood flow, facilitate metabolic clearance, and accelerate recovery without accumulating cardiovascular fatigue.',
+    title: 'Recovery Spin (30m)',
+    description: 'An easy, steady spin designed to promote blood flow, facilitate metabolic clearance, and accelerate muscle recovery without accumulating cardiovascular fatigue.',
     category: 'Recovery',
     intensity: 'Easy',
     duration_minutes: 30,
@@ -29,9 +30,31 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
     ]
   },
   {
+    id: 'mitochondrial_flush',
+    title: 'Recovery Flush (40m)',
+    description: 'Designed to relieve muscular stiffness. Features highly efficient Zone 1 recovery pacing combined with brief high-cadence, ultra-low-load micro-spinups to flush the legs.',
+    category: 'Recovery',
+    intensity: 'Easy',
+    duration_minutes: 40,
+    tss: 20,
+    workout_steps: [
+      { duration: 10, target_pct: 0.45, label: 'Easy progressive warmup' },
+      { duration: 10, target_pct: 0.50, label: 'Flat aerobic flush' },
+      { duration: 0.25, target_pct: 0.85, label: 'High cadence spin-up (no torque)' },
+      { duration: 2.75, target_pct: 0.45, label: 'Active recovery spin' },
+      { duration: 0.25, target_pct: 0.85, label: 'High cadence spin-up (no torque)' },
+      { duration: 2.75, target_pct: 0.45, label: 'Active recovery spin' },
+      { duration: 0.25, target_pct: 0.85, label: 'High cadence spin-up (no torque)' },
+      { duration: 3.75, target_pct: 0.45, label: 'Active recovery spin' },
+      { duration: 10, target_pct: 0.40, label: 'Easy spinning cooldown' }
+    ]
+  },
+  
+  // --- ENDURANCE ---
+  {
     id: 'aerobic_endurance_60',
-    title: 'Aerobic Base Builder (60 Min)',
-    description: 'Standard Zone 2 endurance ride focusing on aerobic efficiency, fat utilization, and building muscle mitochondria.',
+    title: 'Endurance Ride (60m)',
+    description: '1-hour Zone 2 endurance ride. Great for active fat oxidation, baseline mitochondrial development, and cardiovascular health on limited time.',
     category: 'Endurance',
     intensity: 'Easy',
     duration_minutes: 60,
@@ -43,23 +66,95 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
     ]
   },
   {
-    id: 'aerobic_endurance_90',
-    title: 'Aerobic Base Builder (90 Min)',
-    description: 'Extended Zone 2 ride designed to challenge metabolic resilience and increase lipid oxidation efficiency over a longer duration.',
+    id: 'aerobic_endurance_75',
+    title: 'Endurance Ride (75m)',
+    description: 'Standard Zone 2 endurance ride. Highly effective for building mitochondrial density, increasing fat oxidation efficiency, and strengthening capillary networks.',
     category: 'Endurance',
     intensity: 'Easy',
-    duration_minutes: 90,
-    tss: 65,
+    duration_minutes: 75,
+    tss: 50,
     workout_steps: [
       { duration: 10, target_pct: 0.55, label: 'Gradual warmup' },
-      { duration: 75, target_pct: 0.65, label: 'Steady Zone 2 endurance' },
+      { duration: 60, target_pct: 0.65, label: 'Steady Zone 2 endurance' },
       { duration: 5, target_pct: 0.50, label: 'Easy cooldown spin' }
     ]
   },
   {
+    id: 'aerobic_engine_90',
+    title: 'Endurance Ride (90m)',
+    description: 'Longer Zone 2 ride designed to trigger deeper cardiovascular adaptations and stimulate muscle glycogen conservation and endurance fat-burning enzymes.',
+    category: 'Endurance',
+    intensity: 'Easy',
+    duration_minutes: 90,
+    tss: 62,
+    workout_steps: [
+      { duration: 10, target_pct: 0.55, label: 'Gradual progressive warmup' },
+      { duration: 75, target_pct: 0.67, label: 'Steady Zone 2 endurance block' },
+      { duration: 5, target_pct: 0.50, label: 'Easy spinning cooldown' }
+    ]
+  },
+  {
+    id: 'aerobic_endurance_120',
+    title: 'Endurance Ride (120m)',
+    description: '2-hour Zone 2 base building endurance ride. Teaches the body to conserve glycogen reserves, utilizes fat as a primary fuel source, and strengthens muscular resilience.',
+    category: 'Endurance',
+    intensity: 'Easy',
+    duration_minutes: 120,
+    tss: 82,
+    workout_steps: [
+      { duration: 15, target_pct: 0.55, label: 'Thorough gradual warmup' },
+      { duration: 100, target_pct: 0.65, label: 'Steady Zone 2 endurance focus' },
+      { duration: 5, target_pct: 0.50, label: 'Spin out legs cooldown' }
+    ]
+  },
+  {
+    id: 'aerobic_endurance_180',
+    title: 'Endurance Ride (180m)',
+    description: '3-hour Zone 2 steady-state aerobic endurance block. Promotes deeper adaptation in slow-twitch muscle fibers, improving cardiac output and fat clearance rates.',
+    category: 'Endurance',
+    intensity: 'Easy',
+    duration_minutes: 180,
+    tss: 125,
+    workout_steps: [
+      { duration: 15, target_pct: 0.55, label: 'Thorough gradual warmup' },
+      { duration: 160, target_pct: 0.65, label: 'Main steady Zone 2 endurance block' },
+      { duration: 5, target_pct: 0.50, label: 'Spin out legs cooldown' }
+    ]
+  },
+  {
+    id: 'aerobic_endurance_240',
+    title: 'Endurance Ride (240m)',
+    description: '4-hour long aerobic endurance ride. Essential for ultra-endurance event preparation. Builds exceptional physical and mental stamina while optimizing metabolic efficiency.',
+    category: 'Endurance',
+    intensity: 'Easy',
+    duration_minutes: 240,
+    tss: 165,
+    workout_steps: [
+      { duration: 15, target_pct: 0.55, label: 'Thorough gradual warmup' },
+      { duration: 220, target_pct: 0.65, label: 'Sustained endurance pacing' },
+      { duration: 5, target_pct: 0.50, label: 'Spin out legs cooldown' }
+    ]
+  },
+  {
+    id: 'aerobic_endurance_300',
+    title: 'Endurance Ride (300m)',
+    description: '5-hour epic Zone 2 base endurance ride. The ultimate simulation of long-distance events to maximize fat utilization pathways, skeletal muscle fatigue resistance, and endurance pacing.',
+    category: 'Endurance',
+    intensity: 'Easy',
+    duration_minutes: 300,
+    tss: 205,
+    workout_steps: [
+      { duration: 15, target_pct: 0.55, label: 'Thorough gradual warmup' },
+      { duration: 280, target_pct: 0.65, label: 'Unbroken steady-state Zone 2 endurance' },
+      { duration: 5, target_pct: 0.50, label: 'Spin out legs cooldown' }
+    ]
+  },
+
+  // --- TEMPO / SWEET SPOT ---
+  {
     id: 'sweet_spot_2x15',
-    title: 'Sweet Spot Progression (2x15m)',
-    description: 'A classic aerobic engine builder. Two 15-minute intervals at sweet spot intensity (88% FTP) to maximize threshold gains with moderate physiological fatigue.',
+    title: 'Sweet Spot Ride (2x15m)',
+    description: 'The premier aerobic engine builder. Two 15-minute efforts at 88% FTP. Delivers maximal aerobic adaptations with significantly less physiological strain than threshold work.',
     category: 'Tempo/Sweet Spot',
     intensity: 'Medium',
     duration_minutes: 60,
@@ -69,48 +164,33 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
       { duration: 15, target_pct: 0.88, label: 'Sweet Spot Rep 1 @ 88% FTP' },
       { duration: 5, target_pct: 0.55, label: 'Recovery spin' },
       { duration: 15, target_pct: 0.88, label: 'Sweet Spot Rep 2 @ 88% FTP' },
-      { duration: 5, target_pct: 0.55, label: 'Recovery spin' },
-      { duration: 10, target_pct: 0.50, label: 'Cooldown spin' }
+      { duration: 15, target_pct: 0.50, label: 'Cooldown spin' }
     ]
   },
   {
-    id: 'steady_tempo_aerobic',
-    title: 'Aerobic Tempo Steady State',
-    description: 'One long, continuous tempo block to develop structural strength, muscle glycogen storage, and muscular endurance.',
+    id: 'sweet_spot_sustained_3x12',
+    title: 'Sweet Spot Ride (3x12m)',
+    description: 'Three 12-minute blocks at 90% FTP. Maximizes cumulative time-in-zone to heavily tax glycogen stores and drive muscular threshold improvements.',
     category: 'Tempo/Sweet Spot',
     intensity: 'Medium',
-    duration_minutes: 50,
-    tss: 42,
-    workout_steps: [
-      { duration: 10, target_pct: 0.58, label: 'Aerobic warmup' },
-      { duration: 30, target_pct: 0.80, label: 'Continuous Tempo @ 80% FTP' },
-      { duration: 10, target_pct: 0.50, label: 'Easy recovery spin' }
-    ]
-  },
-  {
-    id: 'threshold_ladder_4x8',
-    title: 'Threshold Interval Ladder (4x8m)',
-    description: 'Four 8-minute efforts right at your functional threshold (100% FTP) designed to increase your maximum steady-state lactate clearance capacity.',
-    category: 'Threshold',
-    intensity: 'Hard',
     duration_minutes: 60,
     tss: 62,
     workout_steps: [
-      { duration: 10, target_pct: 0.60, label: 'Warmup with 30s openers' },
-      { duration: 8, target_pct: 1.00, label: 'Threshold Rep 1 @ 100% FTP' },
+      { duration: 10, target_pct: 0.60, label: 'Aerobic warmup with build' },
+      { duration: 12, target_pct: 0.90, label: 'Sweet Spot Block 1 @ 90% FTP' },
       { duration: 3, target_pct: 0.55, label: 'Active recovery' },
-      { duration: 8, target_pct: 1.00, label: 'Threshold Rep 2 @ 100% FTP' },
+      { duration: 12, target_pct: 0.90, label: 'Sweet Spot Block 2 @ 90% FTP' },
       { duration: 3, target_pct: 0.55, label: 'Active recovery' },
-      { duration: 8, target_pct: 1.00, label: 'Threshold Rep 3 @ 100% FTP' },
-      { duration: 3, target_pct: 0.55, label: 'Active recovery' },
-      { duration: 8, target_pct: 1.00, label: 'Threshold Rep 4 @ 100% FTP' },
-      { duration: 7, target_pct: 0.48, label: 'Thorough cooldown' }
+      { duration: 12, target_pct: 0.90, label: 'Sweet Spot Block 3 @ 90% FTP' },
+      { duration: 8, target_pct: 0.50, label: 'Spinning cooldown' }
     ]
   },
+
+  // --- THRESHOLD ---
   {
     id: 'threshold_over_under_3x9',
-    title: 'Over-Under Adaptations (3x9m)',
-    description: 'Three 9-minute blocks oscillating between 95% and 105% FTP. Teaches the body to clear accumulated lactate while maintaining high power output.',
+    title: 'Threshold Over-Unders (3x9m)',
+    description: 'Three 9-minute blocks oscillating between 95% (under) and 105% (over) FTP. Scientifically proven to train the body to actively buffer and clear lactate under systemic load.',
     category: 'Threshold',
     intensity: 'Hard',
     duration_minutes: 60,
@@ -147,31 +227,27 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
     ]
   },
   {
-    id: 'vo2max_boost_5x3',
-    title: 'VO2 Max Engine Booster (5x3m)',
-    description: 'Five 3-minute high-intensity intervals at 115% of FTP with equal rest. Highly effective at raising your maximum aerobic capacity (VO2max).',
-    category: 'VO2 Max',
+    id: 'threshold_classic_2x20',
+    title: 'Threshold Ride (2x20m)',
+    description: 'The absolute gold standard for muscular threshold conditioning. Develops outstanding physical stamina, high fractional utilization of VO2 max, and elite mental toughness.',
+    category: 'Threshold',
     intensity: 'Hard',
-    duration_minutes: 45,
-    tss: 52,
+    duration_minutes: 60,
+    tss: 68,
     workout_steps: [
-      { duration: 10, target_pct: 0.60, label: 'Warmup with 2x30s openers' },
-      { duration: 3, target_pct: 1.15, label: 'VO2 Max Rep 1 @ 115% FTP' },
-      { duration: 3, target_pct: 0.50, label: 'Spin recovery' },
-      { duration: 3, target_pct: 1.15, label: 'VO2 Max Rep 2 @ 115% FTP' },
-      { duration: 3, target_pct: 0.50, label: 'Spin recovery' },
-      { duration: 3, target_pct: 1.15, label: 'VO2 Max Rep 3 @ 115% FTP' },
-      { duration: 3, target_pct: 0.50, label: 'Spin recovery' },
-      { duration: 3, target_pct: 1.15, label: 'VO2 Max Rep 4 @ 115% FTP' },
-      { duration: 3, target_pct: 0.50, label: 'Spin recovery' },
-      { duration: 3, target_pct: 1.15, label: 'VO2 Max Rep 5 @ 115% FTP' },
-      { duration: 8, target_pct: 0.45, label: 'Thorough cooldown' }
+      { duration: 10, target_pct: 0.60, label: 'Thorough warm-up with ramp' },
+      { duration: 20, target_pct: 0.98, label: 'Sustained Threshold Rep 1 @ 98% FTP' },
+      { duration: 5, target_pct: 0.55, label: 'Active recovery spin' },
+      { duration: 20, target_pct: 0.98, label: 'Sustained Threshold Rep 2 @ 98% FTP' },
+      { duration: 5, target_pct: 0.50, label: 'Spinning cooldown' }
     ]
   },
+
+  // --- VO2 MAX ---
   {
     id: 'norwegian_4x4',
-    title: 'Norwegian Aerobic Power (4x4m)',
-    description: 'The standard Norwegian style: four 4-minute maximum sustainable aerobic intervals at 110-112% FTP with 3-minute active recoveries.',
+    title: 'VO2 Max Intervals (4x4m)',
+    description: 'The legendary Helgerud & Hoff 4x4-minute protocol (110-112% FTP) with 3-minute active recoveries. Extensively proven in clinical studies to yield the largest VO2 max increases.',
     category: 'VO2 Max',
     intensity: 'Hard',
     duration_minutes: 45,
@@ -189,96 +265,132 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
     ]
   },
   {
-    id: 'microbursts_30_30',
-    title: 'Microburst Capacitance (30/30s)',
-    description: 'Two sets of 8 reps of 30 seconds at 130% FTP followed by 30 seconds recovery. Great for building punch and anaerobic repeat capacity.',
+    id: 'billat_30_30',
+    title: 'VO2 Max 30/30s',
+    description: "Dr. Veronique Billat's classic 30s intervals. Maximizes cumulative time spent at VO2 max (aerobic capacity peak) while minimizing neuromuscular depletion via active recovery intervals.",
+    category: 'VO2 Max',
+    intensity: 'Hard',
+    duration_minutes: 40,
+    tss: 44,
+    workout_steps: [
+      { duration: 10, target_pct: 0.60, label: 'Thorough warm-up with build' },
+      // 15 repeats of 30s @ 130% / 30s @ 50%
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.30, label: 'Billat Interval @ 130% FTP' },
+      { duration: 0.5, target_pct: 0.50, label: 'Spin recovery' },
+      { duration: 15, target_pct: 0.45, label: 'Spinning cooldown' }
+    ]
+  },
+
+  // --- ANAEROBIC ---
+  {
+    id: 'ronnestad_30_15',
+    title: 'Anaerobic Intervals (30/15s)',
+    description: 'Two sets of 10 microbursts (30s at 125% FTP / 15s at 45% FTP). Proven by Dr. Bent Rønnestad to stimulate greater mitochondrial signaling and power at VO2 max than traditional intervals.',
     category: 'Anaerobic',
     intensity: 'Hard',
     duration_minutes: 40,
-    tss: 45,
+    tss: 46,
     workout_steps: [
       { duration: 10, target_pct: 0.60, label: 'Progressive warmup' },
-      // Set 1 (8 reps of 30s/30s = 8 minutes)
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 1.1 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 1.2 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 1.3 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 1.4 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 1.5 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 1.6 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 1.7 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 1.8 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
+      // Set 1 (10 reps of 30s/15s = 7.5 minutes)
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 1.1 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 1.2 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 1.3 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 1.4 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 1.5 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 1.6 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 1.7 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 1.8 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 1.9 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 1.10 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
       
-      { duration: 6, target_pct: 0.50, label: 'Mid-set recovery' },
+      { duration: 5, target_pct: 0.50, label: 'Mid-set active recovery' },
       
-      // Set 2 (8 reps of 30s/30s = 8 minutes)
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 2.1 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 2.2 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 2.3 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 2.4 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 2.5 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 2.6 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 2.7 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
-      { duration: 0.5, target_pct: 1.30, label: 'Microburst Rep 2.8 @ 130%' },
-      { duration: 0.5, target_pct: 0.45, label: 'Spin' },
+      // Set 2 (10 reps of 30s/15s = 7.5 minutes)
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 2.1 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 2.2 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 2.3 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 2.4 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 2.5 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 2.6 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 2.7 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 2.8 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 2.9 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
+      { duration: 0.5, target_pct: 1.25, label: 'Rønnestad Rep 2.10 @ 125% FTP' },
+      { duration: 0.25, target_pct: 0.45, label: 'Spin recovery' },
       
-      { duration: 6, target_pct: 0.45, label: 'Easy cooldown' }
+      { duration: 7.5, target_pct: 0.45, label: 'Easy spinning cooldown' }
     ]
   },
   {
-    id: 'sprint_power_builder',
-    title: 'Sprint Power Accelerator (6x15s)',
-    description: 'Six 15-second maximal neuromuscular sprint efforts with full 4-minute active recoveries. Improves max power output, neuromuscular recruitment, and speed.',
+    id: 'anaerobic_capacity_6x1',
+    title: 'Anaerobic Repeats (6x1m)',
+    description: 'Six 1-minute anaerobic capacity repeats at 135% FTP with full 3-minute active recovery intervals. Forces profound cellular and neural adaptations in lactic/anaerobic reserves.',
     category: 'Anaerobic',
     intensity: 'Hard',
     duration_minutes: 40,
-    tss: 35,
+    tss: 52,
     workout_steps: [
-      { duration: 10, target_pct: 0.55, label: 'Warmup with cadence spins' },
-      { duration: 0.25, target_pct: 2.00, label: 'All-Out Sprint 1 (15s)' },
-      { duration: 4, target_pct: 0.50, label: 'Active recovery' },
-      { duration: 0.25, target_pct: 2.00, label: 'All-Out Sprint 2 (15s)' },
-      { duration: 4, target_pct: 0.50, label: 'Active recovery' },
-      { duration: 0.25, target_pct: 2.00, label: 'All-Out Sprint 3 (15s)' },
-      { duration: 4, target_pct: 0.50, label: 'Active recovery' },
-      { duration: 0.25, target_pct: 2.00, label: 'All-Out Sprint 4 (15s)' },
-      { duration: 4, target_pct: 0.50, label: 'Active recovery' },
-      { duration: 0.25, target_pct: 2.00, label: 'All-Out Sprint 5 (15s)' },
-      { duration: 4, target_pct: 0.50, label: 'Active recovery' },
-      { duration: 0.25, target_pct: 2.00, label: 'All-Out Sprint 6 (15s)' },
-      { duration: 7, target_pct: 0.45, label: 'Easy cooldown' }
-    ]
-  },
-  {
-    id: 'climbing_sweet_spot',
-    title: 'Climbing Force Sweet Spot (3x10m)',
-    description: 'Three 10-minute Sweet Spot blocks (85% FTP) conducted at low cadence (55-65 RPM) to build specific climbing muscular force.',
-    category: 'Tempo/Sweet Spot',
-    intensity: 'Medium',
-    duration_minutes: 50,
-    tss: 45,
-    workout_steps: [
-      { duration: 10, target_pct: 0.58, label: 'Progressive warmup' },
-      { duration: 10, target_pct: 0.85, label: 'Sweet Spot Climbing @ 85%' },
-      { duration: 3, target_pct: 0.50, label: 'Active recovery spin' },
-      { duration: 10, target_pct: 0.85, label: 'Sweet Spot Climbing @ 85%' },
-      { duration: 3, target_pct: 0.50, label: 'Active recovery spin' },
-      { duration: 10, target_pct: 0.85, label: 'Sweet Spot Climbing @ 85%' },
-      { duration: 4, target_pct: 0.45, label: 'Easy cooldown spin' }
+      { duration: 10, target_pct: 0.60, label: 'Thorough progressive warm-up' },
+      { duration: 1, target_pct: 1.35, label: 'Anaerobic Repeat 1 @ 135% FTP' },
+      { duration: 3, target_pct: 0.50, label: 'Active spinning recovery' },
+      { duration: 1, target_pct: 1.35, label: 'Anaerobic Repeat 2 @ 135% FTP' },
+      { duration: 3, target_pct: 0.50, label: 'Active spinning recovery' },
+      { duration: 1, target_pct: 1.35, label: 'Anaerobic Repeat 3 @ 135% FTP' },
+      { duration: 3, target_pct: 0.50, label: 'Active spinning recovery' },
+      { duration: 1, target_pct: 1.35, label: 'Anaerobic Repeat 4 @ 135% FTP' },
+      { duration: 3, target_pct: 0.50, label: 'Active spinning recovery' },
+      { duration: 1, target_pct: 1.35, label: 'Anaerobic Repeat 5 @ 135% FTP' },
+      { duration: 3, target_pct: 0.50, label: 'Active spinning recovery' },
+      { duration: 1, target_pct: 1.35, label: 'Anaerobic Repeat 6 @ 135% FTP' },
+      { duration: 9, target_pct: 0.45, label: 'Easy spinning cooldown' }
     ]
   }
 ];
@@ -295,7 +407,7 @@ export const matchWorkoutToLibrary = (focus: string, duration: number, intensity
   let candidateCategory: LibraryWorkout['category'][] = [];
   if (normalizedFocus.includes('vo2') || normalizedFocus.includes('aerobic capacity') || normalizedFocus.includes('norwegian')) {
     candidateCategory = ['VO2 Max'];
-  } else if (normalizedFocus.includes('sprint') || normalizedFocus.includes('anaerobic') || normalizedFocus.includes('burst') || normalizedFocus.includes('micro')) {
+  } else if (normalizedFocus.includes('sprint') || normalizedFocus.includes('anaerobic') || normalizedFocus.includes('burst') || normalizedFocus.includes('micro') || normalizedFocus.includes('ronnestad')) {
     candidateCategory = ['Anaerobic', 'VO2 Max'];
   } else if (normalizedFocus.includes('threshold') || normalizedFocus.includes('under') || normalizedFocus.includes('lthr')) {
     candidateCategory = ['Threshold'];

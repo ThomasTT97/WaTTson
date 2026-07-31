@@ -21,7 +21,7 @@ import { RiderPowerCurve } from './components/RiderPowerCurve';
 import { SuggestedWorkoutCard, formatPlannedRideTitle } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
-import { WorkoutLibraryModal } from './components/WorkoutLibraryModal';
+import { WorkoutLibrary } from './components/WorkoutLibrary';
 import { LibraryWorkout } from './services/workoutLibrary';
 import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts } from './components/StepLabel';
 import { CheckCircle } from 'lucide-react';
@@ -248,7 +248,7 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'rides' | 'chat' | 'settings'>('dashboard');
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'rider_profile' | 'training_method' | 'ftp'>('main');
+  const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'rider_profile' | 'training_method' | 'ftp' | 'workout_library'>('main');
   const [userProfile, setUserProfile] = useState<UserProfileAnalysis | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
 
@@ -265,7 +265,6 @@ const App: React.FC = () => {
     }
   };
   const [showWorkoutDetail, setShowWorkoutDetail] = useState(false);
-  const [showWorkoutLibraryModal, setShowWorkoutLibraryModal] = useState(false);
   const [syncingWorkout, setSyncingWorkout] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState(false);
   const [reasoningPopup, setReasoningPopup] = useState<{title: string, content: string} | null>(null);
@@ -491,6 +490,21 @@ const App: React.FC = () => {
     if (isInitial) setLoading(true);
     else setIsSyncing(true);
     setSyncError(null);
+    
+    // Clear weekly briefing caches on manual sync
+    if (!isInitial) {
+      try {
+        Object.keys(localStorage).forEach(key => {
+          if (key.startsWith('wattson_weekly')) {
+            localStorage.removeItem(key);
+          }
+        });
+      } catch (e) {
+        console.error("Failed to clear briefing cache", e);
+      }
+      setWeeklyBriefing(null);
+    }
+
     try {
       let activeCreds = { ...credentials };
       
@@ -633,9 +647,7 @@ const App: React.FC = () => {
         if (!prev) return data;
         
         if (weekIndex) {
-          const now = new Date();
-          const startDayOfWeek = now.getDay() === 0 ? 7 : now.getDay();
-          const week1Length = 8 - startDayOfWeek;
+          const week1Length = 7;
 
           const weekRanges = [
             { start: 0, end: week1Length },
@@ -1249,7 +1261,10 @@ const App: React.FC = () => {
           {activeTab !== 'chat' && (
             <>
               <button 
-                onClick={() => setShowWorkoutLibraryModal(true)}
+                onClick={() => {
+                  setActiveTab('settings');
+                  setSettingsView('workout_library');
+                }}
                 className="w-10 h-10 rounded-xl glass-card flex items-center justify-center text-blue-400 border border-blue-500/20 active:scale-95 transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)]"
                 title="Workout Library"
               >
@@ -1840,7 +1855,8 @@ const App: React.FC = () => {
                     {settingsView === "rider_profile" ? "Rider Assessment" : 
                      settingsView === "ftp" ? "Engine Benchmark" : 
                      settingsView === "goal" ? "Goal & Ambition" : 
-                     settingsView === "training_method" ? "Training Setup" : ""}
+                     settingsView === "training_method" ? "Training Setup" : 
+                     settingsView === "workout_library" ? "Workout Library" : ""}
                   </h2>
                 </div>
               )}
@@ -1905,7 +1921,7 @@ const App: React.FC = () => {
                     </button>
 
                     <button 
-                      onClick={() => setShowWorkoutLibraryModal(true)}
+                      onClick={() => setSettingsView("workout_library")}
                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-blue-500/10 shadow-sm"
                     >
                       <div className="flex items-center gap-4">
@@ -2342,6 +2358,15 @@ const App: React.FC = () => {
                       </div>
                     )}
                   </div>
+                )}
+
+                {settingsView === "workout_library" && (
+                  <WorkoutLibrary
+                    ftp={ftp || 250}
+                    creds={creds!}
+                    onApplyAsSuggestion={handleApplyLibraryWorkout}
+                    onClose={() => setSettingsView("main")}
+                  />
                 )}
               </div>
           </div>
@@ -3078,14 +3103,6 @@ const App: React.FC = () => {
         onClose={() => setShowChangelog(false)}
         version={APP_VERSION}
         changes={APP_CHANGELOG}
-      />
-
-      <WorkoutLibraryModal
-        isOpen={showWorkoutLibraryModal}
-        onClose={() => setShowWorkoutLibraryModal(false)}
-        ftp={ftp || 250}
-        creds={creds!}
-        onApplyAsSuggestion={handleApplyLibraryWorkout}
       />
 
       {/* Floating Modern Navigation Dock */}

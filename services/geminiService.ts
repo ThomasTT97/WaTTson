@@ -529,7 +529,47 @@ export const getDailySuggestion = async (
 export const normalizeBriefingDays = (briefing: WeeklyBriefing): WeeklyBriefing => {
   if (!briefing || !briefing.days) return briefing;
 
-  const normalizedDays = briefing.days.map(d => ({ ...d }));
+  let ftp = briefing.ftp;
+  if (!ftp && typeof window !== 'undefined') {
+    ftp = Number(localStorage.getItem('wattson_ftp')) || 250;
+  }
+  if (!ftp) ftp = 250;
+
+  const normalizedDays = briefing.days.map(day => {
+    const isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || (day.focus || '').toLowerCase().includes('off');
+    const isCommute = (day.day || '').toLowerCase().includes('commute') || (day.focus || '').toLowerCase().includes('commute');
+    
+    if (!isRest && !isCommute) {
+      const matched = matchWorkoutToLibrary(day.focus || '', day.duration_target || 45, day.intensity || 'Medium');
+      if (matched) {
+        const scaledSteps = matched.workout_steps.map(step => ({
+          duration: step.duration,
+          target_watts: Math.round(step.target_pct * ftp),
+          target_pct: step.target_pct,
+          label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+        }));
+        return {
+          ...day,
+          focus: matched.title,
+          workout_steps: scaledSteps,
+          duration_target: matched.duration_minutes,
+          why: `${matched.category} focus: ${matched.description}`
+        };
+      }
+    }
+    
+    if (day.workout_steps) {
+      const sanitizedSteps = sanitizeWorkoutSteps(day.workout_steps, ftp);
+      const duration_target = sanitizedSteps ? sanitizedSteps.reduce((sum, s) => sum + s.duration, 0) : day.duration_target;
+      return {
+        ...day,
+        workout_steps: sanitizedSteps,
+        duration_target: duration_target || day.duration_target
+      };
+    }
+
+    return { ...day };
+  });
 
   // Group days by day string (e.g., "Mon (Jul 27)")
   const labelGroups: Record<string, number[]> = {};
@@ -631,7 +671,7 @@ export const getWeeklyBriefing = async (
     return Math.abs(hash).toString(36);
   };
 
-  const cacheKey = `wattson_weekly_${todayStr}_${userGoal || 'default'}_${planMode}_${trainingMode}_${methodology || 'polarized'}_${weekIndex || 'all'}_${contextHash ? safeHash(contextHash) : 'no-ctx'}`;
+  const cacheKey = `wattson_weekly_v4_${todayStr}_${userGoal || 'default'}_${planMode}_${trainingMode}_${methodology || 'polarized'}_${weekIndex || 'all'}_${contextHash ? safeHash(contextHash) : 'no-ctx'}`;
   
   if (!force) {
     const cached = getCache(cacheKey);
@@ -648,18 +688,16 @@ export const getWeeklyBriefing = async (
     pcCtx = `Current Year Power Bests: ${pc.bests.map(b => `${b.duration}s:${b.watts}W`).join(', ')}`;
   }
 
-  // Generate the actual list of days, ensuring Monday-Sunday alignment and making Week 1 shorter
+  // Generate the actual list of days, ensuring a full 7-day schedule for the week
   const dayNames: string[] = [];
   const tempDate = new Date();
   // If startContext contains "Plan MUST start from TOMORROW", we shift the dayNames generator
   const startsTomorrow = startContext?.includes("TOMORROW");
   if (startsTomorrow) tempDate.setDate(tempDate.getDate() + 1);
 
-  // Compute Week 1 length based on start date (tempDate)
-  const startDayOfWeek = tempDate.getDay() === 0 ? 7 : tempDate.getDay();
-  const week1Length = 8 - startDayOfWeek;
+  const week1Length = 7;
   
-  // Define ranges for weeks
+  // Define ranges for weeks (always a full 7-day cycle)
   const weekRanges = [
     { start: 0, end: week1Length },
     { start: week1Length, end: week1Length + 7 },
@@ -769,7 +807,7 @@ export const getWeeklyBriefing = async (
       const isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || (day.focus || '').toLowerCase().includes('off');
       const isCommute = (day.day || '').toLowerCase().includes('commute') || (day.focus || '').toLowerCase().includes('commute');
       
-      if (day.workout_steps && !isRest && !isCommute) {
+      if (!isRest && !isCommute) {
         const matched = matchWorkoutToLibrary(day.focus || '', day.duration_target || 45, day.intensity || 'Medium');
         if (matched) {
           const scaledSteps = matched.workout_steps.map(step => ({
