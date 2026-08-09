@@ -16,6 +16,14 @@ import {
 } from './types';
 import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile, getAnnualPowerCurves, uploadWorkout } from './services/intervalsService';
 import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile, analyzeThreeMonthReview } from './services/geminiService';
+import { 
+  PlanDirective, 
+  parsePlanDirectives, 
+  serializePlanDirectives, 
+  getDirectivesTextList, 
+  pruneExpiredDirectives, 
+  getTodayDateString 
+} from './services/directiveService';
 import { ActivityCard } from './components/ActivityCard';
 import { RiderPowerCurve } from './components/RiderPowerCurve';
 import { SuggestedWorkoutCard, formatPlannedRideTitle } from './components/SuggestedWorkoutCard';
@@ -23,7 +31,7 @@ import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
 import { WorkoutLibrary } from './components/WorkoutLibrary';
 import { LibraryWorkout } from './services/workoutLibrary';
-import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts } from './components/StepLabel';
+import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts, isEnduranceWorkout, VisualProfileChart } from './components/StepLabel';
 import { CheckCircle } from 'lucide-react';
 import { 
   LayoutDashboard, 
@@ -200,10 +208,22 @@ const App: React.FC = () => {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const [selectedSuggestedDay, setSelectedSuggestedDay] = useState<WeeklyBriefing['days'][0] | null>(null);
-  const [weeklyBriefing, setWeeklyBriefing] = useState<WeeklyBriefing | null>(null);
+  const [weeklyBriefing, setWeeklyBriefing] = useState<WeeklyBriefing | null>(() => {
+    try {
+      const saved = localStorage.getItem('wattson_saved_weekly_briefing');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return null;
+  });
   const [weeklyBriefingError, setWeeklyBriefingError] = useState<string | null>(null);
   const [loadingWeeklyBriefing, setLoadingWeeklyBriefing] = useState(false);
-  const [generatedWeeks, setGeneratedWeeks] = useState<number[]>([]);
+  const [generatedWeeks, setGeneratedWeeks] = useState<number[]>(() => {
+    try {
+      const saved = localStorage.getItem('wattson_saved_generated_weeks');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
   const [loadingWeeks, setLoadingWeeks] = useState<{ [week: number]: boolean }>({});
   const [reworkingWeeks, setReworkingWeeks] = useState<number[]>([]);
   const [overallTweakInput, setOverallTweakInput] = useState('');
@@ -309,9 +329,35 @@ const App: React.FC = () => {
     safeSetItem('wattson_chat_history', JSON.stringify(messages));
   }, [messages]);
 
+  useEffect(() => {
+    if (weeklyBriefing) {
+      safeSetItem('wattson_saved_weekly_briefing', JSON.stringify(weeklyBriefing));
+    } else {
+      localStorage.removeItem('wattson_saved_weekly_briefing');
+    }
+  }, [weeklyBriefing]);
+
+  useEffect(() => {
+    if (generatedWeeks && generatedWeeks.length > 0) {
+      safeSetItem('wattson_saved_generated_weeks', JSON.stringify(generatedWeeks));
+    } else {
+      localStorage.removeItem('wattson_saved_generated_weeks');
+    }
+  }, [generatedWeeks]);
+
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const [planContext, setPlanContext] = useState<string | null>(() => localStorage.getItem('wattson_plan_context'));
+  const [planContext, setPlanContext] = useState<string | null>(() => {
+    const raw = localStorage.getItem('wattson_plan_context');
+    if (!raw) return null;
+    const parsed = parsePlanDirectives(raw);
+    const { active, expired } = pruneExpiredDirectives(parsed);
+    const serialized = serializePlanDirectives(active);
+    if (expired.length > 0) {
+      safeSetItem('wattson_plan_context', serialized);
+    }
+    return serialized || null;
+  });
   const [syncingDayInApp, setSyncingDayInApp] = useState<string | null>(null);
   const [syncSuccessInApp, setSyncSuccessInApp] = useState<string | null>(null);
 
@@ -345,14 +391,18 @@ const App: React.FC = () => {
   };
 
   const handleAddTweakFromApp = (newTweakDirective: string, weekIndex?: number) => {
-    let currentTweaks: string[] = [];
-    if (planContext) {
-      currentTweaks = planContext.split(' ; ').filter(Boolean);
-    }
-    currentTweaks.push(newTweakDirective);
-    const newContext = currentTweaks.join(' ; ');
+    const parsed = parsePlanDirectives(planContext);
+    const today = getTodayDateString();
+    const newDir: PlanDirective = {
+      id: `dir_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      text: newTweakDirective.trim(),
+      requestedAt: today,
+    };
+    const updated = [...parsed, newDir];
+    const { active } = pruneExpiredDirectives(updated, today);
+    const newContext = serializePlanDirectives(active);
     
-    setLastAppliedTweak(newTweakDirective);
+    setLastAppliedTweak(newTweakDirective.trim());
     setShowTweakSuccessNotice(false);
     setPlanContext(newContext);
     safeSetItem('wattson_plan_context', newContext);
@@ -495,14 +545,17 @@ const App: React.FC = () => {
     if (!isInitial) {
       try {
         Object.keys(localStorage).forEach(key => {
-          if (key.startsWith('wattson_weekly')) {
+          if (key.startsWith('wattson_weekly') || key.startsWith('wattson_saved_weekly')) {
             localStorage.removeItem(key);
           }
         });
       } catch (e) {
         console.error("Failed to clear briefing cache", e);
       }
+      localStorage.removeItem('wattson_saved_weekly_briefing');
+      localStorage.removeItem('wattson_saved_generated_weeks');
       setWeeklyBriefing(null);
+      setGeneratedWeeks([]);
     }
 
     try {
@@ -557,7 +610,10 @@ const App: React.FC = () => {
         let introMsg = `Connection established. I've analyzed your full history of **${fetchedActivities.length} activities** extending back to **${oldestDateStr}**.\n\nI'm ready to provide coaching based on your long-term evolution. What's on your mind today?`;
         
         if (planContext) {
-          introMsg += `\n\n*Applied context: ${planContext}*`;
+          const textList = getDirectivesTextList(parsePlanDirectives(planContext));
+          if (textList.length > 0) {
+            introMsg += `\n\n*Applied context: ${textList.join(' ; ')}*`;
+          }
         }
         
         setMessages([{ role: 'model', text: introMsg }]);
@@ -707,7 +763,9 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (activities && activities.length > 0) {
-      fetchWeeklyBriefingData(undefined, false, undefined, undefined, 1);
+      if (!weeklyBriefing) {
+        fetchWeeklyBriefingData(undefined, false, undefined, undefined, 1);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activities]);
@@ -740,7 +798,9 @@ const App: React.FC = () => {
       'wattson_chat_history',
       'wattson_goal',
       'wattson_seen_version',
-      'wattson_plan_context'
+      'wattson_plan_context',
+      'wattson_saved_weekly_briefing',
+      'wattson_saved_generated_weeks'
     ];
     keys.forEach(k => localStorage.removeItem(k));
     window.location.reload();
@@ -1058,7 +1118,7 @@ const App: React.FC = () => {
     // Match actual activities today against suggested workouts today so completed rides replace corresponding suggested sessions (e.g. morning commute)
     let remainingTodaySuggested = [...todaySuggestedList];
     const sortedTodayActual = [...todayActualList].sort((a, b) => a.date.getTime() - b.date.getTime());
-    const ctxLower = (planContext || '').toLowerCase();
+    const ctxLower = getDirectivesTextList(parsePlanDirectives(planContext)).join(' ').toLowerCase();
     const hasExplicitTodayRequest = ctxLower.includes('today') || ctxLower.includes('add') || ctxLower.includes('change') || ctxLower.includes('extra') || ctxLower.includes('second') || ctxLower.includes('rest');
 
     sortedTodayActual.forEach(actual => {
@@ -1465,17 +1525,7 @@ const App: React.FC = () => {
 
         {activeTab === 'rides' && (
           <div className="flex flex-col animate-in slide-in-from-right-2 duration-400">
-             {selectedActivity && creds ? (
-               <CoachingModal 
-                 activity={selectedActivity} 
-                 creds={creds} 
-                 onClose={() => setSelectedActivity(null)} 
-                 userGoal={userGoal} 
-                 ftp={ftp || undefined}
-                 allActivities={activities || undefined}
-               />
-             ) : (
-                <div className="flex flex-col pt-1 pb-2 space-y-3.5">
+            <div className="flex flex-col pt-1 pb-2 space-y-3.5">
                   {(() => {
                     const now = new Date();
                     const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -1689,7 +1739,7 @@ const App: React.FC = () => {
                       </>
                     );
                   })()}
-                </div>             )}
+                </div>
           </div>
         )}
 
@@ -2366,6 +2416,7 @@ const App: React.FC = () => {
                     creds={creds!}
                     onApplyAsSuggestion={handleApplyLibraryWorkout}
                     onClose={() => setSettingsView("main")}
+                    userGoal={userGoal}
                   />
                 )}
               </div>
@@ -2427,12 +2478,16 @@ const App: React.FC = () => {
 
                  <div className="space-y-5 py-1 max-h-[220px] overflow-y-auto custom-scrollbar px-1">
                    {currentWorkout.workout_steps && currentWorkout.workout_steps.length > 0 ? (
-                     <GroupedWorkoutStepsList 
-                       steps={currentWorkout.workout_steps}
-                       currentFtp={ftp || undefined}
-                       originalFtp={weeklyBriefing?.ftp}
-                       fontSize="base"
-                     />
+                     isEnduranceWorkout(currentWorkout) ? (
+                       <VisualProfileChart steps={currentWorkout.workout_steps} />
+                     ) : (
+                       <GroupedWorkoutStepsList 
+                         steps={currentWorkout.workout_steps}
+                         currentFtp={ftp || undefined}
+                         originalFtp={weeklyBriefing?.ftp}
+                         fontSize="base"
+                       />
+                     )
                    ) : (
                       <p className="text-[14px] text-slate-400 leading-relaxed italic text-center px-4 font-medium opacity-80">
                         {currentWorkout.description}
@@ -2497,169 +2552,154 @@ const App: React.FC = () => {
           })();
 
           return (
-            <div className="fixed inset-0 z-[220] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200" onClick={() => setSelectedSuggestedDay(null)}>
-              <div className="bg-slate-950/95 w-full max-w-sm rounded-[2rem] p-5 sm:p-6 relative border border-white/10 shadow-2xl flex flex-col max-h-[92dvh] overflow-hidden" onClick={e => e.stopPropagation()}>
-                <button onClick={() => setSelectedSuggestedDay(null)} className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full">
-                  <X size={16} />
-                </button>
+            <div className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => setSelectedSuggestedDay(null)}>
+              <div className="bg-[#0c0e15] border-t sm:border border-white/10 w-full sm:max-w-md h-[100dvh] sm:h-auto sm:max-h-[88dvh] rounded-none sm:rounded-[2.2rem] p-5 sm:p-6 shadow-[0_-10px_40px_rgba(0,0,0,0.8)] sm:shadow-2xl flex flex-col overflow-hidden relative" onClick={e => e.stopPropagation()}>
                 
-                {/* Header (locked in place) */}
-                <div className="flex flex-col items-center shrink-0 mb-4 text-center">
-                  <div className="w-9 h-9 rounded-xl bg-slate-900/50 flex flex-col items-center justify-center shrink-0 border border-white/5 shadow-inner mb-2.5">
-                    <span className="text-[7px] font-black text-slate-500 uppercase leading-none mb-0.5 tracking-tighter">{weekday}</span>
-                    <span className="text-sm font-black text-white italic leading-none">{dayNum}</span>
+                {/* Mobile drag handle */}
+                <div className="w-10 h-1 bg-white/20 rounded-full mx-auto mb-3 shrink-0 sm:hidden" />
+
+                {/* Header */}
+                <div className="flex items-center justify-between shrink-0 mb-3 pb-3 border-b border-white/5">
+                  <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                    <div className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-extrabold text-[10px] tracking-wider uppercase shrink-0">
+                      {weekday} {dayNum}
+                    </div>
+                    <h3 className="text-sm sm:text-base font-black text-white italic tracking-tight uppercase truncate">
+                      {formatPlannedRideTitle(selectedSuggestedDay.focus)}
+                    </h3>
                   </div>
-                  
-                  <h3 className="text-base sm:text-lg font-black text-white italic tracking-tighter uppercase leading-tight px-4">
-                    {formatPlannedRideTitle(selectedSuggestedDay.focus)}
-                  </h3>
+                  <button onClick={() => setSelectedSuggestedDay(null)} className="text-slate-400 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors shrink-0">
+                    <X size={18} />
+                  </button>
                 </div>
 
                 {/* Scrollable body content */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 min-h-0 space-y-3.5">
                   {isReworking ? (
-                    <div className="w-full py-6 flex flex-col items-center justify-center bg-black/60 rounded-3xl border border-white/5 text-center px-4">
-                      <Loader2 size={20} className="animate-spin text-emerald-400 mb-2.5" />
-                      <span className="text-[10px] font-black text-white uppercase tracking-wider mb-1">Calibrating Workout...</span>
-                      <span className="text-[8px] font-bold text-slate-500 uppercase font-mono tracking-widest">Applying custom adjustments</span>
+                    <div className="w-full py-8 flex flex-col items-center justify-center bg-white/[0.02] rounded-2xl border border-white/5 text-center px-4">
+                      <Loader2 size={22} className="animate-spin text-emerald-400 mb-2.5" />
+                      <span className="text-[11px] font-black text-white uppercase tracking-wider mb-1">Calibrating Workout...</span>
+                      <span className="text-[9px] font-medium text-slate-400">Applying custom adjustments</span>
                     </div>
                   ) : (
                     <>
-                      {isRest ? (
-                        <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-center space-y-4 relative overflow-hidden">
-                          <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-3">
-                            <div className="flex items-center gap-2 text-sm font-black text-slate-400 tracking-tighter">
-                              <Clock size={16} className="text-slate-500" /> {selectedSuggestedDay.duration_target} MIN
-                            </div>
-                            <div className="flex items-center gap-2 text-sm font-black text-slate-400 italic">
-                              <Zap size={16} fill="currentColor" className="text-slate-500" /> {selectedSuggestedDay.load_target} TSS
-                            </div>
-                          </div>
+                      {/* Compact Metrics Strip */}
+                      <div className="grid grid-cols-3 gap-2 p-3 bg-white/[0.03] border border-white/5 rounded-2xl">
+                        <div className="flex flex-col items-center justify-center text-center">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                            <Clock size={11} className="text-blue-400" /> Duration
+                          </span>
+                          <span className="text-xs sm:text-sm font-black text-white mt-0.5">{selectedSuggestedDay.duration_target} MIN</span>
+                        </div>
+                        <div className="flex flex-col items-center justify-center text-center border-x border-white/5">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                            <Zap size={11} fill="currentColor" className="text-amber-400" /> Load
+                          </span>
+                          <span className="text-xs sm:text-sm font-black text-amber-400 mt-0.5">{selectedSuggestedDay.load_target} TSS</span>
+                        </div>
+                        <div className="flex flex-col items-center justify-center text-center">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                            <ActivityIcon size={11} className="text-emerald-400" /> Target
+                          </span>
+                          <span className="text-xs sm:text-sm font-black text-emerald-400 mt-0.5 uppercase">
+                            {isRest ? 'Rest' : isSimpleRide ? `${simpleTargetWatts}W` : selectedSuggestedDay.intensity || 'Active'}
+                          </span>
+                        </div>
+                      </div>
 
-                          {/* Calming Recovery Visual */}
-                          <div className="bg-emerald-500/5 border border-emerald-500/20 p-5 rounded-2xl flex flex-col items-center justify-center space-y-3">
-                            <div className="w-12 h-12 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20">
-                              <Coffee size={24} className="animate-pulse text-emerald-400" />
+                      {isRest ? (
+                        <div className="space-y-3">
+                          <div className="bg-emerald-500/5 border border-emerald-500/20 p-4 rounded-2xl flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20 shrink-0">
+                              <Coffee size={20} className="animate-pulse text-emerald-400" />
                             </div>
-                            <div className="text-center">
-                              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400 block mb-1">RECOVERY IN PROGRESS</span>
-                              <p className="text-[11px] text-slate-400 font-medium px-2 leading-relaxed">
-                                No power targets today. This is when your body rebuilds, adapts to the training load, and gets stronger.
+                            <div className="flex flex-col min-w-0">
+                              <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Recovery Day</span>
+                              <p className="text-[11px] text-slate-300 font-medium leading-tight mt-0.5">
+                                No power targets today. Allow muscle fibers to adapt and rebuild.
                               </p>
                             </div>
                           </div>
 
-                          {/* Specific Recovery Advice list */}
-                          <div className="text-left bg-slate-900/40 border border-white/5 rounded-2xl p-4 space-y-2.5">
-                            <span className="text-[8.5px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1.5">RECOVERY CHECKLIST</span>
-                            <div className="flex items-start gap-2.5">
-                              <span className="text-emerald-400 mt-0.5">🧘</span>
-                              <div className="flex flex-col">
-                                <span className="text-[10.5px] font-bold text-slate-200">Muscle Repair</span>
-                                <span className="text-[9.5px] text-slate-400 font-medium">Elevate legs, practice light dynamic stretching or foam roll key muscles.</span>
+                          <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3.5 space-y-2">
+                            <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1.5">Recovery Focus</span>
+                            <div className="grid grid-cols-1 gap-2 text-left">
+                              <div className="flex items-start gap-2">
+                                <span className="text-emerald-400 text-xs mt-0.5">🧘</span>
+                                <div className="flex flex-col">
+                                  <span className="text-[11px] font-bold text-slate-200">Muscle Repair</span>
+                                  <span className="text-[10px] text-slate-400 font-normal">Elevate legs, practice dynamic stretching or light foam rolling.</span>
+                                </div>
                               </div>
-                            </div>
-                            <div className="flex items-start gap-2.5">
-                              <span className="text-emerald-400 mt-0.5">💧</span>
-                              <div className="flex flex-col">
-                                <span className="text-[10.5px] font-bold text-slate-200">Nutrition & Hydration</span>
-                                <span className="text-[9.5px] text-slate-400 font-medium">Prioritize complete protein intake and clean foods to rebuild fibers.</span>
-                              </div>
-                            </div>
-                            <div className="flex items-start gap-2.5">
-                              <span className="text-emerald-400 mt-0.5">😴</span>
-                              <div className="flex flex-col">
-                                <span className="text-[10.5px] font-bold text-slate-200">Sleep Quality</span>
-                                <span className="text-[9.5px] text-slate-400 font-medium">Aim for at least 8 hours of sleep to optimize adaptation and growth hormone release.</span>
+                              <div className="flex items-start gap-2">
+                                <span className="text-emerald-400 text-xs mt-0.5">💧</span>
+                                <div className="flex flex-col">
+                                  <span className="text-[11px] font-bold text-slate-200">Nutrition & Hydration</span>
+                                  <span className="text-[10px] text-slate-400 font-normal">Prioritize clean protein and electrolytes to rebuild glycogen stores.</span>
+                                </div>
                               </div>
                             </div>
                           </div>
 
-                          <p className="text-[12px] text-slate-300 leading-relaxed text-center px-2 font-medium opacity-90 italic">
-                            "{selectedSuggestedDay.why || 'Allow full adaptation.'}"
-                          </p>
+                          {selectedSuggestedDay.why && (
+                            <p className="text-xs text-slate-300 leading-relaxed italic text-center px-2 font-medium opacity-90">
+                              "{selectedSuggestedDay.why}"
+                            </p>
+                          )}
 
-                          <div className="mt-2.5 pt-3.5 border-t border-white/5 text-left bg-purple-500/5 border border-purple-500/10 rounded-2xl p-3.5 space-y-2">
+                          <div className="bg-purple-500/5 border-l-2 border-purple-400/80 rounded-r-2xl p-3.5 space-y-1">
                             <div className="flex items-center gap-1.5 text-purple-400">
-                              <Sparkles size={11} className="animate-pulse" />
-                              <span className="text-[9px] font-black uppercase tracking-widest">waTTson Coach Insight</span>
+                              <Sparkles size={12} className="animate-pulse" />
+                              <span className="text-[9.5px] font-black uppercase tracking-widest">waTTson Coach Insight</span>
                             </div>
-                            <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+                            <p className="text-[11px] text-slate-300 leading-relaxed font-normal">
                               {getCoachingInsight(selectedSuggestedDay, userProfile, userGoal)}
                             </p>
                           </div>
                         </div>
                       ) : isSimpleRide ? (
-                        <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-center space-y-4 relative overflow-hidden">
-                          <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-3">
-                            <div className="flex items-center gap-2 text-sm font-black text-white tracking-tighter">
-                              <Clock size={16} className="text-blue-400" /> {selectedSuggestedDay.duration_target} MIN
-                            </div>
-                            <div className="flex items-center gap-2 text-sm font-black text-amber-400 italic">
-                              <Zap size={16} fill="currentColor" className="text-amber-400" /> {selectedSuggestedDay.load_target} TSS
-                            </div>
-                          </div>
-
-                          {/* Single Target Power Display for Simple Recovery & Endurance Rides */}
-                          <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-2xl flex flex-col items-center justify-center space-y-1">
-                            <span className="text-[8.5px] font-black uppercase tracking-widest text-emerald-400">Target Steady Power</span>
-                            <div className="flex items-baseline justify-center gap-1">
-                              <span className="text-3xl font-black italic font-mono text-white">{simpleTargetWatts}</span>
-                              <span className="text-xs font-black text-emerald-400 uppercase italic">Watts</span>
-                            </div>
-                            {ftp && simpleTargetWatts > 0 && (
-                              <span className="text-[9.5px] font-extrabold text-slate-400 font-mono">
-                                ~{Math.round((simpleTargetWatts / (ftp || 250)) * 100)}% FTP
-                              </span>
-                            )}
-                          </div>
-
-                          <p className="text-[12px] text-slate-300 leading-relaxed text-center px-2 font-medium opacity-90 italic">
+                        <div className="space-y-3">
+                          <p className="text-xs text-slate-300 leading-relaxed text-center px-2 font-medium italic">
                             "{selectedSuggestedDay.why || 'Focus on steady cadence and fluid pedaling.'}"
                           </p>
 
-                          <div className="mt-2 text-left bg-purple-500/5 border border-purple-500/10 rounded-2xl p-3.5 space-y-2">
+                          <div className="bg-purple-500/5 border-l-2 border-purple-400/80 rounded-r-2xl p-3.5 space-y-1">
                             <div className="flex items-center gap-1.5 text-purple-400">
-                              <Sparkles size={11} className="animate-pulse" />
-                              <span className="text-[9px] font-black uppercase tracking-widest">waTTson Coach Insight</span>
+                              <Sparkles size={12} className="animate-pulse" />
+                              <span className="text-[9.5px] font-black uppercase tracking-widest">waTTson Coach Insight</span>
                             </div>
-                            <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+                            <p className="text-[11px] text-slate-300 leading-relaxed font-normal">
                               {getCoachingInsight(selectedSuggestedDay, userProfile, userGoal)}
                             </p>
                           </div>
                         </div>
                       ) : (
-                        <div className="bg-black/60 p-5 rounded-3xl border border-white/5 w-full text-left space-y-4 relative overflow-hidden">
-                          <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-4">
-                            <div className="flex items-center gap-2 text-sm font-black text-white tracking-tighter">
-                              <Clock size={16} className="text-blue-400" /> {selectedSuggestedDay.duration_target} MIN
-                            </div>
-                            <div className="flex items-center gap-2 text-sm font-black text-amber-400 italic">
-                              <Zap size={16} fill="currentColor" className="text-amber-400" /> {selectedSuggestedDay.load_target} TSS
-                            </div>
-                          </div>
-
-                          <div className="space-y-3 py-2 max-h-[220px] overflow-y-auto custom-scrollbar px-1">
+                        <div className="space-y-3">
+                          <div className="space-y-3 py-1 max-h-[240px] overflow-y-auto custom-scrollbar">
                             {selectedSuggestedDay.workout_steps && selectedSuggestedDay.workout_steps.length > 0 ? (
-                              <GroupedWorkoutStepsList 
-                                steps={selectedSuggestedDay.workout_steps}
-                                currentFtp={ftp || undefined}
-                                originalFtp={weeklyBriefing?.ftp}
-                                fontSize="sm"
-                              />
+                              isEnduranceWorkout(selectedSuggestedDay) ? (
+                                <VisualProfileChart steps={selectedSuggestedDay.workout_steps} />
+                              ) : (
+                                <GroupedWorkoutStepsList 
+                                  steps={selectedSuggestedDay.workout_steps}
+                                  currentFtp={ftp || undefined}
+                                  originalFtp={weeklyBriefing?.ftp}
+                                  fontSize="sm"
+                                />
+                              )
                             ) : (
-                              <p className="text-[13px] text-slate-400 leading-relaxed text-center px-2 font-medium opacity-80">
+                              <p className="text-xs text-slate-300 leading-relaxed text-center px-2 font-medium opacity-90 italic">
                                 {selectedSuggestedDay.why}
                               </p>
                             )}
                           </div>
 
-                          <div className="mt-2 pt-3 text-left border-t border-white/5 bg-purple-500/5 border border-purple-500/10 rounded-2xl p-3.5 space-y-2">
+                          <div className="bg-purple-500/5 border-l-2 border-purple-400/80 rounded-r-2xl p-3.5 space-y-1">
                             <div className="flex items-center gap-1.5 text-purple-400">
-                              <Sparkles size={11} className="animate-pulse" />
-                              <span className="text-[9px] font-black uppercase tracking-widest">waTTson Coach Insight</span>
+                              <Sparkles size={12} className="animate-pulse" />
+                              <span className="text-[9.5px] font-black uppercase tracking-widest">waTTson Coach Insight</span>
                             </div>
-                            <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+                            <p className="text-[11px] text-slate-300 leading-relaxed font-normal">
                               {getCoachingInsight(selectedSuggestedDay, userProfile, userGoal)}
                             </p>
                           </div>
@@ -2669,19 +2709,31 @@ const App: React.FC = () => {
                   )}
                 </div>
 
-                {/* Footer close button (locked in place) */}
-                <div className="mt-4 shrink-0 w-full pt-1.5 border-t border-white/5">
+                {/* Footer close button */}
+                <div className="pt-3 shrink-0 border-t border-white/5 mt-auto">
                   <button 
                     onClick={() => setSelectedSuggestedDay(null)}
-                    className="w-full py-2.5 bg-[#1a1c22] hover:bg-slate-800 rounded-xl text-[10px] font-black text-slate-300 hover:text-white transition-all uppercase tracking-[0.2em] active:scale-95"
+                    className="w-full py-3 bg-white/5 hover:bg-white/10 active:scale-[0.98] text-slate-300 hover:text-white rounded-xl text-xs font-black uppercase tracking-[0.15em] transition-all cursor-pointer"
                   >
-                    CLOSE
+                    Close
                   </button>
                 </div>
               </div>
             </div>
           );
       })()}
+
+      {/* Past Ride Detail Modal */}
+      {selectedActivity && creds && (
+        <CoachingModal 
+          activity={selectedActivity} 
+          creds={creds} 
+          onClose={() => setSelectedActivity(null)} 
+          userGoal={userGoal} 
+          ftp={ftp || undefined}
+          allActivities={activities || undefined}
+        />
+      )}
 
       {/* Request Change Modal */}
       {showRequestChangeModal && (() => {
@@ -2729,107 +2781,118 @@ const App: React.FC = () => {
                 </div>
 
                 {(() => {
-                  const activeDirectivesList = planContext ? planContext.split(' ; ').map(s => s.trim()).filter(Boolean) : [];
+                  const activeDirectivesList = parsePlanDirectives(planContext);
                   
                   if (activeDirectivesList.length > 0) {
                     return (
                       <div className="space-y-3">
                         <div className="space-y-2 max-h-48 sm:max-h-60 overflow-y-auto custom-scrollbar p-1">
-                          {activeDirectivesList.map((directive, idx) => (
-                            <div 
-                              key={`${idx}-${directive}`}
-                              className="bg-[#0a0d14] border border-emerald-500/20 hover:border-emerald-500/40 rounded-xl p-2.5 sm:p-3 transition-all shadow-sm flex flex-col gap-2"
-                            >
-                              {editingDirectiveIdx === idx ? (
-                                <div className="w-full flex flex-col gap-2">
-                                  <textarea
-                                    value={editingDirectiveText}
-                                    onChange={(e) => setEditingDirectiveText(e.target.value)}
-                                    className="w-full bg-slate-950 border border-emerald-500/40 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 min-h-[60px] resize-none"
-                                  />
-                                  <div className="flex items-center justify-end gap-2">
-                                    <button
-                                      onClick={() => {
-                                        setEditingDirectiveIdx(null);
-                                      }}
-                                      className="px-3 py-1 rounded bg-slate-800 text-slate-300 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-700 transition-colors"
-                                    >
-                                      Cancel
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        if (!editingDirectiveText.trim()) return;
-                                        const updated = [...activeDirectivesList];
-                                        updated[idx] = editingDirectiveText.trim();
-                                        const newContext = updated.join(' ; ');
-                                        setPlanContext(newContext);
-                                        safeSetItem('wattson_plan_context', newContext);
-                                        setLastAppliedTweak(`Updated: "${editingDirectiveText.trim()}"`);
-                                        setShowTweakSuccessNotice(false);
-                                        setGeneratedWeeks([]);
-                                        setWeeklyBriefing(null);
-                                        fetchWeeklyBriefingData(newContext, true, undefined, undefined, 1);
-                                        setEditingDirectiveIdx(null);
-                                      }}
-                                      className="px-3 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-500/30 transition-colors"
-                                    >
-                                      Save
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="flex items-start justify-between gap-2.5">
-                                  <div className="flex items-start gap-2 min-w-0">
-                                    <span className="text-emerald-400 font-black text-[9px] mt-0.5 shrink-0 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md">
-                                      #{idx + 1}
-                                    </span>
-                                    <span className="text-xs text-slate-200 font-medium leading-snug break-words">
-                                      {directive}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    <button
-                                      onClick={() => {
-                                        setEditingDirectiveIdx(idx);
-                                        setEditingDirectiveText(directive);
-                                      }}
-                                      title="Edit directive"
-                                      className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all active:scale-90 cursor-pointer"
-                                    >
-                                      <Edit size={14} />
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        const updated = activeDirectivesList.filter((_, i) => i !== idx);
-                                        if (updated.length === 0) {
-                                          setPlanContext(null);
-                                          localStorage.removeItem('wattson_plan_context');
-                                          setLastAppliedTweak(null);
+                          {activeDirectivesList.map((dirObj, idx) => {
+                            const isToday = dirObj.requestedAt === getTodayDateString();
+                            const dateDisplay = isToday ? 'Today' : dirObj.requestedAt;
+                            return (
+                              <div 
+                                key={dirObj.id || `${idx}-${dirObj.text}`}
+                                className="bg-[#0a0d14] border border-emerald-500/20 hover:border-emerald-500/40 rounded-xl p-2.5 sm:p-3 transition-all shadow-sm flex flex-col gap-2"
+                              >
+                                {editingDirectiveIdx === idx ? (
+                                  <div className="w-full flex flex-col gap-2">
+                                    <textarea
+                                      value={editingDirectiveText}
+                                      onChange={(e) => setEditingDirectiveText(e.target.value)}
+                                      className="w-full bg-slate-950 border border-emerald-500/40 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 min-h-[60px] resize-none"
+                                    />
+                                    <div className="flex items-center justify-end gap-2">
+                                      <button
+                                        onClick={() => {
+                                          setEditingDirectiveIdx(null);
+                                        }}
+                                        className="px-3 py-1 rounded bg-slate-800 text-slate-300 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-700 transition-colors"
+                                      >
+                                        Cancel
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          if (!editingDirectiveText.trim()) return;
+                                          const updated = [...activeDirectivesList];
+                                          updated[idx] = { ...updated[idx], text: editingDirectiveText.trim() };
+                                          const { active } = pruneExpiredDirectives(updated);
+                                          const newContext = serializePlanDirectives(active);
+                                          setPlanContext(newContext);
+                                          safeSetItem('wattson_plan_context', newContext);
+                                          setLastAppliedTweak(`Updated: "${editingDirectiveText.trim()}"`);
                                           setShowTweakSuccessNotice(false);
                                           setGeneratedWeeks([]);
                                           setWeeklyBriefing(null);
-                                          fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
-                                          setShowDirectivesSubModal(false);
-                                          setShowRequestChangeModal(false);
-                                        } else {
-                                          const newContext = updated.join(' ; ');
-                                          setPlanContext(newContext);
-                                          safeSetItem('wattson_plan_context', newContext);
-                                          setGeneratedWeeks([]);
-                                          setWeeklyBriefing(null);
                                           fetchWeeklyBriefingData(newContext, true, undefined, undefined, 1);
-                                        }
-                                      }}
-                                      title="Delete directive"
-                                      className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all active:scale-90 cursor-pointer"
-                                    >
-                                      <Trash2 size={14} />
-                                    </button>
+                                          setEditingDirectiveIdx(null);
+                                        }}
+                                        className="px-3 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-500/30 transition-colors"
+                                      >
+                                        Save
+                                      </button>
+                                    </div>
                                   </div>
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                                ) : (
+                                  <div className="flex items-start justify-between gap-2.5">
+                                    <div className="flex items-start gap-2 min-w-0">
+                                      <span className="text-emerald-400 font-black text-[9px] mt-0.5 shrink-0 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md">
+                                        #{idx + 1}
+                                      </span>
+                                      <div className="flex flex-col min-w-0">
+                                        <span className="text-xs text-slate-200 font-medium leading-snug break-words">
+                                          {dirObj.text}
+                                        </span>
+                                        <span className="text-[9px] font-semibold text-emerald-400/80 mt-1 flex items-center gap-1">
+                                          Requested: {dateDisplay}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <button
+                                        onClick={() => {
+                                          setEditingDirectiveIdx(idx);
+                                          setEditingDirectiveText(dirObj.text);
+                                        }}
+                                        title="Edit directive"
+                                        className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all active:scale-90 cursor-pointer"
+                                      >
+                                        <Edit size={14} />
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          const updated = activeDirectivesList.filter((_, i) => i !== idx);
+                                          if (updated.length === 0) {
+                                            setPlanContext(null);
+                                            localStorage.removeItem('wattson_plan_context');
+                                            setLastAppliedTweak(null);
+                                            setShowTweakSuccessNotice(false);
+                                            setGeneratedWeeks([]);
+                                            setWeeklyBriefing(null);
+                                            fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
+                                            setShowDirectivesSubModal(false);
+                                            setShowRequestChangeModal(false);
+                                          } else {
+                                            const { active } = pruneExpiredDirectives(updated);
+                                            const newContext = serializePlanDirectives(active);
+                                            setPlanContext(newContext);
+                                            safeSetItem('wattson_plan_context', newContext);
+                                            setGeneratedWeeks([]);
+                                            setWeeklyBriefing(null);
+                                            fetchWeeklyBriefingData(newContext, true, undefined, undefined, 1);
+                                          }
+                                        }}
+                                        title="Delete directive"
+                                        className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all active:scale-90 cursor-pointer"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
 
                         <button
@@ -2939,7 +3002,7 @@ const App: React.FC = () => {
                         Active Directives
                       </span>
                       <p className="text-[10.5px] font-bold text-slate-200 truncate mt-0.5">
-                        "{planContext}"
+                        "{getDirectivesTextList(parsePlanDirectives(planContext)).join(' ; ')}"
                       </p>
                     </div>
                   </div>
@@ -3071,12 +3134,16 @@ const App: React.FC = () => {
 
                  <div className="space-y-4 py-1 max-h-[180px] overflow-y-auto custom-scrollbar px-1">
                    {currentWorkout?.workout_steps && currentWorkout.workout_steps.length > 0 ? (
-                     <GroupedWorkoutStepsList 
-                       steps={currentWorkout.workout_steps}
-                       currentFtp={ftp || undefined}
-                       originalFtp={weeklyBriefing?.ftp}
-                       fontSize="sm"
-                     />
+                     isEnduranceWorkout(currentWorkout) ? (
+                       <VisualProfileChart steps={currentWorkout.workout_steps} />
+                     ) : (
+                       <GroupedWorkoutStepsList 
+                         steps={currentWorkout.workout_steps}
+                         currentFtp={ftp || undefined}
+                         originalFtp={weeklyBriefing?.ftp}
+                         fontSize="sm"
+                       />
+                     )
                    ) : (
                       <p className="text-[13px] text-slate-400 leading-relaxed italic text-center px-4 font-medium opacity-80">
                         {suggestion.reasoning}

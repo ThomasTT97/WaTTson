@@ -1,24 +1,34 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Clock, Zap, BookOpen, Calendar, Check, Loader2, ArrowRight, ChevronDown, ChevronRight, ChevronLeft, BarChart2 } from 'lucide-react';
+import { Search, Clock, Zap, BookOpen, Calendar, Check, Loader2, ArrowRight, ChevronDown, ChevronRight, ChevronLeft, BarChart2, Plus, Sparkles } from 'lucide-react';
 import { LibraryWorkout, WORKOUT_LIBRARY } from '../services/workoutLibrary';
 import { IntervalsCredentials } from '../types';
 import { uploadWorkout } from '../services/intervalsService';
+import { createCustomWorkoutRequest } from '../services/geminiService';
+import { isEnduranceWorkout } from './StepLabel';
 
 interface WorkoutLibraryProps {
   ftp: number;
   creds: IntervalsCredentials;
   onApplyAsSuggestion: (workout: LibraryWorkout) => void;
   onClose: () => void;
+  userGoal?: string;
 }
 
 export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
   ftp = 250,
   creds,
   onApplyAsSuggestion,
-  onClose
+  onClose,
+  userGoal
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   
+  // Custom Workout Request State
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState('');
+  const [isGeneratingCustom, setIsGeneratingCustom] = useState(false);
+  const [customError, setCustomError] = useState<string | null>(null);
+
   // Track expanded categories - all collapsed by default
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
     'Recovery': false,
@@ -221,6 +231,25 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
     }, 1200);
   };
 
+  const handleGenerateCustomWorkout = async () => {
+    if (!customPrompt.trim()) return;
+    setIsGeneratingCustom(true);
+    setCustomError(null);
+    try {
+      const customWorkout = await createCustomWorkoutRequest(customPrompt, ftp, userGoal);
+      // Select newly generated custom workout directly
+      setSelectedWorkout(customWorkout);
+      setShowCreateModal(false);
+      setCustomPrompt('');
+      setShowDetailedSteps(true);
+      setActionTab('today');
+    } catch (err: any) {
+      setCustomError(err.message || 'Failed to create workout. Please try again.');
+    } finally {
+      setIsGeneratingCustom(false);
+    }
+  };
+
   const getCategoryColor = (category: string) => {
     switch (category) {
       case 'Recovery': return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
@@ -242,6 +271,85 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
   if (!selectedWorkout) {
     return (
       <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+        {/* Request Custom Workout Banner/Card */}
+        <div className="bg-gradient-to-r from-emerald-500/10 via-cyan-500/10 to-blue-500/10 border border-emerald-500/20 rounded-2xl p-4 space-y-3 shadow-lg">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                <Sparkles size={18} className="animate-pulse" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-xs font-black text-white uppercase tracking-wider italic truncate">Request Custom Workout</h4>
+                <p className="text-[10px] text-slate-400 font-medium truncate">Ask waTTson to create a specific workout session for you</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowCreateModal(!showCreateModal)}
+              className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer shrink-0"
+            >
+              <Plus size={13} /> {showCreateModal ? 'Close' : 'Request'}
+            </button>
+          </div>
+
+          {showCreateModal && (
+            <div className="pt-2 border-t border-white/10 space-y-3 animate-in slide-in-from-top-2 duration-200">
+              <textarea
+                value={customPrompt}
+                onChange={(e) => setCustomPrompt(e.target.value)}
+                placeholder="Describe your desired workout (e.g. '4x8m Over-Unders at 105%/95% FTP', '3x15m Sweet Spot with 3m rest', or 'Pyramid 1-2-3-4-3-2-1m VO2max')..."
+                rows={2.5}
+                className="w-full bg-[#0a0d14] border border-white/10 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/40 font-medium resize-none shadow-inner"
+              />
+
+              {/* Quick suggestion chips */}
+              <div className="space-y-1">
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">Quick Examples:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    '4x8m Over-Unders (105%/95% FTP)',
+                    '3x15m Sweet Spot (90% FTP)',
+                    '4x4m Norwegian VO2Max',
+                    'Pyramid 1-2-3-4-3-2-1m Intervals'
+                  ].map((idea) => (
+                    <button
+                      key={idea}
+                      type="button"
+                      onClick={() => setCustomPrompt(idea)}
+                      className="text-[9.5px] font-bold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded-lg border border-white/5 transition-all text-left"
+                    >
+                      + {idea}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {customError && (
+                <p className="text-[10px] font-semibold text-rose-400 bg-rose-500/10 border border-rose-500/20 p-2.5 rounded-xl">
+                  {customError}
+                </p>
+              )}
+
+              <button
+                onClick={handleGenerateCustomWorkout}
+                disabled={isGeneratingCustom || !customPrompt.trim()}
+                className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 font-black text-[10px] uppercase tracking-widest rounded-xl transition-all active:scale-[0.98] flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-emerald-500/10"
+              >
+                {isGeneratingCustom ? (
+                  <>
+                    <Loader2 size={13} className="animate-spin text-slate-950" />
+                    <span>waTTson is generating your workout...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={13} />
+                    <span>Generate & Open Workout</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Expandable Categories List */}
         <div className="space-y-2.5">
           {categories.map(category => {
@@ -408,63 +516,65 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
         </div>
 
         {/* Collapsible Steps List */}
-        <div className="border-t border-white/5 pt-4">
-          <button 
-            onClick={() => setShowDetailedSteps(!showDetailedSteps)}
-            className="w-full flex items-center justify-between text-[9px] font-black text-slate-500 hover:text-white uppercase tracking-widest"
-          >
-            <span>{showDetailedSteps ? 'Hide detailed steps' : 'Show detailed steps'}</span>
-            <ChevronDown size={12} className={`transition-transform duration-200 ${showDetailedSteps ? 'rotate-180' : ''}`} />
-          </button>
+        {!isEnduranceWorkout(selectedWorkout) && (
+          <div className="border-t border-white/5 pt-4">
+            <button 
+              onClick={() => setShowDetailedSteps(!showDetailedSteps)}
+              className="w-full flex items-center justify-between text-[9px] font-black text-slate-500 hover:text-white uppercase tracking-widest"
+            >
+              <span>{showDetailedSteps ? 'Hide detailed steps' : 'Show detailed steps'}</span>
+              <ChevronDown size={12} className={`transition-transform duration-200 ${showDetailedSteps ? 'rotate-180' : ''}`} />
+            </button>
 
-          {showDetailedSteps && (
-            <div className="mt-3 space-y-2 max-h-[220px] overflow-y-auto custom-scrollbar pr-1 animate-in slide-in-from-top-1 duration-150">
-              {groupedSteps.map((group) => {
-                if (group.type === 'repeated' && group.steps) {
-                  return (
-                    <div key={group.id} className="border border-blue-500/10 bg-blue-500/5 rounded-2xl p-2.5 space-y-1.5">
-                      <div className="flex items-center gap-1.5 px-1">
-                        <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest font-mono bg-blue-500/10 px-2 py-0.5 rounded-md">
-                          {group.reps}x Repeat Block
-                        </span>
-                      </div>
-                      <div className="pl-3.5 border-l border-white/10 space-y-1.5">
-                        {group.steps.map((subStep, subIdx) => {
-                          const watts = Math.round(subStep.target_pct * ftp);
-                          return (
-                            <div key={subIdx} className="flex items-center justify-between px-3 py-1.5 bg-slate-900/40 rounded-xl text-[10px]">
-                              <span className="text-slate-200 font-semibold truncate pr-2">{subStep.label}</span>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className="text-[8.5px] text-slate-500 font-mono">
-                                  {subStep.duration < 1 ? `${Math.round(subStep.duration * 60)}s` : `${subStep.duration}m`}
-                                </span>
-                                <span className="text-blue-400 font-extrabold font-mono">{watts}W</span>
+            {showDetailedSteps && (
+              <div className="mt-3 space-y-2 max-h-[220px] overflow-y-auto custom-scrollbar pr-1 animate-in slide-in-from-top-1 duration-150">
+                {groupedSteps.map((group) => {
+                  if (group.type === 'repeated' && group.steps) {
+                    return (
+                      <div key={group.id} className="border border-blue-500/10 bg-blue-500/5 rounded-2xl p-2.5 space-y-1.5">
+                        <div className="flex items-center gap-1.5 px-1">
+                          <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest font-mono bg-blue-500/10 px-2 py-0.5 rounded-md">
+                            {group.reps}x Repeat Block
+                          </span>
+                        </div>
+                        <div className="pl-3.5 border-l border-white/10 space-y-1.5">
+                          {group.steps.map((subStep, subIdx) => {
+                            const watts = Math.round(subStep.target_pct * ftp);
+                            return (
+                              <div key={subIdx} className="flex items-center justify-between px-3 py-1.5 bg-slate-900/40 rounded-xl text-[10px]">
+                                <span className="text-slate-200 font-semibold truncate pr-2">{subStep.label}</span>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="text-[8.5px] text-slate-500 font-mono">
+                                    {subStep.duration < 1 ? `${Math.round(subStep.duration * 60)}s` : `${subStep.duration}m`}
+                                  </span>
+                                  <span className="text-blue-400 font-extrabold font-mono">{watts}W</span>
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  );
-                } else if (group.type === 'single' && group.step) {
-                  const watts = Math.round(group.step.target_pct * ftp);
-                  return (
-                    <div key={group.id} className="flex items-center justify-between px-3.5 py-2 bg-slate-900/60 rounded-xl border border-white/5 text-[10.5px]">
-                      <span className="text-white font-semibold truncate pr-2">{group.step.label}</span>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-[9px] text-slate-500 font-mono">
-                          {group.step.duration < 1 ? `${Math.round(group.step.duration * 60)}s` : `${group.step.duration}m`}
-                        </span>
-                        <span className="text-emerald-400 font-extrabold font-mono">{watts}W</span>
+                    );
+                  } else if (group.type === 'single' && group.step) {
+                    const watts = Math.round(group.step.target_pct * ftp);
+                    return (
+                      <div key={group.id} className="flex items-center justify-between px-3.5 py-2 bg-slate-900/60 rounded-xl border border-white/5 text-[10.5px]">
+                        <span className="text-white font-semibold truncate pr-2">{group.step.label}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[9px] text-slate-500 font-mono">
+                            {group.step.duration < 1 ? `${Math.round(group.step.duration * 60)}s` : `${group.step.duration}m`}
+                          </span>
+                          <span className="text-emerald-400 font-extrabold font-mono">{watts}W</span>
+                        </div>
                       </div>
-                    </div>
-                  );
-                }
-                return null;
-              })}
-            </div>
-          )}
-        </div>
+                    );
+                  }
+                  return null;
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Unified Action Tabs */}
         <div className="border-t border-white/5 pt-4 space-y-4">

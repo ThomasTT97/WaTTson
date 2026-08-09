@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, Wellness, WeeklyBriefing, IntervalsCredentials, DailySuggestion, AnnualPowerCurve } from '../types';
 import { uploadWorkout } from '../services/intervalsService';
-import { scaleLabelWatts, GroupedWorkoutStepsList } from './StepLabel';
+import { scaleLabelWatts, GroupedWorkoutStepsList, isEnduranceWorkout, VisualProfileChart } from './StepLabel';
 import { SuggestedWorkoutCard } from './SuggestedWorkoutCard';
 import { 
   X, Sparkles, Trophy, Clock, Zap, Info, 
@@ -475,12 +475,16 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
 
                  <div className="space-y-3 max-h-[180px] overflow-y-auto custom-scrollbar pr-1">
                    {selectedDay.workout_steps && selectedDay.workout_steps.length > 0 ? (
-                      <GroupedWorkoutStepsList 
-                        steps={selectedDay.workout_steps}
-                        currentFtp={ftp || undefined}
-                        originalFtp={weeklyBriefing?.ftp}
-                        fontSize="sm"
-                      />
+                      isEnduranceWorkout(selectedDay) ? (
+                        <VisualProfileChart steps={selectedDay.workout_steps} />
+                      ) : (
+                        <GroupedWorkoutStepsList 
+                          steps={selectedDay.workout_steps}
+                          currentFtp={ftp || undefined}
+                          originalFtp={weeklyBriefing?.ftp}
+                          fontSize="sm"
+                        />
+                      )
                    ) : (
                       <p className="text-xs text-slate-400 leading-relaxed text-center px-2 font-medium opacity-80">
                         {selectedDay.why}

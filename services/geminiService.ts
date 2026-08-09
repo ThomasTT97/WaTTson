@@ -23,7 +23,13 @@ import {
   getThreeMonthReviewPrompt
 } from "./promptTemplates";
 import { detectIntervalsFromLaps } from "./intervalsService";
-import { matchWorkoutToLibrary } from "./workoutLibrary";
+import { matchWorkoutToLibrary, LibraryWorkout } from "./workoutLibrary";
+import {
+  parsePlanDirectives,
+  pruneExpiredDirectives,
+  formatDirectivesForPrompt,
+  serializePlanDirectives
+} from "./directiveService";
 
 
 /**
@@ -657,8 +663,13 @@ export const getWeeklyBriefing = async (
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   
-  // Include startContext, planContext, methodology in cache key
-  const contextHash = (startContext || '') + (planContext || '') + (methodology || '');
+  // Parse and prune planContext directives relative to today
+  const parsedDirectives = parsePlanDirectives(planContext);
+  const { active: activeDirectives } = pruneExpiredDirectives(parsedDirectives, todayStr);
+  const formattedPlanContext = formatDirectivesForPrompt(activeDirectives, todayStr);
+  
+  // Include startContext, formattedPlanContext, methodology in cache key
+  const contextHash = (startContext || '') + (formattedPlanContext || '') + (methodology || '');
   
   // Safe hash instead of fragile btoa which crashes on non-ASCII characters
   const safeHash = (str: string) => {
@@ -745,7 +756,7 @@ export const getWeeklyBriefing = async (
     userGoal: userGoal || 'Increase endurance',
     stats,
     startContext,
-    planContext,
+    planContext: formattedPlanContext,
     pcCtx,
     dayNames,
     ftp,
@@ -1174,4 +1185,94 @@ export const analyzeThreeMonthReview = async (
   setCache(cacheKey, parsed);
   return parsed;
 };
+
+/**
+ * Generate a custom workout based on user's specific request using Gemini AI
+ */
+export const createCustomWorkoutRequest = async (
+  prompt: string,
+  ftp: number = 250,
+  userGoal?: string
+): Promise<LibraryWorkout> => {
+  const systemInstruction = `You are waTTson, an expert elite cycling performance coach. The athlete requested a custom cycling workout.
+Construct a precise, structured cycling workout adhering strictly to this JSON schema:
+{
+  "title": "Concise workout title (e.g., 4x8m Norwegian VO2Max Intervals)",
+  "description": "Clear explanation of the workout structure, target energy system, and tactical benefits.",
+  "category": "Recovery" | "Endurance" | "Tempo/Sweet Spot" | "Threshold" | "VO2 Max" | "Anaerobic",
+  "intensity": "Easy" | "Medium" | "Hard",
+  "duration_minutes": 60,
+  "tss": 55,
+  "workout_steps": [
+    {
+      "duration": 10,
+      "target_pct": 0.55,
+      "label": "Warmup - gradual spin"
+    },
+    {
+      "duration": 4,
+      "target_pct": 1.08,
+      "label": "Rep 1 - Hard effort"
+    },
+    {
+      "duration": 3,
+      "target_pct": 0.50,
+      "label": "Active recovery spin"
+    }
+  ]
+}
+
+Rules:
+1. "target_pct" is a decimal fraction of FTP (e.g. 0.55 for 55% FTP, 0.90 for 90% FTP, 1.10 for 110% FTP).
+2. All step durations (in minutes or fractions of minutes, e.g. 0.5 for 30s) MUST sum up exactly to "duration_minutes".
+3. Calculate an accurate estimated "tss" based on duration and intensity.
+4. Keep the output strictly valid JSON with no markdown tags.`;
+
+  const userContent = `User Custom Workout Request: "${prompt}"
+Athlete FTP: ${ftp}W
+${userGoal ? `Athlete Primary Goal: ${userGoal}` : ''}`;
+
+  const response = await callGemini({
+    contents: [{ role: 'user', parts: [{ text: userContent }] }],
+    config: {
+      systemInstruction,
+      temperature: 0.3,
+      responseMimeType: "application/json"
+    }
+  });
+
+  const parsed = safeParseJSON(response.text);
+
+  const id = `custom_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const title = parsed.title || "Custom Requested Workout";
+  const category = (['Recovery', 'Endurance', 'Tempo/Sweet Spot', 'Threshold', 'VO2 Max', 'Anaerobic'].includes(parsed.category) 
+    ? parsed.category 
+    : 'Threshold') as LibraryWorkout['category'];
+  const intensity = (['Easy', 'Medium', 'Hard'].includes(parsed.intensity) ? parsed.intensity : 'Hard') as LibraryWorkout['intensity'];
+  const steps = Array.isArray(parsed.workout_steps) && parsed.workout_steps.length > 0 
+    ? parsed.workout_steps 
+    : [
+        { duration: 10, target_pct: 0.55, label: "Warmup" },
+        { duration: 40, target_pct: 0.85, label: "Custom Effort" },
+        { duration: 10, target_pct: 0.50, label: "Cooldown" }
+      ];
+
+  const totalDur = steps.reduce((sum: number, s: any) => sum + (s.duration || 0), 0);
+
+  return {
+    id,
+    title,
+    description: parsed.description || `Custom workout tailored by waTTson based on: "${prompt}".`,
+    category,
+    intensity,
+    duration_minutes: Math.round(totalDur) || parsed.duration_minutes || 60,
+    tss: parsed.tss || 50,
+    workout_steps: steps.map((s: any) => ({
+      duration: s.duration || 5,
+      target_pct: typeof s.target_pct === 'number' ? s.target_pct : 0.70,
+      label: s.label || 'Step'
+    }))
+  };
+};
+
 
