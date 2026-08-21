@@ -56,6 +56,11 @@ export interface Activity {
   icu_tsb?: number;
   analyzed?: boolean;
   icu_eftp?: number;
+  icu_intervals?: any[];
+  icu_laps?: any[];
+  icu_groups?: any[];
+  icu_intervals_edited?: any[];
+  laps?: any[];
 }
 
 export interface ActivityInterval {
@@ -67,6 +72,10 @@ export interface ActivityInterval {
   moving_time: number;
   type: 'WORK' | 'RECOVERY' | 'WARMUP' | 'COOLDOWN';
   label?: string;
+  max_watts?: number;
+  max_heartrate?: number;
+  average_cadence?: number;
+  distance?: number;
 }
 
 export interface PlannedWorkout {

@@ -9,30 +9,69 @@ interface ActivityCardProps {
   isToday?: boolean;
 }
 
-export const getRideType = (activity: Activity, intervals?: ActivityInterval[]): string => {
-  // Check the custom ride types cache first
-  try {
-    const customTypes = localStorage.getItem('wattson_custom_ride_types');
-    if (customTypes) {
-      const parsed = JSON.parse(customTypes);
-      if (parsed[activity.id]) {
-        return parsed[activity.id];
-      }
-    }
-  } catch (e) {}
+// In-memory cache for fast lookup without disk I/O on every render
+let inMemoryRideTypes: Record<string, string> | null = null;
+let saveTimeout: any = null;
 
-  // If intervals are provided, try to detect programmatically
-  if (intervals && intervals.length > 0) {
-    const detected = detectIntervalsFromLaps(activity, intervals);
-    if (detected) {
-      try {
-        const customTypes = localStorage.getItem('wattson_custom_ride_types') || '{}';
-        const parsed = JSON.parse(customTypes);
-        parsed[activity.id] = detected;
-        localStorage.setItem('wattson_custom_ride_types', JSON.stringify(parsed));
-      } catch (e) {}
-      return detected;
+const getStoredRideTypes = (): Record<string, string> => {
+  if (inMemoryRideTypes !== null) return inMemoryRideTypes;
+  try {
+    const raw = localStorage.getItem('wattson_custom_ride_types');
+    inMemoryRideTypes = raw ? JSON.parse(raw) : {};
+  } catch {
+    inMemoryRideTypes = {};
+  }
+  return inMemoryRideTypes || {};
+};
+
+const setCachedRideType = (id: string, type: string) => {
+  const cache = getStoredRideTypes();
+  if (cache[id] === type) return;
+  cache[id] = type;
+  
+  // Debounce localStorage writes so hundreds of cards don't freeze the main thread
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    try {
+      localStorage.setItem('wattson_custom_ride_types', JSON.stringify(inMemoryRideTypes));
+    } catch {}
+  }, 1000);
+};
+
+export const getRideType = (activity: Activity, intervals?: ActivityInterval[]): string => {
+  const cachedTypes = getStoredRideTypes();
+  if (cachedTypes[activity.id]) {
+    return cachedTypes[activity.id];
+  }
+
+  // Extract intervals attached to activity or passed directly
+  let actIntervals: any[] | undefined = (intervals && intervals.length > 0) ? intervals : undefined;
+  if (!actIntervals) {
+    if (Array.isArray((activity as any).icu_laps) && (activity as any).icu_laps.length > 0) {
+      actIntervals = (activity as any).icu_laps;
+    } else if (Array.isArray((activity as any).icu_intervals) && (activity as any).icu_intervals.length > 0) {
+      actIntervals = (activity as any).icu_intervals;
+    } else if (Array.isArray((activity as any).icu_intervals_edited) && (activity as any).icu_intervals_edited.length > 0) {
+      actIntervals = (activity as any).icu_intervals_edited;
+    } else if (Array.isArray((activity as any).laps) && (activity as any).laps.length > 0) {
+      actIntervals = (activity as any).laps;
+    } else if (Array.isArray((activity as any).intervals) && (activity as any).intervals.length > 0) {
+      actIntervals = (activity as any).intervals;
     }
+  }
+
+  // Programmatically detect intervals pattern
+  const detected = detectIntervalsFromLaps(activity, actIntervals);
+
+  // If specific interval count/duration/watts detected, prioritize and update cache
+  if (detected && !detected.endsWith('(Intervals)')) {
+    setCachedRideType(activity.id, detected);
+    return detected;
+  }
+
+  if (detected) {
+    setCachedRideType(activity.id, detected);
+    return detected;
   }
 
   let baseType = 'Endurance';
@@ -156,76 +195,74 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
   return (
     <div 
       onClick={() => onClick(activity)}
-      className={`glass-card p-2.5 pl-3 pr-3 rounded-2xl cursor-pointer active:scale-[0.98] transition-all duration-300 group flex items-center gap-3 border ${
+      className={`glass-card p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border ${
         isToday 
-          ? 'border-emerald-500/40 bg-gradient-to-r from-emerald-950/30 via-slate-900/50 to-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.12)] hover:border-emerald-500/60' 
-          : 'border-white/[0.04] bg-slate-900/40 hover:bg-white/[0.04]'
+          ? 'border-emerald-500/30 bg-emerald-950/20 shadow-sm hover:border-emerald-500/50' 
+          : 'border-white/[0.06] bg-slate-900/30 hover:border-white/10 hover:bg-slate-900/50'
       }`}
     >
-      <div className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center shrink-0 border shadow-inner transition-colors ${
+      <div className={`w-9 h-9 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-colors ${
         isToday 
-          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400' 
-          : 'bg-slate-900/50 border-white/5 text-white group-hover:border-emerald-500/20'
+          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+          : 'bg-white/[0.02] border-white/[0.08] text-slate-200 group-hover:border-emerald-500/20'
       }`}>
-        <span className={`text-[7.5px] font-black uppercase leading-none mb-0.5 tracking-tighter ${isToday ? 'text-emerald-400' : 'text-slate-500'}`}>{weekday}</span>
-        <span className={`text-base font-black italic leading-none ${isToday ? 'text-emerald-300' : 'text-white'}`}>{day}</span>
+        <span className={`text-[7px] font-black uppercase leading-none mb-0.5 tracking-wider ${isToday ? 'text-emerald-400' : 'text-slate-400'}`}>{weekday}</span>
+        <span className={`text-sm font-black italic leading-none ${isToday ? 'text-emerald-300' : 'text-white'}`}>{day}</span>
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col justify-center">
-        <div className="flex items-center gap-2 mb-0.5">
+        <div className="flex items-center gap-2 mb-1">
           <h3 className={`font-bold text-xs truncate leading-tight tracking-tight transition-colors ${isToday ? 'text-emerald-300' : 'text-slate-200 group-hover:text-emerald-400'}`}>
             {displayName}
           </h3>
           {isToday && (
-            <div className="px-1.5 py-0.5 rounded shadow-sm bg-emerald-500/20 border border-emerald-500/40 text-[7.5px] font-black text-emerald-300 uppercase tracking-wider flex items-center gap-1 shrink-0">
-              COMPLETED TODAY
-            </div>
+            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-[7px] font-black text-emerald-300 uppercase tracking-widest shrink-0">
+              Today
+            </span>
           )}
           {isVirtual && !isToday && (
-            <div className="px-1.5 py-0.5 rounded shadow-sm bg-orange-500/10 border border-orange-500/20 text-[7px] font-black text-orange-500 uppercase tracking-widest">Virtual</div>
+            <span className="px-1.5 py-0.5 rounded bg-orange-500/10 border border-orange-500/20 text-[7px] font-black text-orange-400 uppercase tracking-widest shrink-0">
+              Virtual
+            </span>
           )}
         </div>
         
-        <div className="flex flex-wrap gap-x-3 gap-y-1">
-          <div className="flex items-center gap-1 text-[10px] font-bold">
-            <Clock size={10} className="text-blue-400/60" />
-            <span className="text-slate-400">{formatDuration(displayDuration)}</span>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="flex items-center gap-1 text-[10.5px] font-bold text-slate-400">
+            <Clock size={10} className="text-slate-500" />
+            <span>{formatDuration(displayDuration)}</span>
           </div>
 
           {(displayDistance > 0) && (
-            <div className="flex items-center gap-1 text-[10px] font-bold">
-              <TrendingUp size={10} className="text-emerald-400/60" />
-              <span className="text-slate-400">{Math.round(displayDistance / 100) / 10}km</span>
+            <div className="flex items-center gap-1 text-[10.5px] font-bold text-slate-400">
+              <TrendingUp size={10} className="text-slate-500" />
+              <span>{Math.round(displayDistance / 100) / 10}km</span>
             </div>
           )}
 
           {pace ? (
-            <div className="flex items-center gap-1 text-[10px] font-bold">
-              <Zap size={10} className="text-indigo-400/60" />
-              <span className="text-slate-400">{pace}</span>
+            <div className="flex items-center gap-1 text-[10.5px] font-bold text-slate-400">
+              <Zap size={10} className="text-indigo-400" />
+              <span>{pace}</span>
             </div>
-          ) : (activity.weighted_average_watts || activity.icu_weighted_average_watts || activity.average_watts || activity.icu_average_watts) ? (
-            <div className="flex items-center gap-1 text-[10px] font-bold">
-              <Zap size={10} className="text-yellow-400/60" />
-              <span className="text-slate-400">
-                {activity.weighted_average_watts || activity.icu_weighted_average_watts ? (
-                  <>{Math.round(activity.weighted_average_watts ?? activity.icu_weighted_average_watts ?? 0)}W <span className="text-[8px] text-yellow-400/50">NP</span></>
-                ) : (
-                  <>{Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0)}W</>
-                )}
+          ) : (activity.average_watts || activity.icu_average_watts || activity.weighted_average_watts || activity.icu_weighted_average_watts) ? (
+            <div className="flex items-center gap-1 text-[10.5px] font-bold text-slate-400">
+              <Zap size={10} className="text-amber-400/80" />
+              <span>
+                {Math.round(activity.average_watts ?? activity.icu_average_watts ?? activity.weighted_average_watts ?? activity.icu_weighted_average_watts ?? 0)}W
               </span>
             </div>
           ) : activity.average_heartrate ? (
-            <div className="flex items-center gap-1 text-[10px] font-bold">
-              <Heart size={10} className="text-rose-400/60" />
-              <span className="text-slate-400">{Math.round(activity.average_heartrate)}bpm</span>
+            <div className="flex items-center gap-1 text-[10.5px] font-bold text-slate-400">
+              <Heart size={10} className="text-rose-400/80" />
+              <span>{Math.round(activity.average_heartrate)}bpm</span>
             </div>
           ) : null}
 
           {activity.icu_eftp && activity.icu_eftp > 0 && (
-            <div className="flex items-center gap-1 text-[10px] font-black bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-              <span className="text-emerald-400">eFTP</span>
-              <span className="text-white">{Math.round(activity.icu_eftp)}W</span>
+            <div className="flex items-center gap-1 text-[9.5px] font-black bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20 text-emerald-400">
+              <span>eFTP</span>
+              <span className="text-slate-200">{Math.round(activity.icu_eftp)}W</span>
             </div>
           )}
         </div>
@@ -234,11 +271,11 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
       <div className="flex flex-col items-end justify-center shrink-0">
         {load > 0 ? (
           <div className="flex flex-col items-end">
-            <span className="text-[13px] font-black text-emerald-400 italic leading-none">{load}</span>
-            <span className="text-[7px] font-bold text-emerald-500/50 uppercase tracking-wider">TSS</span>
+            <span className="text-xs font-black text-emerald-400 italic font-mono leading-none">{load}</span>
+            <span className="text-[7px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">TSS</span>
           </div>
         ) : (
-          <ChevronRight size={14} className="text-slate-600 group-hover:text-emerald-400 transition-colors" />
+          <ChevronRight size={13} className="text-slate-600 group-hover:text-emerald-400 transition-colors" />
         )}
       </div>
     </div>

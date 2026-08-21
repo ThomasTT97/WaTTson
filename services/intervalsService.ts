@@ -49,7 +49,7 @@ export const fetchAthleteId = async (apiKey: string): Promise<string> => {
   }
 };
 
-export const fetchActivities = async (creds: IntervalsCredentials, daysBack: number = 3650): Promise<Activity[]> => {
+export const fetchActivities = async (creds: IntervalsCredentials, daysBack: number = 1095): Promise<Activity[]> => {
   const { apiKey, athleteId } = creds;
   
   if (apiKey === 'demo') return getMockActivities();
@@ -70,9 +70,6 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
   const pastDate = new Date(now);
   pastDate.setDate(now.getDate() - daysBack); 
   
-  const oldest = toLocalDateString(pastDate);
-  const newest = toLocalDateString(futureDate);
-  
   const fields = [
     'id', 'name', 'type', 'start_date_local', 'moving_time', 'elapsed_time',
     'distance', 'total_elevation_gain', 'average_watts', 'weighted_average_watts', 
@@ -81,7 +78,8 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
     'icu_tss', 'icu_joules', 'calories', 'icu_efficiency_factor', 'icu_variability_index',
     'icu_hr_variability', 'icu_hrr', 'has_heartrate', 'has_power', 'average_temp',
     'device_name', 'external_id', 'icu_pm_actual_load', 'icu_atl', 'icu_ctl', 'icu_tsb',
-    'analyzed', 'icu_power_hr_z2_ef', 'icu_power_hr_z2', 'icu_power_hr_z2_hr', 'icu_eftp'
+    'analyzed', 'icu_power_hr_z2_ef', 'icu_power_hr_z2', 'icu_power_hr_z2_hr', 'icu_eftp',
+    'icu_intervals', 'icu_groups'
   ].join(',');
 
   const allActivities: Activity[] = [];
@@ -112,11 +110,16 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
       if (response.ok) {
         const data = await response.json();
         if (Array.isArray(data)) {
-          data.forEach(item => {
-            if (!allActivities.find(existing => existing.id === item.id)) {
-              allActivities.push(item);
-            }
-          });
+          if (data.length === 0) {
+            // No more activities exist further back, stop querying older chunks
+            remaining = false;
+          } else {
+            data.forEach(item => {
+              if (!allActivities.find(existing => existing.id === item.id)) {
+                allActivities.push(item);
+              }
+            });
+          }
         }
       } else {
         if (response.status === 401) throw new Error("Authentication failed: Invalid API Key.");
@@ -124,8 +127,6 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
         if (response.status === 429) {
            console.warn("Intervals.icu rate limit hit. Throttling...");
            await new Promise(resolve => setTimeout(resolve, 2000));
-           // We'll skip this chunk and try to continue, or we could retry. 
-           // For now, let's just wait and continue.
         } else {
           remaining = false;
         }
@@ -138,16 +139,9 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
         remaining = false;
       }
       
-      // Small pause to be kind to the API
-      if (remaining) await new Promise(resolve => setTimeout(resolve, 300));
+      // Fast transition between chunks
+      if (remaining) await new Promise(resolve => setTimeout(resolve, 50));
     }
-
-    // After all activities are fetched, log yesterday's activity if it exists
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = toLocalDateString(yesterday);
-    const activityYesterday = allActivities.find(a => a.start_date_local.startsWith(yesterdayStr));
-    console.log("Activity from yesterday:", activityYesterday);
 
     return allActivities.sort((a, b) => b.start_date_local.localeCompare(a.start_date_local));
   } catch (error: any) {
@@ -157,7 +151,7 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
   }
 };
 
-export const fetchWellness = async (creds: IntervalsCredentials, daysBack: number = 3650): Promise<Wellness[]> => {
+export const fetchWellness = async (creds: IntervalsCredentials, daysBack: number = 1095): Promise<Wellness[]> => {
   const { apiKey, athleteId } = creds;
   if (apiKey === 'demo') return getMockWellness();
 
@@ -169,7 +163,7 @@ export const fetchWellness = async (creds: IntervalsCredentials, daysBack: numbe
 
   const now = new Date();
   
-  // Wellness API only returns 1 year at a time. We must fetch in chunks if daysBack > 365.
+  // Wellness API returns 1 year at a time. Fetch in chunks.
   const allWellness: Wellness[] = [];
   let currentNewest = new Date(now);
   currentNewest.setDate(now.getDate() + 2); // Buffer forward
@@ -196,15 +190,21 @@ export const fetchWellness = async (creds: IntervalsCredentials, daysBack: numbe
       if (response.ok) {
         const data = await response.json();
         if (Array.isArray(data)) {
-          // Merge and avoid duplicates if they overlap at the edges
-          data.forEach(item => {
-            if (!allWellness.find(existing => existing.id === item.id || existing.date === item.date)) {
-              allWellness.push(item);
-            }
-          });
+          if (data.length === 0) {
+            remaining = false;
+          } else {
+            // Merge and avoid duplicates if they overlap at the edges
+            data.forEach(item => {
+              if (!allWellness.find(existing => existing.id === item.id || existing.date === item.date)) {
+                allWellness.push(item);
+              }
+            });
+          }
         }
       } else if (response.status === 429) {
         await new Promise(resolve => setTimeout(resolve, 2000));
+      } else {
+        remaining = false;
       }
 
       // Move the window back
@@ -215,8 +215,8 @@ export const fetchWellness = async (creds: IntervalsCredentials, daysBack: numbe
         remaining = false;
       }
 
-      // Small pause to be kind to the API
-      if (remaining) await new Promise(resolve => setTimeout(resolve, 300));
+      // Fast transition between chunks
+      if (remaining) await new Promise(resolve => setTimeout(resolve, 50));
     }
     
     // Sort chronologically
@@ -233,43 +233,128 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
   const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
   const url = `https://intervals.icu/api/v1/activity/${activityId}`;
+  
   try {
     const response = await fetch(url, { method: 'GET', headers });
     if (!response.ok) return [];
     const data = await response.json();
-    const intervals = data.icu_intervals || data.intervals || data.laps;
-    if (!Array.isArray(intervals) || intervals.length === 0) return [];
     
-    return intervals.map((l: any) => {
-      // Map raw intervals.icu properties to ActivityInterval
-      const avgWatts = l.avg_watts !== undefined ? l.avg_watts : (l.average_watts !== undefined ? l.average_watts : (l.average_power !== undefined ? l.average_power : (l.avg_power !== undefined ? l.avg_power : 0)));
-      const avgHr = l.avg_heartrate !== undefined ? l.avg_heartrate : (l.average_heartrate !== undefined ? l.average_heartrate : (l.avg_hr !== undefined ? l.avg_hr : (l.average_hr !== undefined ? l.average_hr : 0)));
-      const movingTime = l.moving_time !== undefined ? l.moving_time : (l.elapsed_time !== undefined ? l.elapsed_time : (l.duration !== undefined ? l.duration : 0));
+    // Check all potential arrays where Intervals.icu provides laps / intervals
+    let rawIntervals: any[] = [];
+    if (Array.isArray(data.icu_laps) && data.icu_laps.length > 0) {
+      rawIntervals = data.icu_laps;
+    } else if (Array.isArray(data.icu_intervals) && data.icu_intervals.length > 0) {
+      rawIntervals = data.icu_intervals;
+    } else if (Array.isArray(data.icu_intervals_edited) && data.icu_intervals_edited.length > 0) {
+      rawIntervals = data.icu_intervals_edited;
+    } else if (Array.isArray(data.laps) && data.laps.length > 0) {
+      rawIntervals = data.laps;
+    } else if (Array.isArray(data.intervals) && data.intervals.length > 0) {
+      rawIntervals = data.intervals;
+    }
+
+    // Fallback: if empty, query the dedicated /intervals endpoint
+    if (rawIntervals.length === 0) {
+      try {
+        const intervalsResp = await fetch(`https://intervals.icu/api/v1/activity/${activityId}/intervals`, { method: 'GET', headers });
+        if (intervalsResp.ok) {
+          const intervalsData = await intervalsResp.json();
+          if (Array.isArray(intervalsData)) {
+            rawIntervals = intervalsData;
+          } else if (intervalsData && Array.isArray(intervalsData.intervals) && intervalsData.intervals.length > 0) {
+            rawIntervals = intervalsData.intervals;
+          } else if (intervalsData && Array.isArray(intervalsData.laps) && intervalsData.laps.length > 0) {
+            rawIntervals = intervalsData.laps;
+          }
+        }
+      } catch {}
+    }
+
+    if (rawIntervals.length === 0) return [];
+    
+    return rawIntervals.map((l: any, idx: number) => {
+      // Map power metrics
+      const avgWatts = (typeof l.average_watts === 'number' && l.average_watts > 0)
+        ? l.average_watts
+        : ((typeof l.avg_watts === 'number' && l.avg_watts > 0)
+          ? l.avg_watts
+          : ((typeof l.weighted_average_watts === 'number' && l.weighted_average_watts > 0)
+            ? l.weighted_average_watts
+            : ((typeof l.icu_weighted_average_watts === 'number' && l.icu_weighted_average_watts > 0)
+              ? l.icu_weighted_average_watts
+              : ((typeof l.average_power === 'number' && l.average_power > 0)
+                ? l.average_power
+                : ((typeof l.avg_power === 'number' && l.avg_power > 0)
+                  ? l.avg_power
+                  : (typeof l.watts === 'number' ? l.watts : 0))))));
+
+      const maxWatts = (typeof l.max_watts === 'number' && l.max_watts > 0)
+        ? l.max_watts
+        : ((typeof l.max_power === 'number' && l.max_power > 0) ? l.max_power : undefined);
+      
+      // Map HR metrics
+      const avgHr = (typeof l.average_heartrate === 'number' && l.average_heartrate > 0)
+        ? l.average_heartrate
+        : ((typeof l.avg_heartrate === 'number' && l.avg_heartrate > 0)
+          ? l.avg_heartrate
+          : ((typeof l.avg_hr === 'number' && l.avg_hr > 0)
+            ? l.avg_hr
+            : ((typeof l.average_hr === 'number' && l.average_hr > 0)
+              ? l.average_hr
+              : 0)));
+
+      const maxHr = (typeof l.max_heartrate === 'number' && l.max_heartrate > 0)
+        ? l.max_heartrate
+        : ((typeof l.max_hr === 'number' && l.max_hr > 0) ? l.max_hr : undefined);
+
+      const avgCadence = (typeof l.average_cadence === 'number' && l.average_cadence > 0)
+        ? l.average_cadence
+        : ((typeof l.avg_cadence === 'number' && l.avg_cadence > 0)
+          ? l.avg_cadence
+          : (typeof l.cadence === 'number' ? l.cadence : undefined));
+      
+      // Map duration in seconds
+      const movingTime = (typeof l.moving_time === 'number' && l.moving_time > 0)
+        ? l.moving_time 
+        : ((typeof l.duration === 'number' && l.duration > 0)
+          ? l.duration 
+          : ((typeof l.elapsed_time === 'number' && l.elapsed_time > 0)
+            ? l.elapsed_time 
+            : ((typeof l.end_time === 'number' && typeof l.start_time === 'number' && l.end_time > l.start_time)
+              ? l.end_time - l.start_time
+              : (typeof l.end_index === 'number' && typeof l.start_index === 'number' && l.end_index > l.start_index
+                ? l.end_index - l.start_index 
+                : 0))));
       
       // Map interval type to WORK | RECOVERY | WARMUP | COOLDOWN
       let type: 'WORK' | 'RECOVERY' | 'WARMUP' | 'COOLDOWN' = 'WORK';
       const rawType = (l.type || '').toUpperCase();
-      if (rawType === 'RECOVERY') type = 'RECOVERY';
-      else if (rawType === 'WARMUP') type = 'WARMUP';
-      else if (rawType === 'COOLDOWN') type = 'COOLDOWN';
-      else if (rawType === 'WORK' || rawType === 'ACTIVE') type = 'WORK';
+      if (rawType === 'RECOVERY' || rawType === 'REST') type = 'RECOVERY';
+      else if (rawType === 'WARMUP' || rawType === 'WU') type = 'WARMUP';
+      else if (rawType === 'COOLDOWN' || rawType === 'CD') type = 'COOLDOWN';
+      else if (rawType === 'WORK' || rawType === 'ACTIVE' || rawType === 'WORKOUT') type = 'WORK';
       else {
         // Fallback or guess based on label or power
-        const label = (l.label || '').toUpperCase();
+        const label = (l.label || l.name || '').toUpperCase();
         if (label.includes('WARM') || label.includes('WU')) type = 'WARMUP';
-        else if (label.includes('REC') || label.includes('REST')) type = 'RECOVERY';
-        else if (label.includes('WORK') || label.includes('INT') || label.includes('EFFORT')) type = 'WORK';
+        else if (label.includes('REC') || label.includes('REST') || label.includes('EASY')) type = 'RECOVERY';
+        else if (label.includes('COOL') || label.includes('CD')) type = 'COOLDOWN';
+        else if (label.includes('WORK') || label.includes('INT') || label.includes('EFFORT') || label.includes('SET')) type = 'WORK';
       }
 
       return {
-        id: String(l.id || Math.random().toString(36).substr(2, 9)),
-        start_index: l.start_index || 0,
-        end_index: l.end_index || 0,
-        average_watts: avgWatts,
-        average_heartrate: avgHr,
-        moving_time: movingTime,
+        id: String(l.id || `lap_${idx + 1}`),
+        start_index: l.start_index || (typeof l.start_time === 'number' ? l.start_time : 0),
+        end_index: l.end_index || (typeof l.end_time === 'number' ? l.end_time : 0),
+        average_watts: Math.round(avgWatts),
+        max_watts: maxWatts ? Math.round(maxWatts) : undefined,
+        average_heartrate: Math.round(avgHr),
+        max_heartrate: maxHr ? Math.round(maxHr) : undefined,
+        average_cadence: avgCadence ? Math.round(avgCadence) : undefined,
+        moving_time: Math.round(movingTime),
+        distance: typeof l.distance === 'number' ? Math.round(l.distance) : undefined,
         type,
-        label: l.label
+        label: l.label || l.name || (l.type ? `${l.type}` : undefined)
       };
     });
   } catch (error) { 
@@ -279,145 +364,226 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
 };
 
 /**
- * Analyzes intervals/laps to detect structured workout sets and names the ride accordingly.
+  * Helper to extract duration in seconds from any lap/interval object
+  */
+const getLapTimeHelper = (l: any): number => {
+  if (typeof l.moving_time === 'number' && l.moving_time > 0) return l.moving_time;
+  if (typeof l.duration === 'number' && l.duration > 0) return l.duration;
+  if (typeof l.elapsed_time === 'number' && l.elapsed_time > 0) return l.elapsed_time;
+  if (typeof l.end_index === 'number' && typeof l.start_index === 'number' && l.end_index > l.start_index) {
+    return l.end_index - l.start_index;
+  }
+  return 0;
+};
+
+/**
+  * Helper to extract power in watts from any lap/interval object
+  */
+const getLapPowerHelper = (l: any): number => {
+  if (typeof l.average_watts === 'number' && l.average_watts > 0) return l.average_watts;
+  if (typeof l.avg_watts === 'number' && l.avg_watts > 0) return l.avg_watts;
+  if (typeof l.average_power === 'number' && l.average_power > 0) return l.average_power;
+  if (typeof l.avg_power === 'number' && l.avg_power > 0) return l.avg_power;
+  if (typeof l.watts === 'number' && l.watts > 0) return l.watts;
+  return 0;
+};
+
+/**
+ * Analyzes intervals/laps and power curves to detect structured workout sets and names the ride accordingly.
  */
-export const detectIntervalsFromLaps = (activity: Activity, intervals: ActivityInterval[]): string | null => {
-  if (!intervals || intervals.length === 0) return null;
-
-  let ftp = 250;
-  try {
-    const savedFtp = localStorage.getItem('wattson_ftp');
-    if (savedFtp) {
-      ftp = parseInt(savedFtp, 10);
-    }
-  } catch {}
-
-  const totalTime = activity.moving_time || 3600;
-
-  // Safe property resolution helpers
-  const getLapPower = (l: any) => l.average_watts ?? l.avg_watts ?? l.average_power ?? l.watts ?? 0;
-  const getLapTime = (l: any) => l.moving_time ?? l.duration ?? l.elapsed_time ?? 0;
-
-  // Filter for WORK laps/intervals
-  const workLaps = intervals.filter(l => {
-    const pwr = getLapPower(l);
-    const dur = getLapTime(l);
-
-    // Skip if duration is too short (< 10s) or is basically the entire ride (> 85% of total time)
-    if (dur < 10 || dur > totalTime * 0.85) return false;
-
-    const rawType = (l.type || '').toUpperCase();
-    const isWorkType = rawType === 'WORK' || rawType === 'ACTIVE';
-    const isWorkLabel = l.label && (
-      l.label.toLowerCase().includes('work') || 
-      l.label.toLowerCase().includes('interval') ||
-      l.label.toLowerCase().includes('effort')
-    );
-    
-    // Check if the average power of the lap is significantly high
-    const avgActivityPower = activity.average_watts || activity.icu_average_watts || 150;
-    const isHighPower = pwr > avgActivityPower * 1.12 || pwr >= ftp * 0.82;
-    
-    return isWorkType || isWorkLabel || isHighPower;
-  });
-
-  if (workLaps.length === 0) return null;
-
-  // Group similar intervals
-  const groups: { duration: number; watts: number; count: number; intervals: any[] }[] = [];
-  for (const lap of workLaps) {
-    const lPwr = getLapPower(lap);
-    const lDur = getLapTime(lap);
-
-    let matchedGroup = groups.find(g => {
-      const durDiff = Math.abs(g.duration - lDur);
-      const wattsDiff = Math.abs(g.watts - lPwr);
+export const detectIntervalsFromLaps = (activity: Activity, intervals?: ActivityInterval[]): string | null => {
+  // Check if activity contains pre-grouped intervals from Intervals.icu
+  const icuGroups = (activity as any).icu_groups;
+  if (Array.isArray(icuGroups) && icuGroups.length > 0) {
+    const mainG = icuGroups[0];
+    if (mainG && mainG.count && mainG.duration) {
+      const durSecs = mainG.duration;
+      const count = mainG.count;
+      const watts = mainG.avg_watts || mainG.average_watts || 0;
       
-      // durMatch: duration within 35 seconds or 25%
-      const durMatch = durDiff <= 35 || durDiff / Math.max(g.duration, lDur) <= 0.25;
-      // wattsMatch: power within 30W or 15%
-      const wattsMatch = wattsDiff <= 30 || wattsDiff / Math.max(g.watts, lPwr || 1) <= 0.15;
-      
-      return durMatch && wattsMatch;
-    });
+      let ftp = activity.icu_eftp || 250;
+      try {
+        const savedFtp = localStorage.getItem('wattson_ftp');
+        if (savedFtp) ftp = parseInt(savedFtp, 10);
+      } catch {}
 
-    if (matchedGroup) {
-      matchedGroup.count += 1;
-      matchedGroup.intervals.push(lap);
-      matchedGroup.duration = Math.round(matchedGroup.intervals.reduce((sum, l) => sum + getLapTime(l), 0) / matchedGroup.count);
-      matchedGroup.watts = Math.round(matchedGroup.intervals.reduce((sum, l) => sum + getLapPower(l), 0) / matchedGroup.count);
-    } else {
-      groups.push({
-        duration: lDur,
-        watts: lPwr,
-        count: 1,
-        intervals: [lap]
-      });
+      const pct = watts > 0 ? watts / ftp : 1.0;
+      let zName = 'Interval';
+      if (pct >= 1.05) zName = 'VO2 Max';
+      else if (pct >= 0.90) zName = 'Threshold';
+      else if (pct >= 0.84) zName = 'Sweet Spot';
+      else if (pct >= 0.75) zName = 'Tempo';
+
+      const m = Math.floor(durSecs / 60);
+      const s = Math.round(durSecs % 60);
+      const durStr = s > 0 && s < 45 ? `${m}m ${s}s` : (s >= 45 ? `${m + 1}m` : `${m}m`);
+      const wStr = watts > 0 ? ` @ ${Math.round(watts)}W` : '';
+      return `${zName} Ride (${count}x ${durStr}${wStr})`;
     }
   }
 
-  // Find the primary/most significant interval group using a Significance Score
-  // This avoids accidental short/burst intervals overtaking a structured sweet spot or threshold set.
-  const sortedGroups = groups
-    .filter(g => {
-      const pctFtp = g.watts / ftp;
-      // Keep groups that are at least Tempo intensity (>= 72% FTP) or high power
-      return pctFtp >= 0.72 || g.watts > ftp * 0.72;
-    })
-    .sort((a, b) => {
-      const getSignificanceScore = (g: typeof a) => {
-        const pctFtp = g.watts / ftp;
-        const totalDuration = g.count * g.duration;
-        
-        // Base intensity weight - we favor sweet-spot, threshold, and VO2 max over raw short sprints
-        let intensityWeight = 1.0;
-        if (pctFtp >= 1.50) intensityWeight = 1.1; // Sprint
-        else if (pctFtp >= 1.20) intensityWeight = 1.35; // Anaerobic
-        else if (pctFtp >= 1.05) intensityWeight = 1.55; // VO2 Max
-        else if (pctFtp >= 0.90) intensityWeight = 1.65; // Threshold
-        else if (pctFtp >= 0.84) intensityWeight = 1.45; // Sweet Spot
-        else if (pctFtp >= 0.75) intensityWeight = 1.25; // Tempo
-        
-        // Reps multiplier - we favor structured repeating sets
-        const repsWeight = g.count === 1 ? 0.75 : (g.count === 2 ? 1.15 : (g.count >= 3 ? 1.4 : 1.0));
-        
-        return totalDuration * intensityWeight * repsWeight;
-      };
+  // Combine provided intervals with activity properties if available
+  let laps: any[] = [];
+  if (intervals && intervals.length > 0) {
+    laps = intervals;
+  } else if (Array.isArray((activity as any).icu_laps) && (activity as any).icu_laps.length > 0) {
+    laps = (activity as any).icu_laps;
+  } else if (Array.isArray((activity as any).icu_intervals) && (activity as any).icu_intervals.length > 0) {
+    laps = (activity as any).icu_intervals;
+  } else if (Array.isArray((activity as any).icu_intervals_edited) && (activity as any).icu_intervals_edited.length > 0) {
+    laps = (activity as any).icu_intervals_edited;
+  } else if (Array.isArray((activity as any).laps) && (activity as any).laps.length > 0) {
+    laps = (activity as any).laps;
+  } else if (Array.isArray((activity as any).intervals) && (activity as any).intervals.length > 0) {
+    laps = (activity as any).intervals;
+  }
 
-      return getSignificanceScore(b) - getSignificanceScore(a);
+  let ftp = activity.icu_eftp || 0;
+  if (!ftp || ftp <= 0) {
+    try {
+      const savedFtp = localStorage.getItem('wattson_ftp');
+      if (savedFtp) {
+        ftp = parseInt(savedFtp, 10);
+      }
+    } catch {}
+  }
+  if (!ftp || ftp <= 0) ftp = 250;
+
+  const totalTime = activity.moving_time || activity.elapsed_time || 3600;
+
+  if (laps && laps.length > 0) {
+    const avgActivityPower = activity.average_watts || activity.icu_average_watts || 150;
+
+    // Filter for WORK laps/intervals
+    const workLaps = laps.filter(l => {
+      const pwr = getLapPowerHelper(l);
+      const dur = getLapTimeHelper(l);
+
+      // Skip if duration is too short (< 8s) or is basically the entire ride (> 85% of total time)
+      if (dur < 8 || dur > totalTime * 0.85) return false;
+
+      const rawType = (l.type || '').toUpperCase();
+      if (rawType === 'RECOVERY' || rawType === 'WARMUP' || rawType === 'COOLDOWN') return false;
+
+      const isWorkType = rawType === 'WORK' || rawType === 'ACTIVE' || rawType === 'WORKOUT' || rawType === 'LAP';
+      const labelLower = (l.label || '').toLowerCase();
+      const isWorkLabel = labelLower.includes('work') || labelLower.includes('interval') || labelLower.includes('effort') || labelLower.includes('set');
+      
+      // Check if the average power of the lap is noticeably above ride average or >= 78% FTP
+      const isHighPower = pwr > avgActivityPower * 1.06 || pwr >= ftp * 0.78;
+      
+      return isWorkType || isWorkLabel || isHighPower;
     });
 
-  const mainGroup = sortedGroups.find(g => {
-    // For short intervals (< 5 min), require at least 2 reps to be a "set"
-    if (g.duration < 300) {
-      return g.count >= 2;
+    if (workLaps.length > 0) {
+      // Group similar intervals
+      const groups: { duration: number; watts: number; count: number; intervals: any[] }[] = [];
+      for (const lap of workLaps) {
+        const lPwr = getLapPowerHelper(lap);
+        const lDur = getLapTimeHelper(lap);
+
+        let matchedGroup = groups.find(g => {
+          const durDiff = Math.abs(g.duration - lDur);
+          const wattsDiff = Math.abs(g.watts - lPwr);
+          
+          // durMatch: duration within 40 seconds or 30%
+          const durMatch = durDiff <= 40 || durDiff / Math.max(g.duration, lDur) <= 0.30;
+          // wattsMatch: power within 35W or 20%
+          const wattsMatch = wattsDiff <= 35 || wattsDiff / Math.max(g.watts, lPwr || 1) <= 0.20;
+          
+          return durMatch && wattsMatch;
+        });
+
+        if (matchedGroup) {
+          matchedGroup.count += 1;
+          matchedGroup.intervals.push(lap);
+          matchedGroup.duration = Math.round(matchedGroup.intervals.reduce((sum, l) => sum + getLapTimeHelper(l), 0) / matchedGroup.count);
+          matchedGroup.watts = Math.round(matchedGroup.intervals.reduce((sum, l) => sum + getLapPowerHelper(l), 0) / matchedGroup.count);
+        } else {
+          groups.push({
+            duration: lDur,
+            watts: lPwr,
+            count: 1,
+            intervals: [lap]
+          });
+        }
+      }
+
+      // Rank groups by significance score
+      const sortedGroups = groups
+        .filter(g => {
+          const pctFtp = g.watts / ftp;
+          return pctFtp >= 0.72 || g.watts > ftp * 0.72;
+        })
+        .sort((a, b) => {
+          const getSignificanceScore = (g: typeof a) => {
+            const pctFtp = g.watts / ftp;
+            const totalDuration = g.count * g.duration;
+            
+            let intensityWeight = 1.0;
+            if (pctFtp >= 1.50) intensityWeight = 1.2;
+            else if (pctFtp >= 1.20) intensityWeight = 1.4;
+            else if (pctFtp >= 1.05) intensityWeight = 1.65; // VO2 Max
+            else if (pctFtp >= 0.90) intensityWeight = 1.70; // Threshold
+            else if (pctFtp >= 0.84) intensityWeight = 1.50; // Sweet Spot
+            else if (pctFtp >= 0.75) intensityWeight = 1.25; // Tempo
+            
+            const repsWeight = g.count === 1 ? 0.75 : (g.count === 2 ? 1.25 : (g.count >= 3 ? 1.55 : 1.0));
+            return totalDuration * intensityWeight * repsWeight;
+          };
+
+          return getSignificanceScore(b) - getSignificanceScore(a);
+        });
+
+      const mainGroup = sortedGroups.find(g => {
+        if (g.duration < 300) return g.count >= 2;
+        return g.count >= 1;
+      });
+
+      if (mainGroup) {
+        const pctFtp = mainGroup.watts / ftp;
+        let zoneName = 'Endurance';
+        if (pctFtp >= 1.50 && mainGroup.duration < 45) zoneName = 'Sprint';
+        else if (pctFtp >= 1.20 && mainGroup.duration < 120) zoneName = 'Anaerobic';
+        else if (pctFtp >= 1.05) zoneName = 'VO2 Max';
+        else if (pctFtp >= 0.90) zoneName = 'Threshold';
+        else if (pctFtp >= 0.84) zoneName = 'Sweet Spot';
+        else if (pctFtp >= 0.75) zoneName = 'Tempo';
+
+        const formatDurationShort = (secs: number) => {
+          if (secs < 60) return `${secs}s`;
+          const mins = Math.floor(secs / 60);
+          const remainingSecs = Math.round(secs % 60);
+          if (remainingSecs >= 45) return `${mins + 1}m`;
+          if (remainingSecs <= 15) return `${mins}m`;
+          return `${mins}m ${remainingSecs}s`;
+        };
+
+        const durStr = formatDurationShort(mainGroup.duration);
+        const wattsStr = mainGroup.watts > 0 ? ` @ ${Math.round(mainGroup.watts)}W` : '';
+        
+        return `${zoneName} Ride (${mainGroup.count}x ${durStr}${wattsStr})`;
+      }
     }
-    // For long intervals (>= 5 min), 1 rep is fine (e.g. 1x20 min threshold)
-    return g.count >= 1;
-  });
+  }
 
-  if (!mainGroup) return null;
+  // Fallback: Analyze Power Pattern / Curve through the ride
+  const np = activity.weighted_average_watts || activity.icu_weighted_average_watts || 0;
+  const avgPwr = activity.average_watts || activity.icu_average_watts || 0;
+  const vi = activity.icu_variability_index || (avgPwr > 0 ? np / avgPwr : 1.0);
+  const intensity = activity.icu_intensity || (np > 0 ? np / ftp : 0);
 
-  const pctFtp = mainGroup.watts / ftp;
-  let zoneName = 'Endurance';
-  if (pctFtp >= 1.50 && mainGroup.duration < 30) zoneName = 'Sprint';
-  else if (pctFtp >= 1.20 && mainGroup.duration < 90) zoneName = 'Anaerobic';
-  else if (pctFtp >= 1.05) zoneName = 'VO2 Max';
-  else if (pctFtp >= 0.90) zoneName = 'Threshold';
-  else if (pctFtp >= 0.84) zoneName = 'Sweet Spot';
-  else if (pctFtp >= 0.75) zoneName = 'Tempo';
+  if (vi >= 1.08 || intensity >= 0.82) {
+    if (intensity >= 0.98 || (np >= ftp * 1.02 && vi >= 1.10)) {
+      return `VO2 Max Ride (Intervals)`;
+    } else if (intensity >= 0.88 || (np >= ftp * 0.90 && vi >= 1.08)) {
+      return `Threshold Ride (Intervals)`;
+    } else if (intensity >= 0.80) {
+      return `Sweet Spot Ride (Intervals)`;
+    }
+  }
 
-  const formatDurationShort = (secs: number) => {
-    if (secs < 60) return `${secs}s`;
-    const mins = Math.floor(secs / 60);
-    const remainingSecs = Math.round(secs % 60);
-    return remainingSecs > 0 ? `${mins}m ${remainingSecs}s` : `${mins}m`;
-  };
-
-  const durStr = formatDurationShort(mainGroup.duration);
-  const wattsStr = mainGroup.watts > 0 ? ` @ ${Math.round(mainGroup.watts)}W` : '';
-  
-  return `${zoneName} Ride (${mainGroup.count}x ${durStr}${wattsStr})`;
+  return null;
 };
 
 export const fetchPlannedWorkout = async (dateStr: string, creds: IntervalsCredentials): Promise<PlannedWorkout | null> => {

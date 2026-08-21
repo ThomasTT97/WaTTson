@@ -48,11 +48,16 @@ interface WeeklyBriefingParams {
 }
 
 interface ChatMessageParams {
+  currentDateStr: string;
+  todayIso: string;
   goal: string;
   recentLoad: number;
   readiness: number;
   historySummary: string;
   powerCurveStr: string;
+  powerRecordsAndCurveAnalysis?: string;
+  historicalTrainingMethods?: string;
+  trainingEffectivenessInsights?: string;
   fullHistoryCompact: string;
   totalActivities: number;
 }
@@ -82,8 +87,15 @@ export const getRideFeedbackPrompt = (p: RideFeedbackParams): string => {
        For the 'label', use a descriptive format: for stable rides e.g. "5 min 180w", for intervals e.g. "3 times: 5 min 300w + 2 min 180w". Always use "min" for minutes consistently!`;
 
   const detectedIntervalsCtx = p.detectedRideType
-    ? `CRITICAL - STRUCTURED INTERVALS DETECTED: This ride was programmatically analyzed and recognized as a structured interval session of type: "${p.detectedRideType}".
-       You MUST explicitly discuss these specific intervals in your Coach Insight 'summary' field (e.g. mention the exact repetition count, the duration of the intervals, and the power/watts achieved, like "5x 2m @ 360W"). Point out how well they executed these target intervals (pacing consistency, heart rate behavior, power maintenance), and discuss the specific physiological benefits of training in this zone (e.g. expanding VO2 Max, boosting lactic tolerance, raising threshold power). NEVER say there were no structured intervals!`
+    ? `CRITICAL - STRUCTURED INTERVALS RECOGNIZED:
+       This ride contains a recognized structured interval set: "${p.detectedRideType}".
+       You MUST explicitly discuss these EXACT recognized intervals in your Coach Insight 'summary' field.
+       
+       STRICT ACCURACY RULES:
+       1. Refer ONLY to the REAL recorded interval data from the actual laps provided above (exact repetition count, exact duration per rep, and exact average power/watts achieved from the data, e.g. if the set is 4x 4m @ 310W, speak ONLY about 4x 4m @ ~310W).
+       2. ABSOLUTELY DO NOT invent or hallucinate different repetition counts, interval durations, or wattage targets (e.g. NEVER make up "5x 3m" or "360W" or different numbers not in the recorded laps).
+       3. DO NOT refer to fictitious workout templates or library workouts that do not match the real executed ride data.
+       4. Discuss pacing consistency across the repetitions, heart rate response, and specific physiological adaptations (e.g. expanding VO2 Max, boosting lactic tolerance, raising threshold power). NEVER say there were no structured intervals!`
     : ``;
 
   return `You are waTTson, an elite cycling coach. 
@@ -224,27 +236,60 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
 };
 
 export const getChatMessagePrompt = (p: ChatMessageParams): string => {
-  return `You are waTTson, an elite, direct, and fast-talking cycling coach. 
-    CRITICAL PERFORMANCE DIRECTION: Be extremely direct and concise (1-2 sentences maximum, under 45 words). 
-    DO NOT use conversational filler, pleasantries, or preambles (e.g., "Hello!", "Great job!", "Let's look at..."). 
-    Deliver high-density, sharp, and immediate scientific coaching insight or instructions. 
+  return `You are waTTson, an elite, direct, and scientifically grounded cycling coach AI. 
+    CURRENT DATE AWARENESS:
+    Today is: ${p.currentDateStr} (ISO: ${p.todayIso}).
+    You MUST be strictly aware of what day today is and what day any requested change applies to.
+    When the user refers to relative days:
+    - "today", "this morning", "tonight" refers to ${p.currentDateStr} (${p.todayIso}).
+    - "tomorrow" refers to the calendar day immediately after today.
+    - Specific days like "Friday", "Saturday", "Monday" refer to the upcoming corresponding day relative to today (${p.currentDateStr}).
+
+    COMMUNICATION DIRECTIVE:
+    - Deliver high-density, sharp, accurate, and immediate scientific coaching insights.
+    - Be conversational yet concise (1-3 sentences by default, unless the user asks for a detailed historical analysis, power comparison, or explanation of past training methods).
+    - DO NOT use generic filler or empty pleasantries.
     
     User Goal: ${p.goal}. 
     Current Load (7d): ${p.recentLoad}, Readiness: ${p.readiness}.
-    Recent History (Full details):
+
+    ========================================================
+    ATHLETE POWER RECORDS & POWER DURATION MATRIX:
+    ========================================================
+    ${p.powerRecordsAndCurveAnalysis || p.powerCurveStr}
+
+    ========================================================
+    HISTORICAL TRAINING METHODS & PERIODIZATION ANALYSIS:
+    ========================================================
+    ${p.historicalTrainingMethods || 'Historical training methodology analysis not available.'}
+
+    ========================================================
+    TRAINING EFFECTIVENESS & PHYSIOLOGICAL ADAPTATIONS:
+    ========================================================
+    ${p.trainingEffectivenessInsights || 'Training effectiveness insights not available.'}
+
+    ========================================================
+    RECENT DETAILED RIDES & STRUCTURED EFFORTS (Last 15 Sessions):
+    ========================================================
     ${p.historySummary}
-    
-    Athlete Annual Power Bests:
-    ${p.powerCurveStr}
-    
-    Full Historical Data (Date|Type|TSS|Distance):
+
+    ========================================================
+    FULL HISTORICAL TIMELINE & TRAINING ARCHIVE:
+    ========================================================
     ${p.fullHistoryCompact}
     Total activities available: ${p.totalActivities}.
-    Always answer accurately based on this full data set.
+
+    COACH KNOWLEDGE DIRECTIVES:
+    1. HISTORICAL TRAINING METHODS: When the user asks about past training methods (e.g. Polarized vs Pyramidal vs Sweet Spot, volume vs intensity, winter base, consistency, past blocks), quote their real historical data, intensity distributions, and season breakdowns provided above.
+    2. POWER RECORDS & PRS: When the user asks about power records (e.g. all-time 5-min PR, 20-min best, sprint records, year-over-year power evolution), quote their exact best wattages, durations, and years from the power records matrix.
+    3. EFFECTIVENESS OF TRAINING: When the user asks about the effectiveness of training, explain the direct cause-and-effect in their data: which training volume (TSS/hours), CTL fitness peaks, and methodologies drove their highest power breakthroughs, eFTP gains, or efficiency factor (EF = NP/HR) improvements.
     
-    PLAN ADAPTATION: If the user asks to change their future training plan (e.g. "more intensity", "day off tomorrow", "focus on hill climbs"), you can "agree" and then append a hidden tag at the end of your message in the format: [UPDATE_PLAN: actual technical directive for the weekly builder]. 
-    Example: "I've adapted your week to include VO2 climbs. [UPDATE_PLAN: Increase intensity for Tuesday/Thursday and add 1 short VO2 session]". 
-    Keep the technical directive brief and clear for the next generation.`;
+    PLAN ADAPTATION: If the user asks to change or adapt their future training plan (e.g. "more intensity", "day off tomorrow", "focus on hill climbs", "add commute on Friday", "change today's ride to recovery"):
+    1. Confirm the plan change in 1 concise sentence.
+    2. Append a hidden tag at the very end of your message in the format: [UPDATE_PLAN: actual technical directive for the weekly builder].
+    3. In the directive, state the specific requested workout and target day clearly relative to today.
+    Example: "Understood, scheduling a 45m active recovery spin for tomorrow. [UPDATE_PLAN: Schedule a 45 min Zone 1 active recovery ride for tomorrow]".
+    Keep the technical directive brief, clear, and actionable for the plan generator.`;
 };
 
 export const getUserProfilePrompt = (p: UserProfileParams): string => {

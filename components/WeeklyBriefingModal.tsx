@@ -464,14 +464,19 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
               </h3>
               
               <div className="bg-black/60 p-4 rounded-3xl border border-white/5 w-full text-left space-y-4">
-                 <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-3">
-                    <div className="flex items-center gap-1.5 text-xs font-black text-white tracking-tighter">
-                       <Clock size={14} className="text-blue-400" /> {selectedDay.duration_target} MIN
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs font-black text-amber-400 italic">
-                       <Zap size={14} fill="currentColor" className="text-amber-400" /> {selectedDay.load_target} TSS
-                    </div>
-                 </div>
+                 {(() => {
+                    const isRestDay = selectedDay.intensity === 'Rest' || (selectedDay.focus || '').toLowerCase().includes('rest') || selectedDay.load_target === 0;
+                    return (
+                      <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-3">
+                         <div className="flex items-center gap-1.5 text-xs font-black text-white tracking-tighter">
+                            <Clock size={14} className="text-blue-400" /> {isRestDay || selectedDay.duration_target <= 0 ? '—' : `${selectedDay.duration_target} MIN`}
+                         </div>
+                         <div className="flex items-center gap-1.5 text-xs font-black text-amber-400 italic">
+                            <Zap size={14} fill="currentColor" className="text-amber-400" /> {isRestDay || selectedDay.load_target <= 0 ? '—' : `${selectedDay.load_target} TSS`}
+                         </div>
+                      </div>
+                    );
+                  })()}
 
                  <div className="space-y-3 max-h-[180px] overflow-y-auto custom-scrollbar pr-1">
                    {selectedDay.workout_steps && selectedDay.workout_steps.length > 0 ? (

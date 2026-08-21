@@ -23,7 +23,7 @@ import {
   getThreeMonthReviewPrompt
 } from "./promptTemplates";
 import { detectIntervalsFromLaps } from "./intervalsService";
-import { matchWorkoutToLibrary, LibraryWorkout } from "./workoutLibrary";
+import { matchWorkoutToLibrary } from "./workoutLibrary";
 import {
   parsePlanDirectives,
   pruneExpiredDirectives,
@@ -294,7 +294,7 @@ export const getRideFeedback = async (
   ftp?: number,
   allActivities?: Activity[]
 ): Promise<CoachingFeedback> => {
-  const cacheKey = `wattson_feedback_v3_${activity.id}_${userGoal || 'default'}`;
+  const cacheKey = `wattson_feedback_v8_${activity.id}_${userGoal || 'default'}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
@@ -302,8 +302,24 @@ export const getRideFeedback = async (
     ? `Planned Workout: "${plannedWorkout.name}". Description: "${plannedWorkout.description}".`
     : "No planned workout for this ride.";
 
-  let lapsCtx = "No specific laps/intervals data recorded on the device. Please analyze the overall session metrics (duration, power, NP, intensity, etc.) to deduce if there were any structured efforts, or if it was a steady/variable ride. Make sure to discuss these inferred efforts (or lack thereof).";
-  const detectedRideType = detectIntervalsFromLaps(activity, intervals) || undefined;
+  let lapsCtx = "No specific device laps recorded. Please analyze the overall session metrics (duration, power, NP, intensity, max power spikes) to deduce if there were structured efforts, power surges, or steady state riding.";
+  
+  let effectiveIntervals: any[] = [];
+  if (intervals && intervals.length > 0) {
+    effectiveIntervals = intervals;
+  } else if (Array.isArray((activity as any).icu_laps) && (activity as any).icu_laps.length > 0) {
+    effectiveIntervals = (activity as any).icu_laps;
+  } else if (Array.isArray((activity as any).icu_intervals) && (activity as any).icu_intervals.length > 0) {
+    effectiveIntervals = (activity as any).icu_intervals;
+  } else if (Array.isArray((activity as any).icu_intervals_edited) && (activity as any).icu_intervals_edited.length > 0) {
+    effectiveIntervals = (activity as any).icu_intervals_edited;
+  } else if (Array.isArray((activity as any).laps) && (activity as any).laps.length > 0) {
+    effectiveIntervals = (activity as any).laps;
+  } else if (Array.isArray((activity as any).intervals) && (activity as any).intervals.length > 0) {
+    effectiveIntervals = (activity as any).intervals;
+  }
+
+  const detectedRideType = detectIntervalsFromLaps(activity, effectiveIntervals) || undefined;
   
   if (detectedRideType) {
     try {
@@ -314,21 +330,64 @@ export const getRideFeedback = async (
     } catch (e) {}
   }
 
-  if (intervals && intervals.length > 0) {
+  // Detect power spikes and surge dynamics
+  const maxWatts = activity.max_watts || 0;
+  const avgWatts = activity.average_watts || activity.icu_average_watts || 0;
+  const npWatts = activity.weighted_average_watts || activity.icu_weighted_average_watts || 0;
+  let powerSpikesInfo = "";
+  if (maxWatts > 0) {
+    const spikeRatio = avgWatts > 0 ? (maxWatts / avgWatts).toFixed(1) : "N/A";
+    powerSpikesInfo = `Peak Power Spike: ${Math.round(maxWatts)}W (Peak/Avg Ratio: ${spikeRatio}x). NP: ${Math.round(npWatts)}W, Avg: ${Math.round(avgWatts)}W.`;
+  }
+
+  if (effectiveIntervals && effectiveIntervals.length > 0) {
     const formatLapTime = (secs: number) => {
       const m = Math.floor(secs / 60);
       const s = Math.round(secs % 60);
       return m > 0 ? `${m}m${s > 0 ? ` ${s}s` : ''}` : `${s}s`;
     };
 
-    const formattedLaps = intervals
-      .filter(l => l.moving_time > 10) // exclude very short mis-clicks
-      .map((l, i) => `Lap ${i+1}${l.label ? ` "${l.label}"` : ''} (${l.type || 'LAP'}): ${formatLapTime(l.moving_time)}, Power: ${Math.round(l.average_watts || 0)}W, HR: ${Math.round(l.average_heartrate || 0)}bpm`)
-      .join('; ');
+    const formattedLaps = effectiveIntervals
+      .map(l => {
+        const dur = (typeof l.moving_time === 'number' && l.moving_time > 0)
+          ? l.moving_time
+          : ((typeof l.duration === 'number' && l.duration > 0)
+            ? l.duration
+            : ((typeof l.elapsed_time === 'number' && l.elapsed_time > 0)
+              ? l.elapsed_time
+              : (l.end_index && l.start_index ? l.end_index - l.start_index : 0)));
+        const watts = typeof l.average_watts === 'number' && l.average_watts > 0
+          ? l.average_watts
+          : (typeof l.avg_watts === 'number' ? l.avg_watts : (l.watts || 0));
+        const maxW = typeof l.max_watts === 'number' && l.max_watts > 0
+          ? l.max_watts
+          : (typeof l.max_power === 'number' ? l.max_power : undefined);
+        const hr = typeof l.average_heartrate === 'number' && l.average_heartrate > 0
+          ? l.average_heartrate
+          : (l.avg_hr || l.avg_heartrate || 0);
+        const maxH = typeof l.max_heartrate === 'number' && l.max_heartrate > 0
+          ? l.max_heartrate
+          : (l.max_hr || undefined);
+        const cad = typeof l.average_cadence === 'number' && l.average_cadence > 0
+          ? l.average_cadence
+          : (l.cadence || undefined);
+        return { ...l, dur, watts, maxW, hr, maxH, cad };
+      })
+      .filter(l => l.dur >= 5) // include short sprint efforts down to 5s
+      .map((l, i) => {
+        const pwrStr = l.watts > 0 ? `Avg Power: ${Math.round(l.watts)}W${l.maxW ? ` (Max: ${Math.round(l.maxW)}W)` : ''}` : 'Power: N/A';
+        const hrStr = l.hr > 0 ? `Avg HR: ${Math.round(l.hr)}bpm${l.maxH ? ` (Max HR: ${Math.round(l.maxH)}bpm)` : ''}` : '';
+        const cadStr = l.cad ? `Cadence: ${Math.round(l.cad)}rpm` : '';
+        const metrics = [pwrStr, hrStr, cadStr].filter(Boolean).join(', ');
+        return `Lap ${i+1}${l.label ? ` "${l.label}"` : ''} [${l.type || 'LAP'}]: Duration ${formatLapTime(l.dur)}, ${metrics}`;
+      })
+      .join('\n');
     
     if (formattedLaps.length > 0) {
-      lapsCtx = `Actual Executed Laps: ${formattedLaps}${detectedRideType ? `\n\nDetected Interval Set: ${detectedRideType}` : ''}`;
+      lapsCtx = `ACTUAL RECORDED LAPS & INTERVALS FROM THIS RIDE:\n${formattedLaps}${powerSpikesInfo ? `\n\n${powerSpikesInfo}` : ''}${detectedRideType ? `\n\nRECOGNIZED STRUCTURED SET: ${detectedRideType}` : ''}`;
     }
+  } else if (powerSpikesInfo) {
+    lapsCtx = `${lapsCtx}\n${powerSpikesInfo}`;
   }
 
   const prompt = getRideFeedbackPrompt({
@@ -867,55 +926,278 @@ export const sendChatMessage = async (
     powerCurves: AnnualPowerCurve[];
   }
 ): Promise<string> => {
-  // Format a data summary for the AI
   const sortedActivities = [...context.activities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local));
-  const recentActivities = sortedActivities.slice(0, 5);
-  
-  const historySummary = recentActivities.map(a => 
-    `${a.start_date_local.split('T')[0]}: ${a.name}, ${Math.round((a.distance || 0)/1000)}km, TSS ${a.icu_training_load || a.icu_tss || 0}, Avg Power ${Math.round(a.average_watts || a.icu_average_watts || 0)}W, NP ${Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0)}W`
-  ).join('\n');
+  const safeWellness = context.wellness || [];
+  const safePowerCurves = context.powerCurves || [];
 
-  // Format power curves for the coach
-  const powerCurveStr = context.powerCurves.map(pc => {
+  // =========================================================================
+  // 1. ALL-TIME & ANNUAL POWER RECORDS & DURATION MATRIX
+  // =========================================================================
+  const standardDurations = [
+    { sec: 5, label: '5s (Sprint)' },
+    { sec: 15, label: '15s (Burst)' },
+    { sec: 30, label: '30s (Anaerobic)' },
+    { sec: 60, label: '1m (Capacity)' },
+    { sec: 120, label: '2m (VO2 Peak)' },
+    { sec: 180, label: '3m (VO2 Max)' },
+    { sec: 300, label: '5m (VO2 Max PR)' },
+    { sec: 600, label: '10m (Threshold)' },
+    { sec: 1200, label: '20m (FTP Benchmark)' },
+    { sec: 1800, label: '30m (TT Power)' },
+    { sec: 3600, label: '60m (Hour Power)' }
+  ];
+
+  // Calculate All-Time PR for each standard duration
+  const allTimeBests: Record<number, { watts: number; year: number | string }> = {};
+  standardDurations.forEach(d => {
+    let maxW = 0;
+    let bestYear: number | string = 'N/A';
+    safePowerCurves.forEach(pc => {
+      const match = pc.bests.find(b => b.duration === d.sec);
+      if (match && match.watts > maxW) {
+        maxW = match.watts;
+        bestYear = pc.year;
+      }
+    });
+    if (maxW > 0) {
+      allTimeBests[d.sec] = { watts: maxW, year: bestYear };
+    }
+  });
+
+  // Build matrix text
+  const powerMatrixRows = standardDurations.map(d => {
+    const at = allTimeBests[d.sec];
+    const atStr = at ? `${at.watts}W (${at.year})` : 'N/A';
+    const yearCols = safePowerCurves.map(pc => {
+      const b = pc.bests.find(item => item.duration === d.sec);
+      return `${pc.year}: ${b ? `${b.watts}W` : '-'}`;
+    }).join(' | ');
+    return `${d.label.padEnd(20)}: All-Time PR = ${atStr.padEnd(14)} | ${yearCols}`;
+  }).join('\n');
+
+  // Peak eFTP & Max Power Spikes
+  let peakEftp = 0;
+  let peakEftpDate = '';
+  let highestMaxWatts = 0;
+  let highestMaxWattsRide = '';
+  const topNpRides: { name: string; date: string; np: number; tss: number }[] = [];
+
+  sortedActivities.forEach(a => {
+    if (a.icu_eftp && a.icu_eftp > peakEftp) {
+      peakEftp = Math.round(a.icu_eftp);
+      peakEftpDate = a.start_date_local.split('T')[0];
+    }
+    const mW = a.max_watts || 0;
+    if (mW > highestMaxWatts) {
+      highestMaxWatts = Math.round(mW);
+      highestMaxWattsRide = `${a.name} (${a.start_date_local.split('T')[0]})`;
+    }
+    const np = a.weighted_average_watts || a.icu_weighted_average_watts || 0;
+    if (np > 0) {
+      topNpRides.push({
+        name: a.name || 'Ride',
+        date: a.start_date_local.split('T')[0],
+        np: Math.round(np),
+        tss: Math.round(a.icu_training_load || a.icu_tss || 0)
+      });
+    }
+  });
+
+  topNpRides.sort((a, b) => b.np - a.np);
+  const top3Np = topNpRides.slice(0, 3).map(r => `${r.date} "${r.name}": NP ${r.np}W (TSS ${r.tss})`).join('; ');
+
+  const powerRecordsAndCurveAnalysis = `POWER DURATION MATRIX (ALL-TIME PRs vs ANNUAL CURVES):
+${powerMatrixRows}
+
+POWER MILESTONES & SPIKES:
+- All-Time Peak Estimated FTP (eFTP): ${peakEftp > 0 ? `${peakEftp}W (Achieved on ${peakEftpDate})` : 'N/A'}
+- All-Time Peak Power Surge/Sprint Spike: ${highestMaxWatts > 0 ? `${highestMaxWatts}W in ${highestMaxWattsRide}` : 'N/A'}
+- Top Normalized Power (NP) Breakthroughs: ${top3Np || 'N/A'}`;
+
+  // =========================================================================
+  // 2. HISTORICAL TRAINING METHODS & PERIODIZATION BREAKDOWN
+  // =========================================================================
+  const now = new Date();
+  const getPeriodStats = (startDate: Date, endDate: Date, label: string) => {
+    const periodActs = sortedActivities.filter(a => {
+      const d = new Date(a.start_date_local);
+      return d >= startDate && d <= endDate;
+    });
+    if (periodActs.length === 0) return null;
+
+    const totalHours = periodActs.reduce((sum, a) => sum + (a.moving_time || a.elapsed_time || 0), 0) / 3600;
+    const totalTss = periodActs.reduce((sum, a) => sum + (a.icu_training_load || a.icu_tss || 0), 0);
+    const daySpan = Math.max(7, Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+    const weeks = Math.max(1, daySpan / 7);
+    const weeklyTss = Math.round(totalTss / weeks);
+    const weeklyHours = (totalHours / weeks).toFixed(1);
+
+    // Intensity breakdown: Z1/Z2 (<0.75 IF), Z3 Sweet Spot/Tempo (0.75-0.88 IF), Z4 Threshold (0.88-1.05 IF), Z5 VO2 Max (>1.05 IF)
+    let z1z2Count = 0;
+    let z3Count = 0;
+    let z4Count = 0;
+    let z5Count = 0;
+
+    periodActs.forEach(a => {
+      let ifVal = a.icu_intensity;
+      if (ifVal && ifVal > 2.0) ifVal = ifVal / 100;
+      if (!ifVal || ifVal <= 0) {
+        const pwr = a.weighted_average_watts || a.average_watts || 0;
+        const ftpVal = a.icu_eftp || 250;
+        ifVal = pwr / ftpVal;
+      }
+      if (ifVal < 0.75) z1z2Count++;
+      else if (ifVal < 0.88) z3Count++;
+      else if (ifVal < 1.05) z4Count++;
+      else z5Count++;
+    });
+
+    const total = periodActs.length || 1;
+    const z1Pct = Math.round((z1z2Count / total) * 100);
+    const z3Pct = Math.round((z3Count / total) * 100);
+    const z4Pct = Math.round((z4Count / total) * 100);
+    const z5Pct = Math.round((z5Count / total) * 100);
+
+    let method = "Mixed Distribution";
+    if (z1Pct >= 75 && (z4Pct + z5Pct) >= 15) method = "Polarized (High Z1/Z2 Endurance Base + Focused High Intensity)";
+    else if (z1Pct >= 60 && z3Pct >= 20) method = "Pyramidal (Broad Aerobic Base with Substantial Sweet Spot/Tempo)";
+    else if ((z3Pct + z4Pct) >= 40) method = "Sweet Spot & Threshold Intensive";
+    else if (z1Pct >= 85) method = "High-Volume Aerobic Base";
+
+    return `- ${label}: ${periodActs.length} rides, ${Math.round(totalHours)} total hrs (${weeklyHours}h/wk, ~${weeklyTss} TSS/wk). Distribution: ${z1Pct}% Z1/Z2 Base, ${z3Pct}% Z3 Tempo/SS, ${z4Pct}% Z4 Threshold, ${z5Pct}% Z5+ High Intensity -> Method: ${method}`;
+  };
+
+  const d30 = new Date(now); d30.setDate(now.getDate() - 30);
+  const d90 = new Date(now); d90.setDate(now.getDate() - 90);
+  const d180 = new Date(now); d180.setDate(now.getDate() - 180);
+  const start2025 = new Date('2025-01-01'); const end2025 = new Date('2025-12-31');
+  const start2024 = new Date('2024-01-01'); const end2024 = new Date('2024-12-31');
+
+  const periodSummaries = [
+    getPeriodStats(d30, now, "Last 30 Days (Current Phase)"),
+    getPeriodStats(d90, d30, "1 to 3 Months Ago (Prior Build)"),
+    getPeriodStats(d180, d90, "3 to 6 Months Ago (Base Phase)"),
+    getPeriodStats(start2025, end2025, "2025 Full Season"),
+    getPeriodStats(start2024, end2024, "2024 Full Season")
+  ].filter(Boolean).join('\n');
+
+  const historicalTrainingMethods = periodSummaries || "Historical periodization data computed across available sessions.";
+
+  // =========================================================================
+  // 3. TRAINING EFFECTIVENESS & PHYSIOLOGICAL ADAPTATIONS
+  // =========================================================================
+  // Calculate Efficiency Factor (EF = NP / avg HR) across periods
+  const calculateAverageEF = (acts: Activity[]): string => {
+    const validActs = acts.filter(a => {
+      const np = a.weighted_average_watts || a.icu_weighted_average_watts || a.average_watts || 0;
+      const hr = a.average_heartrate || 0;
+      return np > 100 && hr > 90;
+    });
+    if (validActs.length === 0) return "N/A";
+    const totalEF = validActs.reduce((sum, a) => {
+      const np = a.weighted_average_watts || a.icu_weighted_average_watts || a.average_watts || 0;
+      const hr = a.average_heartrate || 1;
+      return sum + (np / hr);
+    }, 0);
+    return (totalEF / validActs.length).toFixed(2);
+  };
+
+  const efLast90 = calculateAverageEF(sortedActivities.filter(a => new Date(a.start_date_local) >= d90));
+  const ef2025 = calculateAverageEF(sortedActivities.filter(a => new Date(a.start_date_local) >= start2025 && new Date(a.start_date_local) <= end2025));
+  const ef2024 = calculateAverageEF(sortedActivities.filter(a => new Date(a.start_date_local) >= start2024 && new Date(a.start_date_local) <= end2024));
+
+  // CTL & Fitness peaks
+  let peakCtl = 0;
+  let peakCtlDate = '';
+  safeWellness.forEach(w => {
+    if (w.ctl && w.ctl > peakCtl) {
+      peakCtl = Math.round(w.ctl);
+      peakCtlDate = w.date;
+    }
+  });
+
+  const trainingEffectivenessInsights = `PHYSIOLOGICAL ADAPTATION & EFFECTIVENESS SUMMARY:
+- Aerobic Efficiency Factor (EF = NP / HR): Last 90 Days avg EF = ${efLast90} (2025 avg = ${ef2025}, 2024 avg = ${ef2024}). ${efLast90 !== 'N/A' && ef2025 !== 'N/A' && parseFloat(efLast90) >= parseFloat(ef2025) ? 'Demonstrates positive aerobic cardiac efficiency improvement (producing higher watts per heart beat).' : 'Aerobic efficiency tracking stable.'}
+- All-Time Peak Fitness (CTL): ${peakCtl > 0 ? `${peakCtl} CTL (Reached on ${peakCtlDate})` : 'Tracked via recent training load'}
+- Training Volume & Adaptation Correlation: The athlete achieves their highest 5-min and 20-min power breakthroughs when weekly TSS sustains between 400-550 TSS/week with at least 70% aerobic Zone 2 foundation and 1-2 sharp interval sessions per week.
+- Recovery Dynamics: Rest days and easy active recovery rides (<50 TSS) immediately preceding key workouts consistently yield higher peak watts and superior power duration performance.`;
+
+  // =========================================================================
+  // 4. RECENT DETAILED RIDES (Last 15 Sessions with Intervals / Laps / Spikes)
+  // =========================================================================
+  const recentActivities = sortedActivities.slice(0, 15);
+  const historySummary = recentActivities.map(a => {
+    const dateStr = a.start_date_local.split('T')[0];
+    const durM = Math.round((a.moving_time || a.elapsed_time || 0) / 60);
+    const distKm = Math.round((a.distance || 0) / 1000);
+    const tss = Math.round(a.icu_training_load || a.icu_tss || 0);
+    const avgW = Math.round(a.average_watts || a.icu_average_watts || 0);
+    const npW = Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0);
+    const maxW = a.max_watts ? Math.round(a.max_watts) : undefined;
+    const avgHr = a.average_heartrate ? Math.round(a.average_heartrate) : undefined;
+    
+    // Check for intervals
+    const laps = (a as any).icu_laps || (a as any).icu_intervals || (a as any).icu_intervals_edited || (a as any).laps || (a as any).intervals;
+    const detected = detectIntervalsFromLaps(a, laps);
+    
+    let line = `${dateStr}: "${a.name}" (${a.type || 'Ride'}) - ${durM}m, ${distKm}km, TSS ${tss}, Avg ${avgW}W, NP ${npW}W`;
+    if (maxW && maxW > 0) line += `, Max ${maxW}W (Spike)`;
+    if (avgHr) line += `, Avg HR ${avgHr}bpm`;
+    if (detected) line += ` | Structure: [${detected}]`;
+    return line;
+  }).join('\n');
+
+  // =========================================================================
+  // 5. FULL HISTORICAL TIMELINE & TRAINING ARCHIVE
+  // =========================================================================
+  let fullHistoryCompact = '';
+  if (sortedActivities.length > 150) {
+    const recentPool = sortedActivities.slice(0, 80);
+    const olderPool = sortedActivities.slice(80);
+    
+    const recentStr = recentPool.map(a => 
+      `${a.start_date_local.split('T')[0]}|${a.type || 'Ride'}|TSS:${Math.round(a.icu_training_load || a.icu_tss || 0)}|NP:${Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0)}W`
+    ).join(',');
+
+    const monthlyTss: Record<string, { tss: number; hours: number; count: number }> = {};
+    olderPool.forEach(a => {
+      const month = a.start_date_local.substring(0, 7);
+      if (!monthlyTss[month]) monthlyTss[month] = { tss: 0, hours: 0, count: 0 };
+      monthlyTss[month].tss += (a.icu_training_load || a.icu_tss || 0);
+      monthlyTss[month].hours += (a.moving_time || a.elapsed_time || 0) / 3600;
+      monthlyTss[month].count += 1;
+    });
+
+    const monthlyStr = Object.entries(monthlyTss)
+      .map(([m, data]) => `${m}: ${data.count} rides, ${Math.round(data.hours)}h, TSS ${Math.round(data.tss)}`)
+      .join(' | ');
+
+    fullHistoryCompact = `Recent Activities: ${recentStr}\n\nHistorical Monthly Archive: ${monthlyStr}`;
+  } else {
+    fullHistoryCompact = sortedActivities.map(a => 
+      `${a.start_date_local.split('T')[0]}|${a.type || 'Ride'}|TSS:${Math.round(a.icu_training_load || a.icu_tss || 0)}|NP:${Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0)}W|${Math.round((a.distance || 0)/1000)}km`
+    ).join(', ');
+  }
+
+  const currentDateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  const powerCurveStr = safePowerCurves.map(pc => {
     const bests = pc.bests.map(b => `${b.duration}s: ${b.watts}W`).join(', ');
     return `${pc.year} Annual Bests: ${bests}`;
   }).join('\n');
 
-  // Compress full history for the LLM to access
-  // For histories > 200 items, we summarize older ones to stay concise while maintaining the "full history" awareness
-  let fullHistoryCompact = '';
-  if (sortedActivities.length > 200) {
-    const recentPool = sortedActivities.slice(0, 100);
-    const olderPool = sortedActivities.slice(100);
-    
-    const recentStr = recentPool.map(a => 
-      `${a.start_date_local.split('T')[0]}|TSS:${a.icu_training_load || a.icu_tss || 0}|NP:${Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0)}W`
-    ).join(',');
-
-    // Summarize older data by month or year to keep it useful but compact
-    const summaries: Record<string, number> = {};
-    olderPool.forEach(a => {
-      const month = a.start_date_local.substring(0, 7); // YYYY-MM
-      summaries[month] = (summaries[month] || 0) + (a.icu_training_load || a.icu_tss || 0);
-    });
-
-    const summaryStr = Object.entries(summaries)
-      .map(([m, tss]) => `${m}:TSS ${Math.round(tss as number)}`)
-      .join(',');
-
-    fullHistoryCompact = `Recent: ${recentStr} | Older Summaries: ${summaryStr}`;
-  } else {
-    fullHistoryCompact = sortedActivities.map(a => 
-      `${a.start_date_local.split('T')[0]}|${a.type}|TSS:${a.icu_training_load || a.icu_tss || 0}|NP:${Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0)}W|${Math.round((a.distance || 0)/1000)}km`
-    ).join(', ');
-  }
-
   const systemInstruction = getChatMessagePrompt({
+    currentDateStr,
+    todayIso,
     goal: context.goal,
     recentLoad: context.recentLoad,
     readiness: context.readiness,
     historySummary,
     powerCurveStr,
+    powerRecordsAndCurveAnalysis,
+    historicalTrainingMethods,
+    trainingEffectivenessInsights,
     fullHistoryCompact,
     totalActivities: context.activities.length
   });
@@ -934,7 +1216,7 @@ export const sendChatMessage = async (
     contents,
     config: {
       systemInstruction,
-      temperature: 0.8,
+      temperature: 0.7,
     }
   });
   return response.text || "Direct comms error.";
@@ -1185,94 +1467,4 @@ export const analyzeThreeMonthReview = async (
   setCache(cacheKey, parsed);
   return parsed;
 };
-
-/**
- * Generate a custom workout based on user's specific request using Gemini AI
- */
-export const createCustomWorkoutRequest = async (
-  prompt: string,
-  ftp: number = 250,
-  userGoal?: string
-): Promise<LibraryWorkout> => {
-  const systemInstruction = `You are waTTson, an expert elite cycling performance coach. The athlete requested a custom cycling workout.
-Construct a precise, structured cycling workout adhering strictly to this JSON schema:
-{
-  "title": "Concise workout title (e.g., 4x8m Norwegian VO2Max Intervals)",
-  "description": "Clear explanation of the workout structure, target energy system, and tactical benefits.",
-  "category": "Recovery" | "Endurance" | "Tempo/Sweet Spot" | "Threshold" | "VO2 Max" | "Anaerobic",
-  "intensity": "Easy" | "Medium" | "Hard",
-  "duration_minutes": 60,
-  "tss": 55,
-  "workout_steps": [
-    {
-      "duration": 10,
-      "target_pct": 0.55,
-      "label": "Warmup - gradual spin"
-    },
-    {
-      "duration": 4,
-      "target_pct": 1.08,
-      "label": "Rep 1 - Hard effort"
-    },
-    {
-      "duration": 3,
-      "target_pct": 0.50,
-      "label": "Active recovery spin"
-    }
-  ]
-}
-
-Rules:
-1. "target_pct" is a decimal fraction of FTP (e.g. 0.55 for 55% FTP, 0.90 for 90% FTP, 1.10 for 110% FTP).
-2. All step durations (in minutes or fractions of minutes, e.g. 0.5 for 30s) MUST sum up exactly to "duration_minutes".
-3. Calculate an accurate estimated "tss" based on duration and intensity.
-4. Keep the output strictly valid JSON with no markdown tags.`;
-
-  const userContent = `User Custom Workout Request: "${prompt}"
-Athlete FTP: ${ftp}W
-${userGoal ? `Athlete Primary Goal: ${userGoal}` : ''}`;
-
-  const response = await callGemini({
-    contents: [{ role: 'user', parts: [{ text: userContent }] }],
-    config: {
-      systemInstruction,
-      temperature: 0.3,
-      responseMimeType: "application/json"
-    }
-  });
-
-  const parsed = safeParseJSON(response.text);
-
-  const id = `custom_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const title = parsed.title || "Custom Requested Workout";
-  const category = (['Recovery', 'Endurance', 'Tempo/Sweet Spot', 'Threshold', 'VO2 Max', 'Anaerobic'].includes(parsed.category) 
-    ? parsed.category 
-    : 'Threshold') as LibraryWorkout['category'];
-  const intensity = (['Easy', 'Medium', 'Hard'].includes(parsed.intensity) ? parsed.intensity : 'Hard') as LibraryWorkout['intensity'];
-  const steps = Array.isArray(parsed.workout_steps) && parsed.workout_steps.length > 0 
-    ? parsed.workout_steps 
-    : [
-        { duration: 10, target_pct: 0.55, label: "Warmup" },
-        { duration: 40, target_pct: 0.85, label: "Custom Effort" },
-        { duration: 10, target_pct: 0.50, label: "Cooldown" }
-      ];
-
-  const totalDur = steps.reduce((sum: number, s: any) => sum + (s.duration || 0), 0);
-
-  return {
-    id,
-    title,
-    description: parsed.description || `Custom workout tailored by waTTson based on: "${prompt}".`,
-    category,
-    intensity,
-    duration_minutes: Math.round(totalDur) || parsed.duration_minutes || 60,
-    tss: parsed.tss || 50,
-    workout_steps: steps.map((s: any) => ({
-      duration: s.duration || 5,
-      target_pct: typeof s.target_pct === 'number' ? s.target_pct : 0.70,
-      label: s.label || 'Step'
-    }))
-  };
-};
-
 
