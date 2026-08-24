@@ -383,20 +383,32 @@ export const isEnduranceWorkout = (workout: any): boolean => {
 
 interface VisualProfileChartProps {
   steps: any[];
+  currentFtp?: number;
+  originalFtp?: number;
 }
 
-export const VisualProfileChart: React.FC<VisualProfileChartProps> = ({ steps }) => {
+export const VisualProfileChart: React.FC<VisualProfileChartProps> = ({ steps, currentFtp, originalFtp }) => {
   if (!steps || steps.length === 0) return null;
+  const effFtp = currentFtp || 250;
+  const baseFtp = originalFtp || 250;
   const totalWorkoutDur = steps.reduce((sum, s) => sum + s.duration, 0) || 1;
   return (
     <div className="space-y-1.5 text-left w-full">
-      <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-widest block">Visual Profile</span>
+      <div className="flex items-center justify-between">
+        <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-widest block">Visual Profile</span>
+        {currentFtp && (
+          <span className="text-[8.5px] font-bold text-slate-500 uppercase tracking-wider">
+            FTP: {currentFtp}W
+          </span>
+        )}
+      </div>
       <div className="w-full bg-slate-950/80 border border-white/5 rounded-xl p-3 flex items-end h-16 gap-[2px]">
         {steps.map((step, idx) => {
           const widthPct = (step.duration / totalWorkoutDur) * 100;
           const minPct = 0.40;
           const maxPct = 1.35;
-          const targetPct = step.target_pct || (step.target_watts && step.target_watts / 250) || 0.65;
+          const targetPct = step.target_pct || (step.target_watts ? step.target_watts / baseFtp : 0.65);
+          const watts = Math.round(targetPct * effFtp);
           const heightPct = Math.max(12, Math.min(100, ((targetPct - minPct) / (maxPct - minPct)) * 85 + 15));
           
           let colorClass = 'bg-slate-700';
@@ -417,7 +429,7 @@ export const VisualProfileChart: React.FC<VisualProfileChartProps> = ({ steps })
               key={idx} 
               style={{ width: `${widthPct}%`, height: `${heightPct}%` }}
               className={`rounded-[1.5px] transition-all relative group/bar ${colorClass}`}
-              title={`${step.label || 'Step'} (${step.duration}m @ ${Math.round(targetPct * 100)}%)`}
+              title={`${step.label || 'Step'} (${step.duration}m @ ${watts}W / ${Math.round(targetPct * 100)}%)`}
             />
           );
         })}

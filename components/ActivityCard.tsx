@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
 import { Activity, ActivityInterval } from '../types';
 import { Zap, Clock, ChevronRight, Activity as ActivityIcon, Heart, TrendingUp } from 'lucide-react';
-import { detectIntervalsFromLaps } from '../services/intervalsService';
+import { classifyActivityRide } from '../services/intervalsService';
 
 interface ActivityCardProps {
   activity: Activity;
@@ -9,160 +9,8 @@ interface ActivityCardProps {
   isToday?: boolean;
 }
 
-// In-memory cache for fast lookup without disk I/O on every render
-let inMemoryRideTypes: Record<string, string> | null = null;
-let saveTimeout: any = null;
-
-const getStoredRideTypes = (): Record<string, string> => {
-  if (inMemoryRideTypes !== null) return inMemoryRideTypes;
-  try {
-    const raw = localStorage.getItem('wattson_custom_ride_types');
-    inMemoryRideTypes = raw ? JSON.parse(raw) : {};
-  } catch {
-    inMemoryRideTypes = {};
-  }
-  return inMemoryRideTypes || {};
-};
-
-const setCachedRideType = (id: string, type: string) => {
-  const cache = getStoredRideTypes();
-  if (cache[id] === type) return;
-  cache[id] = type;
-  
-  // Debounce localStorage writes so hundreds of cards don't freeze the main thread
-  if (saveTimeout) clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(() => {
-    try {
-      localStorage.setItem('wattson_custom_ride_types', JSON.stringify(inMemoryRideTypes));
-    } catch {}
-  }, 1000);
-};
-
 export const getRideType = (activity: Activity, intervals?: ActivityInterval[]): string => {
-  const cachedTypes = getStoredRideTypes();
-  if (cachedTypes[activity.id]) {
-    return cachedTypes[activity.id];
-  }
-
-  // Extract intervals attached to activity or passed directly
-  let actIntervals: any[] | undefined = (intervals && intervals.length > 0) ? intervals : undefined;
-  if (!actIntervals) {
-    if (Array.isArray((activity as any).icu_laps) && (activity as any).icu_laps.length > 0) {
-      actIntervals = (activity as any).icu_laps;
-    } else if (Array.isArray((activity as any).icu_intervals) && (activity as any).icu_intervals.length > 0) {
-      actIntervals = (activity as any).icu_intervals;
-    } else if (Array.isArray((activity as any).icu_intervals_edited) && (activity as any).icu_intervals_edited.length > 0) {
-      actIntervals = (activity as any).icu_intervals_edited;
-    } else if (Array.isArray((activity as any).laps) && (activity as any).laps.length > 0) {
-      actIntervals = (activity as any).laps;
-    } else if (Array.isArray((activity as any).intervals) && (activity as any).intervals.length > 0) {
-      actIntervals = (activity as any).intervals;
-    }
-  }
-
-  // Programmatically detect intervals pattern
-  const detected = detectIntervalsFromLaps(activity, actIntervals);
-
-  // If specific interval count/duration/watts detected, prioritize and update cache
-  if (detected && !detected.endsWith('(Intervals)')) {
-    setCachedRideType(activity.id, detected);
-    return detected;
-  }
-
-  if (detected) {
-    setCachedRideType(activity.id, detected);
-    return detected;
-  }
-
-  let baseType = 'Endurance';
-
-  // 1. Check if the activity name itself contains clear indications of the target types
-  const nameLower = (activity.name || '').toLowerCase();
-  if (nameLower.includes('recovery')) {
-    baseType = 'Recovery';
-  } else if (nameLower.includes('endurance')) {
-    baseType = 'Endurance';
-  } else if (nameLower.includes('sweet spot') || nameLower.includes('sweetspot')) {
-    baseType = 'Sweet Spot';
-  } else if (nameLower.includes('threshold')) {
-    baseType = 'Threshold';
-  } else if (nameLower.includes('vo2')) {
-    baseType = 'VO2 Max';
-  } else if (nameLower.includes('anaerobic')) {
-    baseType = 'Anaerobic';
-  } else if (nameLower.includes('sprint')) {
-    baseType = 'Sprint';
-  } else {
-    // 2. Get intensity
-    let intensity = activity.icu_intensity;
-    
-    // If intensity is a percentage (e.g. 75.5 instead of 0.755), convert to fraction
-    if (intensity !== undefined && intensity !== null && intensity > 2.0) {
-      intensity = intensity / 100;
-    }
-
-    // Calculate if not present or invalid
-    if (intensity === undefined || intensity === null || intensity <= 0 || intensity > 2.0) {
-      const power = activity.weighted_average_watts ?? activity.icu_weighted_average_watts ?? activity.average_watts ?? activity.icu_average_watts;
-      let ftp = activity.icu_eftp;
-      if (!ftp || ftp <= 0) {
-        try {
-          const savedFtp = localStorage.getItem('wattson_ftp');
-          if (savedFtp) {
-            ftp = parseInt(savedFtp, 10);
-          }
-        } catch {}
-      }
-      if (!ftp || ftp <= 0) {
-        ftp = 250; // Fallback
-      }
-      if (power && ftp && ftp > 0) {
-        intensity = power / ftp;
-      }
-    }
-
-    // Calculate from TSS and moving time if intensity is still missing or invalid
-    if (intensity === undefined || intensity === null || intensity <= 0 || intensity > 2.0) {
-      const load = activity.icu_training_load ?? activity.icu_tss ?? activity.training_load ?? (activity as any).load ?? (activity as any).tss ?? 0;
-      const movingTime = activity.moving_time || activity.elapsed_time || (activity as any).time || (activity as any).duration;
-      if (load > 0 && movingTime && movingTime > 0) {
-        const durationHours = movingTime / 3600;
-        intensity = Math.sqrt(load / (100 * durationHours));
-      }
-    }
-
-    // Map intensity to zones
-    if (intensity !== undefined && intensity !== null && intensity > 0 && !isNaN(intensity)) {
-      if (intensity < 0.60) {
-        baseType = 'Recovery';
-      } else if (intensity < 0.75) {
-        baseType = 'Endurance';
-      } else if (intensity < 0.88) {
-        baseType = 'Sweet Spot';
-      } else if (intensity < 1.05) {
-        baseType = 'Threshold';
-      } else {
-        baseType = 'VO2 Max';
-      }
-      
-      const vi = activity.icu_variability_index;
-      if (vi && vi > 1.15 && intensity > 0.75) {
-        if (vi > 1.25) baseType = 'Sprint';
-        else if (baseType === 'Threshold') baseType = 'Anaerobic';
-      }
-    } else {
-      // 3. Fallback name cues
-      if (nameLower.includes('easy') || nameLower.includes('spin') || nameLower.includes('rec')) {
-        baseType = 'Recovery';
-      } else if (nameLower.includes('tempo')) {
-        baseType = 'Sweet Spot';
-      } else if (nameLower.includes('interval') || nameLower.includes('hiit')) {
-        baseType = 'VO2 Max';
-      }
-    }
-  }
-
-  return `${baseType} Ride`;
+  return classifyActivityRide(activity, intervals);
 };
 
 export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onClick, isToday }) => {
@@ -180,16 +28,34 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
   let load = Math.round(activity.icu_training_load ?? activity.icu_tss ?? activity.training_load ?? 0);
   const isVirtual = activity.source === 'ZWIFT' || activity.type === 'VirtualRide' || activity.type === 'VirtualRun';
   
-  const displayDuration = activity.moving_time || activity.elapsed_time || (activity as any).time || (activity as any).duration;
+  const displayDuration = activity.moving_time || activity.elapsed_time || (activity as any).time || (activity as any).duration || (activity as any).icu_recording_time || 0;
+  const displayDistance = activity.distance || (activity as any).icu_distance || 0;
 
-  // For runs, speed is m/s. Pace is min/km
-  const pace = (activity.type === 'Run' || activity.type === 'VirtualRun') && (activity as any).average_speed
-    ? `${Math.floor(1000 / (activity as any).average_speed / 60)}:${Math.floor((1000 / (activity as any).average_speed) % 60).toString().padStart(2, '0')}/km`
-    : null;
+  // Do not display rides or activities with 0 minutes / zero duration
+  if (displayDuration < 60 && displayDistance < 100) {
+    return null;
+  }
+
+  // For runs and walks, compute pace (min/km)
+  const isRunOrWalk = activity.type === 'Run' || activity.type === 'VirtualRun' || activity.type === 'TrailRun' || activity.type === 'Walk' || activity.type === 'Hike';
+  let pace: string | null = null;
+  if (isRunOrWalk && (activity as any).average_speed && (activity as any).average_speed > 0) {
+    const secPerKm = 1000 / (activity as any).average_speed;
+    if (secPerKm > 0 && secPerKm < 3600) {
+      const pM = Math.floor(secPerKm / 60);
+      const pS = Math.floor(secPerKm % 60).toString().padStart(2, '0');
+      pace = `${pM}:${pS}/km`;
+    }
+  } else if (isRunOrWalk && displayDistance >= 500 && displayDuration >= 60) {
+    const secPerKm = (displayDuration / displayDistance) * 1000;
+    if (secPerKm > 0 && secPerKm < 3600) {
+      const pM = Math.floor(secPerKm / 60);
+      const pS = Math.floor(secPerKm % 60).toString().padStart(2, '0');
+      pace = `${pM}:${pS}/km`;
+    }
+  }
 
   const displayName = getRideType(activity, (activity as any).icu_intervals || (activity as any).intervals);
-    
-  const displayDistance = activity.distance || (activity as any).icu_distance || 0;
   load = Math.round(activity.icu_training_load ?? activity.icu_tss ?? activity.training_load ?? (activity as any).load ?? (activity as any).tss ?? 0);
 
   return (

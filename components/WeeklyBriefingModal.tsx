@@ -481,7 +481,11 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                  <div className="space-y-3 max-h-[180px] overflow-y-auto custom-scrollbar pr-1">
                    {selectedDay.workout_steps && selectedDay.workout_steps.length > 0 ? (
                       isEnduranceWorkout(selectedDay) ? (
-                        <VisualProfileChart steps={selectedDay.workout_steps} />
+                        <VisualProfileChart 
+                          steps={selectedDay.workout_steps} 
+                          currentFtp={ftp || undefined}
+                          originalFtp={weeklyBriefing?.ftp}
+                        />
                       ) : (
                         <GroupedWorkoutStepsList 
                           steps={selectedDay.workout_steps}

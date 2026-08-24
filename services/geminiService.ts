@@ -320,15 +320,6 @@ export const getRideFeedback = async (
   }
 
   const detectedRideType = detectIntervalsFromLaps(activity, effectiveIntervals) || undefined;
-  
-  if (detectedRideType) {
-    try {
-      const customTypes = localStorage.getItem('wattson_custom_ride_types') || '{}';
-      const parsed = JSON.parse(customTypes);
-      parsed[activity.id] = detectedRideType;
-      localStorage.setItem('wattson_custom_ride_types', JSON.stringify(parsed));
-    } catch (e) {}
-  }
 
   // Detect power spikes and surge dynamics
   const maxWatts = activity.max_watts || 0;
@@ -618,6 +609,7 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing): WeeklyBriefing 
           focus: matched.title,
           workout_steps: scaledSteps,
           duration_target: matched.duration_minutes,
+          load_target: matched.tss || day.load_target,
           why: `${matched.category} focus: ${matched.description}`
         };
       }
@@ -695,6 +687,51 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing): WeeklyBriefing 
       }
     }
   });
+
+  // Guard against consecutive recovery sessions (2 recovery rides after each other makes no training sense)
+  for (let i = 0; i < normalizedDays.length - 1; i++) {
+    const current = normalizedDays[i];
+    const next = normalizedDays[i + 1];
+    
+    const isRecoverySession = (d: typeof current) => {
+      if (!d) return false;
+      const f = (d.focus || '').toLowerCase();
+      const w = (d.why || '').toLowerCase();
+      const isRest = d.intensity === 'Rest' || f.includes('rest');
+      if (isRest) return false;
+      return f.includes('recovery') || f.includes('recup') || f.includes('active recovery') || w.includes('active recovery');
+    };
+
+    if (isRecoverySession(current) && isRecoverySession(next)) {
+      // Convert the second recovery ride into an Aerobic Zone 2 Endurance Ride
+      const matchedEndurance = matchWorkoutToLibrary('Zone 2 Endurance', 60, 'Easy') || matchWorkoutToLibrary('Aerobic Foundation', 60, 'Easy');
+      if (matchedEndurance) {
+        normalizedDays[i + 1] = {
+          ...next,
+          focus: matchedEndurance.title,
+          intensity: 'Easy',
+          duration_target: matchedEndurance.duration_minutes,
+          load_target: matchedEndurance.tss,
+          workout_steps: matchedEndurance.workout_steps.map(step => ({
+            duration: step.duration,
+            target_watts: Math.round(step.target_pct * ftp),
+            target_pct: step.target_pct,
+            label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+          })),
+          why: 'Aerobic base building (swapped redundant back-to-back recovery ride)'
+        };
+      } else {
+        normalizedDays[i + 1] = {
+          ...next,
+          focus: 'Aerobic Foundation',
+          intensity: 'Easy',
+          duration_target: 60,
+          load_target: 45,
+          why: 'Aerobic endurance base development'
+        };
+      }
+    }
+  }
 
   return {
     ...briefing,
@@ -891,6 +928,7 @@ export const getWeeklyBriefing = async (
             focus: matched.title,
             workout_steps: scaledSteps,
             duration_target: matched.duration_minutes,
+            load_target: matched.tss || day.load_target,
             why: `${matched.category} focus: ${matched.description}`
           };
         }

@@ -56,6 +56,8 @@ export interface Activity {
   icu_tsb?: number;
   analyzed?: boolean;
   icu_eftp?: number;
+  icu_zone_times?: number[];
+  icu_hr_zone_times?: number[];
   icu_intervals?: any[];
   icu_laps?: any[];
   icu_groups?: any[];

@@ -80,6 +80,8 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
   
   const avgHr = Math.round(activity.average_heartrate || 0);
   const tss = Math.round(activity.icu_training_load || activity.icu_tss || activity.training_load || 0);
+  const displayDistance = activity.distance || (activity as any).icu_distance || 0;
+  const distKm = displayDistance > 0 ? (Math.round(displayDistance / 100) / 10) : 0;
 
   return (
     <div className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={onClose}>
@@ -113,7 +115,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
           </button>
         </div>
 
-        {/* Compact Metrics Strip (dynamically reporting DUR, AVG, NP, HR, TSS or DUR, PWR, HR, TSS) */}
+        {/* Dynamic Metrics Strip */}
         {hasDistinctNp ? (
           <div className="grid grid-cols-5 gap-1 p-2.5 bg-white/[0.03] border border-white/5 rounded-2xl shrink-0 mb-3">
             <div className="flex flex-col items-center justify-center text-center">
@@ -147,7 +149,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
               <span className="text-xs sm:text-sm font-black text-yellow-400 mt-0.5">{tss}</span>
             </div>
           </div>
-        ) : (
+        ) : displayWatts > 0 ? (
           <div className="grid grid-cols-4 gap-1.5 p-2.5 bg-white/[0.03] border border-white/5 rounded-2xl shrink-0 mb-3">
             <div className="flex flex-col items-center justify-center text-center">
               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
@@ -159,13 +161,61 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
                 <Zap size={9} className="text-amber-400" /> PWR
               </span>
-              <span className="text-xs sm:text-sm font-black text-amber-400 mt-0.5">{displayWatts > 0 ? `${displayWatts}W` : '--'}</span>
+              <span className="text-xs sm:text-sm font-black text-amber-400 mt-0.5">{displayWatts}W</span>
             </div>
             <div className="flex flex-col items-center justify-center text-center border-l border-white/5">
               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
                 <Heart size={9} fill="currentColor" className="text-rose-400" /> HR
               </span>
               <span className="text-xs sm:text-sm font-black text-rose-400 mt-0.5">{avgHr > 0 ? avgHr : '--'}</span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/5">
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
+                <Target size={9} className="text-yellow-400" /> TSS
+              </span>
+              <span className="text-xs sm:text-sm font-black text-yellow-400 mt-0.5">{tss}</span>
+            </div>
+          </div>
+        ) : distKm > 0 ? (
+          <div className="grid grid-cols-4 gap-1.5 p-2.5 bg-white/[0.03] border border-white/5 rounded-2xl shrink-0 mb-3">
+            <div className="flex flex-col items-center justify-center text-center">
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
+                <Clock size={9} className="text-blue-400" /> DUR
+              </span>
+              <span className="text-xs sm:text-sm font-black text-white mt-0.5">{duration}</span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/5">
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
+                <Target size={9} className="text-emerald-400" /> DIST
+              </span>
+              <span className="text-xs sm:text-sm font-black text-emerald-400 mt-0.5">{distKm} km</span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/5">
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
+                <Heart size={9} fill="currentColor" className="text-rose-400" /> HR
+              </span>
+              <span className="text-xs sm:text-sm font-black text-rose-400 mt-0.5">{avgHr > 0 ? `${avgHr} bpm` : '--'}</span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/5">
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
+                <Target size={9} className="text-yellow-400" /> TSS
+              </span>
+              <span className="text-xs sm:text-sm font-black text-yellow-400 mt-0.5">{tss}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2 p-2.5 bg-white/[0.03] border border-white/5 rounded-2xl shrink-0 mb-3">
+            <div className="flex flex-col items-center justify-center text-center">
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
+                <Clock size={9} className="text-blue-400" /> DUR
+              </span>
+              <span className="text-xs sm:text-sm font-black text-white mt-0.5">{duration}</span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/5">
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
+                <Heart size={9} fill="currentColor" className="text-rose-400" /> HR
+              </span>
+              <span className="text-xs sm:text-sm font-black text-rose-400 mt-0.5">{avgHr > 0 ? `${avgHr} bpm` : '--'}</span>
             </div>
             <div className="flex flex-col items-center justify-center text-center border-l border-white/5">
               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-0.5">
@@ -294,7 +344,11 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                   </span>
                   <div className="max-h-36 overflow-y-auto custom-scrollbar">
                     {isEnduranceWorkout(feedback) ? (
-                      <VisualProfileChart steps={feedback.workout_steps} />
+                      <VisualProfileChart 
+                        steps={feedback.workout_steps} 
+                        currentFtp={ftp || undefined}
+                        originalFtp={ftp}
+                      />
                     ) : (
                       <GroupedWorkoutStepsList 
                         steps={feedback.workout_steps}

@@ -79,7 +79,7 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
     'icu_hr_variability', 'icu_hrr', 'has_heartrate', 'has_power', 'average_temp',
     'device_name', 'external_id', 'icu_pm_actual_load', 'icu_atl', 'icu_ctl', 'icu_tsb',
     'analyzed', 'icu_power_hr_z2_ef', 'icu_power_hr_z2', 'icu_power_hr_z2_hr', 'icu_eftp',
-    'icu_intervals', 'icu_groups'
+    'icu_intervals', 'icu_groups', 'icu_zone_times', 'icu_hr_zone_times'
   ].join(',');
 
   const allActivities: Activity[] = [];
@@ -143,7 +143,14 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
       if (remaining) await new Promise(resolve => setTimeout(resolve, 50));
     }
 
-    return allActivities.sort((a, b) => b.start_date_local.localeCompare(a.start_date_local));
+    return allActivities
+      .filter(item => {
+        const dur = item.moving_time || item.elapsed_time || (item as any).time || (item as any).duration || (item as any).icu_recording_time || 0;
+        const dist = item.distance || (item as any).icu_distance || 0;
+        // Never display or process 0m / 0s / zero duration placeholder entries
+        return dur >= 60 || dist >= 100;
+      })
+      .sort((a, b) => b.start_date_local.localeCompare(a.start_date_local));
   } catch (error: any) {
     console.error('Activities Fetch Error:', error);
     if (allActivities.length > 0) return allActivities;
@@ -364,8 +371,8 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
 };
 
 /**
-  * Helper to extract duration in seconds from any lap/interval object
-  */
+ * Helper to extract duration in seconds from any lap/interval object
+ */
 const getLapTimeHelper = (l: any): number => {
   if (typeof l.moving_time === 'number' && l.moving_time > 0) return l.moving_time;
   if (typeof l.duration === 'number' && l.duration > 0) return l.duration;
@@ -377,8 +384,8 @@ const getLapTimeHelper = (l: any): number => {
 };
 
 /**
-  * Helper to extract power in watts from any lap/interval object
-  */
+ * Helper to extract power in watts from any lap/interval object
+ */
 const getLapPowerHelper = (l: any): number => {
   if (typeof l.average_watts === 'number' && l.average_watts > 0) return l.average_watts;
   if (typeof l.avg_watts === 'number' && l.avg_watts > 0) return l.avg_watts;
@@ -389,201 +396,369 @@ const getLapPowerHelper = (l: any): number => {
 };
 
 /**
- * Analyzes intervals/laps and power curves to detect structured workout sets and names the ride accordingly.
+ * Checks whether an activity contains genuine, intentional structured interval sets.
+ * Prevents minor surges on endurance rides from falsely tagging an entire ride as VO2 Max.
  */
-export const detectIntervalsFromLaps = (activity: Activity, intervals?: ActivityInterval[]): string | null => {
-  // Check if activity contains pre-grouped intervals from Intervals.icu
-  const icuGroups = (activity as any).icu_groups;
-  if (Array.isArray(icuGroups) && icuGroups.length > 0) {
-    const mainG = icuGroups[0];
-    if (mainG && mainG.count && mainG.duration) {
-      const durSecs = mainG.duration;
-      const count = mainG.count;
-      const watts = mainG.avg_watts || mainG.average_watts || 0;
-      
-      let ftp = activity.icu_eftp || 250;
-      try {
-        const savedFtp = localStorage.getItem('wattson_ftp');
-        if (savedFtp) ftp = parseInt(savedFtp, 10);
-      } catch {}
+const detectStructuredWorkoutPattern = (laps: any[], ftp: number, totalTime: number): string | null => {
+  if (!laps || laps.length === 0 || ftp <= 0) return null;
 
-      const pct = watts > 0 ? watts / ftp : 1.0;
-      let zName = 'Interval';
-      if (pct >= 1.05) zName = 'VO2 Max';
-      else if (pct >= 0.90) zName = 'Threshold';
-      else if (pct >= 0.84) zName = 'Sweet Spot';
-      else if (pct >= 0.75) zName = 'Tempo';
+  // Filter for WORK laps/intervals with meaningful power and duration
+  const workLaps = laps.filter(l => {
+    const pwr = getLapPowerHelper(l);
+    const dur = getLapTimeHelper(l);
 
-      const m = Math.floor(durSecs / 60);
-      const s = Math.round(durSecs % 60);
-      const durStr = s > 0 && s < 45 ? `${m}m ${s}s` : (s >= 45 ? `${m + 1}m` : `${m}m`);
-      const wStr = watts > 0 ? ` @ ${Math.round(watts)}W` : '';
-      return `${zName} Ride (${count}x ${durStr}${wStr})`;
-    }
-  }
+    // Skip if duration is too short (< 15s) or represents the whole ride (> 80% total time)
+    if (dur < 15 || dur > totalTime * 0.80) return false;
 
-  // Combine provided intervals with activity properties if available
-  let laps: any[] = [];
-  if (intervals && intervals.length > 0) {
-    laps = intervals;
-  } else if (Array.isArray((activity as any).icu_laps) && (activity as any).icu_laps.length > 0) {
-    laps = (activity as any).icu_laps;
-  } else if (Array.isArray((activity as any).icu_intervals) && (activity as any).icu_intervals.length > 0) {
-    laps = (activity as any).icu_intervals;
-  } else if (Array.isArray((activity as any).icu_intervals_edited) && (activity as any).icu_intervals_edited.length > 0) {
-    laps = (activity as any).icu_intervals_edited;
-  } else if (Array.isArray((activity as any).laps) && (activity as any).laps.length > 0) {
-    laps = (activity as any).laps;
-  } else if (Array.isArray((activity as any).intervals) && (activity as any).intervals.length > 0) {
-    laps = (activity as any).intervals;
-  }
+    const rawType = (l.type || '').toUpperCase();
+    if (rawType === 'RECOVERY' || rawType === 'WARMUP' || rawType === 'COOLDOWN' || rawType === 'REST') return false;
 
-  let ftp = activity.icu_eftp || 0;
-  if (!ftp || ftp <= 0) {
-    try {
-      const savedFtp = localStorage.getItem('wattson_ftp');
-      if (savedFtp) {
-        ftp = parseInt(savedFtp, 10);
-      }
-    } catch {}
-  }
-  if (!ftp || ftp <= 0) ftp = 250;
+    const labelLower = (l.label || '').toLowerCase();
+    if (labelLower.includes('warm') || labelLower.includes('cool') || labelLower.includes('rest') || labelLower.includes('recov')) return false;
 
-  const totalTime = activity.moving_time || activity.elapsed_time || 3600;
+    // Power must be at least 75% FTP to qualify as an intentional work interval
+    return pwr >= ftp * 0.75;
+  });
 
-  if (laps && laps.length > 0) {
-    const avgActivityPower = activity.average_watts || activity.icu_average_watts || 150;
+  if (workLaps.length === 0) return null;
 
-    // Filter for WORK laps/intervals
-    const workLaps = laps.filter(l => {
-      const pwr = getLapPowerHelper(l);
-      const dur = getLapTimeHelper(l);
+  // Group similar intervals
+  const groups: { duration: number; watts: number; count: number; intervals: any[] }[] = [];
+  for (const lap of workLaps) {
+    const lPwr = getLapPowerHelper(lap);
+    const lDur = getLapTimeHelper(lap);
 
-      // Skip if duration is too short (< 8s) or is basically the entire ride (> 85% of total time)
-      if (dur < 8 || dur > totalTime * 0.85) return false;
-
-      const rawType = (l.type || '').toUpperCase();
-      if (rawType === 'RECOVERY' || rawType === 'WARMUP' || rawType === 'COOLDOWN') return false;
-
-      const isWorkType = rawType === 'WORK' || rawType === 'ACTIVE' || rawType === 'WORKOUT' || rawType === 'LAP';
-      const labelLower = (l.label || '').toLowerCase();
-      const isWorkLabel = labelLower.includes('work') || labelLower.includes('interval') || labelLower.includes('effort') || labelLower.includes('set');
-      
-      // Check if the average power of the lap is noticeably above ride average or >= 78% FTP
-      const isHighPower = pwr > avgActivityPower * 1.06 || pwr >= ftp * 0.78;
-      
-      return isWorkType || isWorkLabel || isHighPower;
+    const matchedGroup = groups.find(g => {
+      const durDiff = Math.abs(g.duration - lDur);
+      const wattsDiff = Math.abs(g.watts - lPwr);
+      const durMatch = durDiff <= 30 || durDiff / Math.max(g.duration, lDur) <= 0.25;
+      const wattsMatch = wattsDiff <= 25 || wattsDiff / Math.max(g.watts, lPwr || 1) <= 0.15;
+      return durMatch && wattsMatch;
     });
 
-    if (workLaps.length > 0) {
-      // Group similar intervals
-      const groups: { duration: number; watts: number; count: number; intervals: any[] }[] = [];
-      for (const lap of workLaps) {
-        const lPwr = getLapPowerHelper(lap);
-        const lDur = getLapTimeHelper(lap);
-
-        let matchedGroup = groups.find(g => {
-          const durDiff = Math.abs(g.duration - lDur);
-          const wattsDiff = Math.abs(g.watts - lPwr);
-          
-          // durMatch: duration within 40 seconds or 30%
-          const durMatch = durDiff <= 40 || durDiff / Math.max(g.duration, lDur) <= 0.30;
-          // wattsMatch: power within 35W or 20%
-          const wattsMatch = wattsDiff <= 35 || wattsDiff / Math.max(g.watts, lPwr || 1) <= 0.20;
-          
-          return durMatch && wattsMatch;
-        });
-
-        if (matchedGroup) {
-          matchedGroup.count += 1;
-          matchedGroup.intervals.push(lap);
-          matchedGroup.duration = Math.round(matchedGroup.intervals.reduce((sum, l) => sum + getLapTimeHelper(l), 0) / matchedGroup.count);
-          matchedGroup.watts = Math.round(matchedGroup.intervals.reduce((sum, l) => sum + getLapPowerHelper(l), 0) / matchedGroup.count);
-        } else {
-          groups.push({
-            duration: lDur,
-            watts: lPwr,
-            count: 1,
-            intervals: [lap]
-          });
-        }
-      }
-
-      // Rank groups by significance score
-      const sortedGroups = groups
-        .filter(g => {
-          const pctFtp = g.watts / ftp;
-          return pctFtp >= 0.72 || g.watts > ftp * 0.72;
-        })
-        .sort((a, b) => {
-          const getSignificanceScore = (g: typeof a) => {
-            const pctFtp = g.watts / ftp;
-            const totalDuration = g.count * g.duration;
-            
-            let intensityWeight = 1.0;
-            if (pctFtp >= 1.50) intensityWeight = 1.2;
-            else if (pctFtp >= 1.20) intensityWeight = 1.4;
-            else if (pctFtp >= 1.05) intensityWeight = 1.65; // VO2 Max
-            else if (pctFtp >= 0.90) intensityWeight = 1.70; // Threshold
-            else if (pctFtp >= 0.84) intensityWeight = 1.50; // Sweet Spot
-            else if (pctFtp >= 0.75) intensityWeight = 1.25; // Tempo
-            
-            const repsWeight = g.count === 1 ? 0.75 : (g.count === 2 ? 1.25 : (g.count >= 3 ? 1.55 : 1.0));
-            return totalDuration * intensityWeight * repsWeight;
-          };
-
-          return getSignificanceScore(b) - getSignificanceScore(a);
-        });
-
-      const mainGroup = sortedGroups.find(g => {
-        if (g.duration < 300) return g.count >= 2;
-        return g.count >= 1;
+    if (matchedGroup) {
+      matchedGroup.count += 1;
+      matchedGroup.intervals.push(lap);
+      matchedGroup.duration = Math.round(matchedGroup.intervals.reduce((sum, l) => sum + getLapTimeHelper(l), 0) / matchedGroup.count);
+      matchedGroup.watts = Math.round(matchedGroup.intervals.reduce((sum, l) => sum + getLapPowerHelper(l), 0) / matchedGroup.count);
+    } else {
+      groups.push({
+        duration: lDur,
+        watts: lPwr,
+        count: 1,
+        intervals: [lap]
       });
-
-      if (mainGroup) {
-        const pctFtp = mainGroup.watts / ftp;
-        let zoneName = 'Endurance';
-        if (pctFtp >= 1.50 && mainGroup.duration < 45) zoneName = 'Sprint';
-        else if (pctFtp >= 1.20 && mainGroup.duration < 120) zoneName = 'Anaerobic';
-        else if (pctFtp >= 1.05) zoneName = 'VO2 Max';
-        else if (pctFtp >= 0.90) zoneName = 'Threshold';
-        else if (pctFtp >= 0.84) zoneName = 'Sweet Spot';
-        else if (pctFtp >= 0.75) zoneName = 'Tempo';
-
-        const formatDurationShort = (secs: number) => {
-          if (secs < 60) return `${secs}s`;
-          const mins = Math.floor(secs / 60);
-          const remainingSecs = Math.round(secs % 60);
-          if (remainingSecs >= 45) return `${mins + 1}m`;
-          if (remainingSecs <= 15) return `${mins}m`;
-          return `${mins}m ${remainingSecs}s`;
-        };
-
-        const durStr = formatDurationShort(mainGroup.duration);
-        const wattsStr = mainGroup.watts > 0 ? ` @ ${Math.round(mainGroup.watts)}W` : '';
-        
-        return `${zoneName} Ride (${mainGroup.count}x ${durStr}${wattsStr})`;
-      }
     }
   }
 
-  // Fallback: Analyze Power Pattern / Curve through the ride
-  const np = activity.weighted_average_watts || activity.icu_weighted_average_watts || 0;
-  const avgPwr = activity.average_watts || activity.icu_average_watts || 0;
-  const vi = activity.icu_variability_index || (avgPwr > 0 ? np / avgPwr : 1.0);
-  const intensity = activity.icu_intensity || (np > 0 ? np / ftp : 0);
+  const formatDurationShort = (secs: number) => {
+    if (secs < 60) return `${secs}s`;
+    const mins = Math.floor(secs / 60);
+    const remainingSecs = Math.round(secs % 60);
+    if (remainingSecs >= 45) return `${mins + 1}m`;
+    if (remainingSecs <= 15) return `${mins}m`;
+    return `${mins}m ${remainingSecs}s`;
+  };
 
-  if (vi >= 1.08 || intensity >= 0.82) {
-    if (intensity >= 0.98 || (np >= ftp * 1.02 && vi >= 1.10)) {
-      return `VO2 Max Ride (Intervals)`;
-    } else if (intensity >= 0.88 || (np >= ftp * 0.90 && vi >= 1.08)) {
-      return `Threshold Ride (Intervals)`;
-    } else if (intensity >= 0.80) {
-      return `Sweet Spot Ride (Intervals)`;
+  // Check each group against strict work volume criteria
+  for (const g of groups) {
+    const pctFtp = g.watts / ftp;
+    const totalGroupWork = g.count * g.duration;
+
+    // VO2 Max Intervals (>= 106% FTP): Must have real volume (e.g. 3+ reps of >= 75s, or 6+ reps of >= 25s, or 6+ mins total work)
+    if (pctFtp >= 1.06 && pctFtp < 1.30) {
+      const isValidVo2 = (g.count >= 3 && g.duration >= 75) || (g.count >= 6 && g.duration >= 25) || totalGroupWork >= 360;
+      if (isValidVo2) {
+        const durStr = formatDurationShort(g.duration);
+        const wStr = g.watts > 0 ? ` @ ${Math.round(g.watts)}W` : '';
+        return `VO2 Max Intervals (${g.count}x ${durStr}${wStr})`;
+      }
+    }
+
+    // Anaerobic / Sprint Intervals (>= 130% FTP): Must have at least 4 reps of hard bursts
+    if (pctFtp >= 1.30) {
+      if (g.count >= 4 && g.duration <= 90) {
+        const durStr = formatDurationShort(g.duration);
+        const wStr = g.watts > 0 ? ` @ ${Math.round(g.watts)}W` : '';
+        return pctFtp >= 1.55 ? `Sprint Intervals (${g.count}x ${durStr}${wStr})` : `Anaerobic Intervals (${g.count}x ${durStr}${wStr})`;
+      }
+    }
+
+    // Threshold Intervals (90% - 105% FTP): Must have at least 2 reps >= 5min or 1 rep >= 12min (or 10+ mins work)
+    if (pctFtp >= 0.90 && pctFtp < 1.06) {
+      const isValidThresh = (g.count >= 2 && g.duration >= 300) || (g.count >= 1 && g.duration >= 720) || totalGroupWork >= 600;
+      if (isValidThresh) {
+        const durStr = formatDurationShort(g.duration);
+        const wStr = g.watts > 0 ? ` @ ${Math.round(g.watts)}W` : '';
+        return `Threshold Intervals (${g.count}x ${durStr}${wStr})`;
+      }
+    }
+
+    // Sweet Spot Intervals (84% - 92% FTP): Must have at least 2 reps >= 8min or 1 rep >= 15min (or 15+ mins work)
+    if (pctFtp >= 0.84 && pctFtp < 0.92) {
+      const isValidSS = (g.count >= 2 && g.duration >= 480) || (g.count >= 1 && g.duration >= 900) || totalGroupWork >= 900;
+      if (isValidSS) {
+        const durStr = formatDurationShort(g.duration);
+        const wStr = g.watts > 0 ? ` @ ${Math.round(g.watts)}W` : '';
+        return `Sweet Spot Intervals (${g.count}x ${durStr}${wStr})`;
+      }
+    }
+
+    // Tempo Intervals (76% - 83% FTP): Must have at least 2 reps >= 10min or 1 rep >= 20min
+    if (pctFtp >= 0.76 && pctFtp < 0.84) {
+      const isValidTempo = (g.count >= 2 && g.duration >= 600) || (g.count >= 1 && g.duration >= 1200) || totalGroupWork >= 1200;
+      if (isValidTempo) {
+        const durStr = formatDurationShort(g.duration);
+        const wStr = g.watts > 0 ? ` @ ${Math.round(g.watts)}W` : '';
+        return `Tempo Intervals (${g.count}x ${durStr}${wStr})`;
+      }
     }
   }
 
   return null;
+};
+
+/**
+ * Accurately analyzes activity metrics, time in power zones (Z1-Z7),
+ * structured work intervals, Normalized Power, and Intensity Factor
+ * to realistically name and categorize the workout.
+ */
+export const classifyActivityRide = (activity: Activity, passedIntervals?: ActivityInterval[]): string => {
+  if (!activity) return 'Activity';
+
+  const rawType = (activity.type || '').trim();
+  const rawTypeLower = rawType.toLowerCase();
+  const nameTrimmed = (activity.name || '').trim();
+  const nameLower = nameTrimmed.toLowerCase();
+  const movingTime = activity.moving_time || activity.elapsed_time || (activity as any).time || (activity as any).duration || (activity as any).icu_recording_time || 0;
+  const distanceMeters = activity.distance || (activity as any).icu_distance || 0;
+  const hours = movingTime / 3600;
+
+  // 1. Walking & Hiking (Check FIRST so a walk is NEVER misclassified or called rest day)
+  const isWalkType = rawTypeLower === 'walk' || rawTypeLower === 'walking' || rawTypeLower === 'casualwalk' || rawTypeLower === 'nordicwalking';
+  const isHikeType = rawTypeLower === 'hike' || rawTypeLower === 'hiking' || rawTypeLower === 'trek' || rawTypeLower === 'trekking';
+  const isWalkName = nameLower.includes('walk') || nameLower.includes('wandelen') || nameLower.includes('wandeling') || nameLower.includes('marche') || nameLower.includes('spaziergang') || nameLower.includes('spazieren') || nameLower.includes('paseo') || nameLower.includes('caminata') || nameLower.includes('passeggiata') || nameLower.includes('camminata');
+  const isHikeName = nameLower.includes('hike') || nameLower.includes('randonnée') || nameLower.includes('trek');
+
+  if (isHikeType || isHikeName) {
+    return 'Hike';
+  }
+  if (isWalkType || isWalkName) {
+    if (distanceMeters >= 10000 || movingTime >= 7200) return 'Long Walk';
+    return 'Walk';
+  }
+
+  // 2. Explicit Rest Day Notes (ONLY if explicitly labeled as a rest day by the athlete)
+  if (rawTypeLower === 'rest' || nameLower === 'rest day' || nameLower === 'rest' || nameLower === 'rustdag' || nameLower === 'repos' || nameLower === 'ruhetag') {
+    return 'Rest Day';
+  }
+
+  // 3. Running
+  const isRunType = rawTypeLower === 'run' || rawTypeLower === 'virtualrun' || rawTypeLower === 'trailrun' || rawTypeLower === 'treadmill';
+  const isRunName = (nameLower.startsWith('run') || nameLower.includes(' run') || nameLower.endsWith('run') || nameLower.includes('hardlopen') || nameLower.includes('course à pied') || nameLower.includes('jog') || nameLower.includes('treadmill') || nameLower.includes('lopen')) && !nameLower.includes('ride') && !nameLower.includes('bike') && !nameLower.includes('cycle') && !nameLower.includes('zwift ride');
+  if (isRunType || isRunName) {
+    if (rawTypeLower === 'trailrun' || nameLower.includes('trail')) return 'Trail Run';
+    if (rawTypeLower === 'virtualrun' || nameLower.includes('treadmill') || nameLower.includes('zwift run')) return 'Treadmill Run';
+    if (nameLower.includes('interval') || nameLower.includes('track') || nameLower.includes('reps') || nameLower.includes('tempo')) return 'Interval Run';
+    if (movingTime >= 7200 || distanceMeters >= 20000) return 'Long Run';
+    return 'Run';
+  }
+
+  // 4. Swimming
+  const isSwimType = rawTypeLower === 'swim' || rawTypeLower === 'swimming' || rawTypeLower === 'openwaterswim';
+  const isSwimName = nameLower.includes('swim') || nameLower.includes('zwemmen') || nameLower.includes('natation') || nameLower.includes('nadar') || nameLower.includes('nuoto');
+  if (isSwimType || isSwimName) {
+    if (nameLower.includes('open water') || nameLower.includes('lake') || nameLower.includes('sea') || nameLower.includes('ocean')) return 'Open Water Swim';
+    return 'Swim';
+  }
+
+  // 5. Strength, Gym & Resistance Training
+  const isStrengthType = rawTypeLower === 'weighttraining' || rawTypeLower === 'strength' || rawTypeLower === 'crossfit' || rawTypeLower === 'gym';
+  const isStrengthName = nameLower.includes('strength') || nameLower.includes('gym') || nameLower.includes('weight') || nameLower.includes('lifting') || nameLower.includes('push pull') || nameLower.includes('upper body') || nameLower.includes('lower body') || nameLower.includes('leg day') || nameLower.includes('kettlebell') || nameLower.includes('dumbbell') || nameLower.includes('bodyweight') || nameLower.includes('krafttraining') || nameLower.includes('kracht') || nameLower.includes('musculation');
+  if (isStrengthType || isStrengthName) {
+    if (nameLower.includes('crossfit') || rawTypeLower === 'crossfit') return 'CrossFit';
+    if (nameLower.includes('core') || nameLower.includes('abs')) return 'Core Workout';
+    return 'Strength Training';
+  }
+
+  // 6. Yoga, Pilates, Stretching & Mobility
+  if (rawTypeLower === 'yoga' || nameLower.includes('yoga')) return 'Yoga';
+  if (rawTypeLower === 'pilates' || nameLower.includes('pilates')) return 'Pilates';
+  if (rawTypeLower === 'stretching' || nameLower.includes('stretch') || nameLower.includes('mobility') || nameLower.includes('rek')) return 'Mobility & Stretching';
+
+  // 7. Rowing & Water Sports
+  if (rawTypeLower === 'rowing' || rawTypeLower === 'virtualrow' || nameLower.includes('rowing') || nameLower.includes('concept2') || nameLower.includes(' erg')) return 'Rowing';
+  if (rawTypeLower === 'kayaking' || nameLower.includes('kayak')) return 'Kayaking';
+  if (rawTypeLower === 'canoeing' || nameLower.includes('canoe')) return 'Canoeing';
+  if (rawTypeLower === 'standuppaddling' || rawTypeLower === 'sup' || nameLower.includes('paddleboard') || nameLower.includes('sup')) return 'Stand Up Paddling';
+  if (rawTypeLower === 'surfing' || nameLower.includes('surf')) return 'Surfing';
+
+  // 8. Winter Sports
+  if (rawTypeLower === 'alpineski' || rawTypeLower === 'backcountryski' || nameLower.includes('alpine ski') || nameLower.includes('downhill ski')) return 'Skiing';
+  if (rawTypeLower === 'nordicski' || nameLower.includes('nordic') || nameLower.includes('cross country ski')) return 'Nordic Ski';
+  if (rawTypeLower === 'snowboard' || nameLower.includes('snowboard')) return 'Snowboarding';
+  if (rawTypeLower === 'snowshoe' || nameLower.includes('snowshoe')) return 'Snowshoeing';
+  if (rawTypeLower === 'iceskate' || nameLower.includes('ice skate')) return 'Ice Skating';
+  if (rawTypeLower === 'rollerski' || rawTypeLower === 'inlineskate' || nameLower.includes('inline skate')) return 'Inline Skating';
+
+  // 9. Cardio Machines & Court / Team Sports
+  if (rawTypeLower === 'elliptical' || nameLower.includes('elliptical')) return 'Elliptical';
+  if (rawTypeLower === 'stairstepper' || nameLower.includes('stair')) return 'Stair Stepper';
+  if (rawTypeLower === 'tennis' || nameLower.includes('tennis')) return 'Tennis';
+  if (rawTypeLower === 'pickleball' || nameLower.includes('pickleball')) return 'Pickleball';
+  if (rawTypeLower === 'padel' || nameLower.includes('padel')) return 'Padel';
+  if (rawTypeLower === 'squash' || nameLower.includes('squash')) return 'Squash';
+  if (rawTypeLower === 'badminton' || nameLower.includes('badminton')) return 'Badminton';
+  if (rawTypeLower === 'soccer' || rawTypeLower === 'football' || nameLower.includes('soccer') || nameLower.includes('football')) return 'Soccer';
+  if (rawTypeLower === 'basketball' || nameLower.includes('basketball')) return 'Basketball';
+  if (rawTypeLower === 'golf' || nameLower.includes('golf')) return 'Golf';
+  if (rawTypeLower === 'workout' || rawTypeLower === 'fitness') return 'Workout';
+
+  // 10. Check if user already provided a custom specific non-ride name and there's no power or cycling data
+  const hasCyclingPower = (activity.average_watts && activity.average_watts > 0) || (activity.weighted_average_watts && activity.weighted_average_watts > 0) || (activity.icu_average_watts && activity.icu_average_watts > 0);
+  const isExplicitRide = rawTypeLower === 'ride' || rawTypeLower === 'virtualride' || rawTypeLower === 'ebikeride' || rawTypeLower === 'mountainbikeride' || rawTypeLower === 'gravelride';
+
+  if (!hasCyclingPower && !isExplicitRide && nameTrimmed.length > 0 && !nameLower.includes('activity') && !nameLower.includes('morning ride') && !nameLower.includes('evening ride') && !nameLower.includes('afternoon ride')) {
+    return nameTrimmed;
+  }
+
+  // --- CYCLING RIDE ANALYSIS ---
+  
+  // 1. Resolve Athlete's FTP
+  let ftp = activity.icu_eftp || 0;
+  if (!ftp || ftp <= 0) {
+    try {
+      const savedFtp = localStorage.getItem('wattson_ftp');
+      if (savedFtp) ftp = parseInt(savedFtp, 10);
+    } catch {}
+  }
+  if (!ftp || ftp <= 0) ftp = 250;
+
+  // 2. Resolve Power & True Intensity Factor (IF)
+  const avgWatts = Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0);
+  let npWatts = Math.round(activity.weighted_average_watts ?? activity.icu_weighted_average_watts ?? 0);
+  if (npWatts === 0 && avgWatts > 0 && activity.icu_variability_index && activity.icu_variability_index > 1.01) {
+    npWatts = Math.round(avgWatts * activity.icu_variability_index);
+  }
+  const effectivePower = npWatts > 0 ? npWatts : avgWatts;
+
+  let intensity = activity.icu_intensity;
+  if (intensity !== undefined && intensity !== null && intensity > 2.0) {
+    intensity = intensity / 100; // normalize percentage (e.g. 75.4 -> 0.754)
+  }
+  if (intensity === undefined || intensity === null || intensity <= 0 || intensity > 2.0 || isNaN(intensity)) {
+    if (effectivePower > 0 && ftp > 0) {
+      intensity = effectivePower / ftp;
+    } else {
+      const load = activity.icu_training_load ?? activity.icu_tss ?? activity.training_load ?? 0;
+      if (load > 0 && hours > 0) {
+        intensity = Math.sqrt(load / (100 * hours));
+      } else {
+        intensity = 0.70;
+      }
+    }
+  }
+
+  // 3. Structured Work Intervals Detection (if structured intervals exist)
+  let laps: any[] = [];
+  if (passedIntervals && passedIntervals.length > 0) laps = passedIntervals;
+  else if (Array.isArray((activity as any).icu_intervals) && (activity as any).icu_intervals.length > 0) laps = (activity as any).icu_intervals;
+  else if (Array.isArray((activity as any).icu_intervals_edited) && (activity as any).icu_intervals_edited.length > 0) laps = (activity as any).icu_intervals_edited;
+  else if (Array.isArray((activity as any).icu_laps) && (activity as any).icu_laps.length > 0) laps = (activity as any).icu_laps;
+  else if (Array.isArray((activity as any).laps) && (activity as any).laps.length > 0) laps = (activity as any).laps;
+  else if (Array.isArray((activity as any).intervals) && (activity as any).intervals.length > 0) laps = (activity as any).intervals;
+
+  const detectedIntervalPattern = detectStructuredWorkoutPattern(laps, ftp, movingTime);
+  if (detectedIntervalPattern) {
+    return detectedIntervalPattern;
+  }
+
+  // 4. Inspect Time in Power Zones (icu_zone_times)
+  // Intervals.icu returns [Z1, Z2, Z3, Z4, Z5, Z6, Z7] in seconds
+  const zTimes = activity.icu_zone_times;
+  let z1 = 0, z2 = 0, z3 = 0, z4 = 0, z5 = 0, z6 = 0, z7 = 0;
+  let hasZoneTimes = false;
+  if (Array.isArray(zTimes) && zTimes.length >= 5) {
+    hasZoneTimes = true;
+    z1 = zTimes[0] || 0; // Active Recovery (<55% FTP)
+    z2 = zTimes[1] || 0; // Endurance (56-75% FTP)
+    z3 = zTimes[2] || 0; // Tempo (76-90% FTP)
+    z4 = zTimes[3] || 0; // Threshold (91-105% FTP)
+    z5 = zTimes[4] || 0; // VO2 Max (106-120% FTP)
+    z6 = zTimes[5] || 0; // Anaerobic (121-150% FTP)
+    z7 = zTimes[6] || 0; // Neuromuscular / Sprint (>150% FTP)
+  }
+  const totalZoneSeconds = z1 + z2 + z3 + z4 + z5 + z6 + z7;
+  const timeAboveFtp = z5 + z6 + z7; // Z5+
+  const timeThreshold = z4;
+  const timeSweetSpotOrTempo = z3;
+  const timeAerobic = z1 + z2;
+
+  // 5. Zone-Based Physiology Classification (Time in Zone)
+  if (hasZoneTimes && totalZoneSeconds >= 600) {
+    const fracAboveFtp = timeAboveFtp / totalZoneSeconds;
+    const fracThreshold = timeThreshold / totalZoneSeconds;
+    const fracTempo = timeSweetSpotOrTempo / totalZoneSeconds;
+    const fracAerobic = timeAerobic / totalZoneSeconds;
+
+    // VO2 Max check: Requires real, significant time above FTP (at least 8-10 mins OR >8% of ride)
+    // AND high overall ride intensity. Never classify an endurance ride with occasional surges as VO2 Max.
+    if ((timeAboveFtp >= 480 && fracAboveFtp >= 0.08 && intensity >= 0.80) || (timeAboveFtp >= 720 && intensity >= 0.78)) {
+      return 'VO2 Max Ride';
+    }
+
+    // Anaerobic / Sprint check
+    if ((z6 + z7) >= 300 && (z6 + z7) / totalZoneSeconds >= 0.05 && intensity >= 0.82) {
+      return 'Anaerobic Ride';
+    }
+
+    // Threshold check: At least 10-12 mins in Z4 Threshold
+    if ((timeThreshold >= 600 && fracThreshold >= 0.10 && intensity >= 0.80) || (timeThreshold >= 900 && intensity >= 0.76)) {
+      return 'Threshold Ride';
+    }
+
+    // Sweet Spot / Tempo check: At least 18-20 mins in Z3/SweetSpot with decent intensity
+    if ((timeSweetSpotOrTempo >= 1080 && (fracTempo + fracThreshold) >= 0.20 && intensity >= 0.77) || (timeSweetSpotOrTempo >= 1800 && intensity >= 0.75)) {
+      return intensity >= 0.83 ? 'Sweet Spot Ride' : 'Tempo Ride';
+    }
+
+    // Endurance / Recovery / Long Ride
+    if (fracAerobic >= 0.60 || intensity < 0.77) {
+      if (movingTime >= 12600) return 'Long Endurance Ride'; // 3.5h+
+      if (movingTime >= 7200) return 'Endurance Ride';       // 2h+
+      if (movingTime < 3600 && intensity < 0.62) return 'Recovery Spin';
+      return 'Endurance Ride';
+    }
+  }
+
+  // 6. Intensity Factor & Duration Fallback (when zone times not detailed)
+  if (intensity < 0.60 && movingTime < 4500) {
+    return 'Recovery Spin';
+  } else if (intensity < 0.76) {
+    if (movingTime >= 12600) return 'Long Endurance Ride'; // 3.5h+
+    if (movingTime >= 7200) return 'Endurance Ride';       // 2h+
+    return 'Endurance Ride';
+  } else if (intensity < 0.83) {
+    return 'Tempo Ride';
+  } else if (intensity < 0.90) {
+    return 'Sweet Spot Ride';
+  } else if (intensity < 1.05) {
+    return 'Threshold Ride';
+  } else {
+    // Only classify as VO2 Max if moving time is <= 2 hours (not a multi-hour ride miscalculation)
+    if (movingTime <= 7200) {
+      return 'VO2 Max Ride';
+    } else {
+      return 'Endurance Ride';
+    }
+  }
+};
+
+/**
+ * Analyzes intervals/laps and power curves to detect structured workout sets and names the ride accordingly.
+ */
+export const detectIntervalsFromLaps = (activity: Activity, intervals?: ActivityInterval[]): string | null => {
+  return classifyActivityRide(activity, intervals);
 };
 
 export const fetchPlannedWorkout = async (dateStr: string, creds: IntervalsCredentials): Promise<PlannedWorkout | null> => {

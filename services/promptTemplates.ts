@@ -156,7 +156,8 @@ export const getDailySuggestionPrompt = (p: DailySuggestionParams): string => {
     1. For each workout option (primary and alternative), you MUST provide structured "workout_steps".
     2. "workout_steps" MUST be an array of objects with {duration: number, target_watts: number, label: string}.
     3. Estimate "tss" (Training Stress Score) as a number for each workout.
-    4. NO MASSIVE HIGH INTENSITY BLOCKS / PHYSICALLY IMPOSSIBLE INTERVALS: High intensity (>85% FTP, or HR Zone 4/5) must NEVER be recommended as a single long continuous block/step. You must structure them as intervals/sets with recovery steps in between.
+    4. NO CONSECUTIVE RECOVERY RIDES: Never suggest 2 recovery rides or active recovery sessions in a row. If the athlete did a recovery spin yesterday or recently, do NOT suggest another recovery ride; suggest an Aerobic Zone 2 Endurance Ride or a Rest Day instead.
+    5. NO MASSIVE HIGH INTENSITY BLOCKS / PHYSICALLY IMPOSSIBLE INTERVALS: High intensity (>85% FTP, or HR Zone 4/5) must NEVER be recommended as a single long continuous block/step. You must structure them as intervals/sets with recovery steps in between.
        - VO2Max (Zone 5, >105% FTP / Zone 5 HR): A single block/rep can NEVER exceed 8 minutes. Standard reps are 2-5 minutes. NEVER output a continuous step of e.g. "16 min VO2max" or "15 min VO2max" or "10 min VO2max" in 1 block. If the athlete is to do VO2 Max, they MUST do multiple separate reps of 2-5 mins with easy recovery steps (e.g. 2-4 mins at 100-150W or Zone 1 HR) in between (e.g. Step 1: Warmup, Step 2: 3m VO2Max, Step 3: 3m Recovery, Step 4: 3m VO2Max, Step 5: 3m Recovery, Step 6: 3m VO2Max, Step 7: Cooldown).
        - Threshold (Zone 4, 90-105% FTP / Zone 4 HR): A single block/rep can NEVER exceed 20 minutes (standard is 8-15 minutes, e.g., separate Threshold efforts with recovery steps in between).
        - Sweet Spot / Tempo (Zone 3, 75-90% FTP / Zone 3 HR): A single block/rep can NEVER exceed 30 minutes.
@@ -223,16 +224,17 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
     4. "phase" and "focus" fields should be 1-3 words maximum.
     5. Suggest "workout_steps" for ALL workouts EXCEPT Rest days.
     6. Keep all workout step "label" text under 4-5 words (e.g., "5m Warm-up 130w", "3m VO2 300w"). Do not write long sentences in labels.
-    7. REALISTIC INTERVALS RULE / NO PHYSICALLY IMPOSSIBLE HIGH INTENSITY BLOCKS: High intensity (>85% FTP, or HR Zone 4/5) must NEVER be recommended as a single long continuous block/step. You must structure them as intervals/sets with recovery steps in between.
+    7. NO CONSECUTIVE RECOVERY RIDES: Never schedule 2 recovery rides or active recovery sessions in a row on consecutive days. Having 2 recovery rides after each other makes no training sense. If an athlete needs recovery, pair a single active recovery day with an easy Zone 2 Endurance Ride or a full Rest Day on the following day.
+    8. REALISTIC INTERVALS RULE / NO PHYSICALLY IMPOSSIBLE HIGH INTENSITY BLOCKS: High intensity (>85% FTP, or HR Zone 4/5) must NEVER be recommended as a single long continuous block/step. You must structure them as intervals/sets with recovery steps in between.
        - VO2Max (Zone 5, >105% FTP / Zone 5 HR): A single block/rep can NEVER exceed 8 minutes. Standard reps are 2-5 minutes. NEVER output a continuous step of e.g. "16 min VO2max" or "15 min VO2max" or "10 min VO2max" in 1 block. If the athlete is to do VO2 Max, they MUST do multiple separate reps of 2-5 mins with easy recovery steps (e.g. 2-4 mins at 100-150W or Zone 1 HR) in between (e.g. Step 1: Warmup, Step 2: 3m VO2Max, Step 3: 3m Recovery, Step 4: 3m VO2Max, Step 5: 3m Recovery, Step 6: 3m VO2Max, Step 7: Cooldown).
        - Threshold (Zone 4, 90-105% FTP / Zone 4 HR): A single block/rep can NEVER exceed 20 minutes (standard is 8-15 minutes, e.g., separate Threshold efforts with recovery steps in between).
        - Sweet Spot / Tempo (Zone 3, 75-90% FTP / Zone 3 HR): A single block/rep can NEVER exceed 30 minutes.
        If a workout requires a substantial duration of high intensity, you MUST break it up into separate reps/sets with easy recovery (e.g., 100W-150W or Zone 1 HR) steps in between.
-    8. INTERVAL REPS REPRESENTATION: Do NOT compress multiple intervals into a single "workout_steps" item (like one 15-minute item with the label "4x3 VO2Max"). You MUST write them as separate steps in the array so the athlete can follow each step (e.g., separate VO2max step, recovery step, VO2max step, recovery step). For interval-based workouts, the "workout_steps" array can expand up to 10 steps to properly represent these reps. For simple endurance or recovery workouts, keep it to 3-4 steps (Warmup, Main, Cooldown).
-    9. COMMUTE DAYS: If the user indicates they have a commute on a specific day, you MUST schedule TWO separate workout sessions for that day. Name the FIRST commute session "Commute AM" (morning commute) and the SECOND commute session "Commute PM" (afternoon/evening commute). Return these as two separate day objects in the "days" array with identical date strings. INTEGRATE any planned intensity or interval training for that day DIRECTLY into the commute sessions rather than scheduling a third, separate workout.
-    10. ${hrGuideline}
-    11. ${triathlonGuideline}
-    12. Return JSON with phase, focus, outlook_summary, days[].`;
+    9. INTERVAL REPS REPRESENTATION: Do NOT compress multiple intervals into a single "workout_steps" item (like one 15-minute item with the label "4x3 VO2Max"). You MUST write them as separate steps in the array so the athlete can follow each step (e.g., separate VO2max step, recovery step, VO2max step, recovery step). For interval-based workouts, the "workout_steps" array can expand up to 10 steps to properly represent these reps. For simple endurance or recovery workouts, keep it to 3-4 steps (Warmup, Main, Cooldown).
+    10. COMMUTE DAYS: If the user indicates they have a commute on a specific day, you MUST schedule TWO separate workout sessions for that day. Name the FIRST commute session "Commute AM" (morning commute) and the SECOND commute session "Commute PM" (afternoon/evening commute). Return these as two separate day objects in the "days" array with identical date strings. INTEGRATE any planned intensity or interval training for that day DIRECTLY into the commute sessions rather than scheduling a third, separate workout.
+    11. ${hrGuideline}
+    12. ${triathlonGuideline}
+    13. Return JSON with phase, focus, outlook_summary, days[].`;
 };
 
 export const getChatMessagePrompt = (p: ChatMessageParams): string => {
