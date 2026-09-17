@@ -403,6 +403,18 @@ export const matchWorkoutToLibrary = (focus: string, duration: number, intensity
     return null;
   }
 
+  // Check if focus has an explicit duration pattern like (60m), (90m), (120m), etc.
+  const minuteMatch = normalizedFocus.match(/\((\d+)\s*m\)/i);
+  let effectiveDuration = duration;
+  if (minuteMatch) {
+    effectiveDuration = parseInt(minuteMatch[1], 10);
+  } else if (duration > 0 && duration <= 6) {
+    // LLM outputted duration in hours (e.g. 1.5, 2, 4) -> convert to minutes
+    effectiveDuration = Math.round(duration * 60);
+  } else if (!duration || duration <= 0) {
+    effectiveDuration = 60;
+  }
+
   // Filter library by closest category
   let candidateCategory: LibraryWorkout['category'][] = [];
   if (normalizedFocus.includes('vo2') || normalizedFocus.includes('aerobic capacity') || normalizedFocus.includes('norwegian')) {
@@ -437,8 +449,8 @@ export const matchWorkoutToLibrary = (focus: string, duration: number, intensity
 
   // Select the candidate with the closest duration
   return candidates.reduce((best, cur) => {
-    const bestDiff = Math.abs(best.duration_minutes - duration);
-    const curDiff = Math.abs(cur.duration_minutes - duration);
+    const bestDiff = Math.abs(best.duration_minutes - effectiveDuration);
+    const curDiff = Math.abs(cur.duration_minutes - effectiveDuration);
     return curDiff < bestDiff ? cur : best;
   }, candidates[0]);
 };

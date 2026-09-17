@@ -591,12 +591,33 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing): WeeklyBriefing 
   }
   if (!ftp) ftp = 250;
 
-  const normalizedDays = briefing.days.map(day => {
+  // Pass 1: Normalize durations, units, and weekday vs weekend duration caps
+  let normalizedDays = briefing.days.map((day, idx) => {
     const isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || (day.focus || '').toLowerCase().includes('off');
     const isCommute = (day.day || '').toLowerCase().includes('commute') || (day.focus || '').toLowerCase().includes('commute');
+    const isWeekend = /sat|sun/i.test(day.day || '');
     
+    let targetDuration = day.duration_target;
+    if (typeof targetDuration === 'number' && targetDuration > 0 && targetDuration <= 6) {
+      targetDuration = Math.round(targetDuration * 60);
+    }
+    if (!targetDuration || targetDuration <= 0) {
+      targetDuration = isRest ? 0 : 60;
+    }
+
+    // Weekday rides shouldn't default to marathon 4h (240m) or 3h (180m) sessions unless weekend
+    if (!isRest && !isWeekend && targetDuration > 120) {
+      // Normal weekday session should be 60-90m
+      targetDuration = 75;
+    }
+
+    let currentDay = {
+      ...day,
+      duration_target: targetDuration
+    };
+
     if (!isRest && !isCommute) {
-      const matched = matchWorkoutToLibrary(day.focus || '', day.duration_target || 45, day.intensity || 'Medium');
+      const matched = matchWorkoutToLibrary(currentDay.focus || '', targetDuration, currentDay.intensity || 'Medium');
       if (matched) {
         const scaledSteps = matched.workout_steps.map(step => ({
           duration: step.duration,
@@ -605,28 +626,71 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing): WeeklyBriefing 
           label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
         }));
         return {
-          ...day,
+          ...currentDay,
           focus: matched.title,
           workout_steps: scaledSteps,
           duration_target: matched.duration_minutes,
-          load_target: matched.tss || day.load_target,
+          load_target: matched.tss || currentDay.load_target,
           why: `${matched.category} focus: ${matched.description}`
         };
       }
     }
     
-    if (day.workout_steps) {
-      const sanitizedSteps = sanitizeWorkoutSteps(day.workout_steps, ftp);
-      const duration_target = sanitizedSteps ? sanitizedSteps.reduce((sum, s) => sum + s.duration, 0) : day.duration_target;
+    if (currentDay.workout_steps) {
+      const sanitizedSteps = sanitizeWorkoutSteps(currentDay.workout_steps, ftp);
+      const computedDuration = sanitizedSteps ? sanitizedSteps.reduce((sum, s) => sum + s.duration, 0) : currentDay.duration_target;
       return {
-        ...day,
+        ...currentDay,
         workout_steps: sanitizedSteps,
-        duration_target: duration_target || day.duration_target
+        duration_target: computedDuration || currentDay.duration_target
       };
     }
 
-    return { ...day };
+    return currentDay;
   });
+
+  // Pass 2: Guard against consecutive long sessions (e.g. back-to-back 4h / 240m or >120m sessions)
+  for (let i = 0; i < normalizedDays.length - 1; i++) {
+    const current = normalizedDays[i];
+    const next = normalizedDays[i + 1];
+    if (!current || !next) continue;
+
+    const isCurrentRest = current.intensity === 'Rest' || (current.focus || '').toLowerCase().includes('rest');
+    const isNextRest = next.intensity === 'Rest' || (next.focus || '').toLowerCase().includes('rest');
+    if (isCurrentRest || isNextRest) continue;
+
+    const isCurrentLong = (current.duration_target || 0) >= 120;
+    const isNextLong = (next.duration_target || 0) >= 120;
+
+    if (isCurrentLong && isNextLong) {
+      // Scale down the second day (or non-weekend day) to a balanced 60-75 min session
+      const targetMins = 60;
+      const matched = matchWorkoutToLibrary(next.focus || 'Zone 2 Endurance', targetMins, next.intensity || 'Easy') 
+        || matchWorkoutToLibrary('Aerobic Foundation', targetMins, 'Easy');
+      
+      if (matched) {
+        normalizedDays[i + 1] = {
+          ...next,
+          focus: matched.title,
+          duration_target: matched.duration_minutes,
+          load_target: matched.tss || 45,
+          workout_steps: matched.workout_steps.map(step => ({
+            duration: step.duration,
+            target_watts: Math.round(step.target_pct * ftp),
+            target_pct: step.target_pct,
+            label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+          })),
+          why: next.why || 'Balanced aerobic training without overtraining fatigue'
+        };
+      } else {
+        normalizedDays[i + 1] = {
+          ...next,
+          duration_target: targetMins,
+          load_target: Math.round((next.load_target || 60) * (targetMins / (next.duration_target || 120)))
+        };
+      }
+    }
+  }
 
   // Group days by day string (e.g., "Mon (Jul 27)")
   const labelGroups: Record<string, number[]> = {};
@@ -909,42 +973,6 @@ export const getWeeklyBriefing = async (
   const rawResult = safeParseJSON(response.text) as WeeklyBriefing;
   const result = normalizeBriefingDays(rawResult);
   result.ftp = ftp || 250;
-  if (result.days) {
-    result.days = result.days.map(day => {
-      const isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || (day.focus || '').toLowerCase().includes('off');
-      const isCommute = (day.day || '').toLowerCase().includes('commute') || (day.focus || '').toLowerCase().includes('commute');
-      
-      if (!isRest && !isCommute) {
-        const matched = matchWorkoutToLibrary(day.focus || '', day.duration_target || 45, day.intensity || 'Medium');
-        if (matched) {
-          const scaledSteps = matched.workout_steps.map(step => ({
-            duration: step.duration,
-            target_watts: Math.round(step.target_pct * (ftp || 250)),
-            target_pct: step.target_pct,
-            label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
-          }));
-          return {
-            ...day,
-            focus: matched.title,
-            workout_steps: scaledSteps,
-            duration_target: matched.duration_minutes,
-            load_target: matched.tss || day.load_target,
-            why: `${matched.category} focus: ${matched.description}`
-          };
-        }
-      }
-      if (day.workout_steps) {
-        const sanitizedSteps = sanitizeWorkoutSteps(day.workout_steps, ftp || 250);
-        const duration_target = sanitizedSteps ? sanitizedSteps.reduce((sum, s) => sum + s.duration, 0) : day.duration_target;
-        return {
-          ...day,
-          workout_steps: sanitizedSteps,
-          duration_target: duration_target || day.duration_target
-        };
-      }
-      return day;
-    });
-  }
   setCache(cacheKey, result);
   return result;
 };
@@ -1506,3 +1534,65 @@ export const analyzeThreeMonthReview = async (
   return parsed;
 };
 
+
+export interface MonthlyReportData {
+  summary: string;
+  improvements: string[];
+}
+
+export const generateMonthlyInsights = async (
+  activities: Activity[],
+  ftp?: number
+): Promise<MonthlyReportData> => {
+  const cacheKey = `wattson_monthly_report_${activities.length}_${ftp}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
+  // Last 30 days activities
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setDate(now.getDate() - 30);
+  
+  const recentActivities = activities.filter(a => new Date(a.start_date_local) >= thirtyDaysAgo);
+  
+  if (recentActivities.length === 0) {
+    return {
+      summary: "You haven't logged any activities in the last 30 days.",
+      improvements: ["Log some activities to see your progress!"]
+    };
+  }
+
+  const prompt = `Analyze the athlete's last 30 days of training.
+Total activities: ${recentActivities.length}.
+Total hours: ${Math.round(recentActivities.reduce((acc, a) => acc + (a.moving_time || 0), 0) / 3600)}.
+Total load (TSS): ${Math.round(recentActivities.reduce((acc, a) => acc + (a.icu_training_load || a.icu_tss || 0), 0))}.
+Current FTP: ${ftp || 'unknown'}.
+
+Provide a brief, encouraging summary of their month and 2-3 specific improvements or achievements (e.g., consistency, volume, specific high-effort rides).
+Respond in JSON format:
+{
+  "summary": "String summarizing the month.",
+  "improvements": ["Improvement 1", "Improvement 2"]
+}
+`;
+
+  try {
+    const response = await callGemini({
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.7,
+      }
+    });
+    
+    const result = safeParseJSON(response.text);
+    setCache(cacheKey, result);
+    return result;
+  } catch (err) {
+    console.error("Failed to generate monthly insights", err);
+    return {
+      summary: "You had a solid month of training. Keep up the good work!",
+      improvements: ["Maintained training consistency", "Logged solid weekly hours"]
+    };
+  }
+};

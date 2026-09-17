@@ -15,7 +15,7 @@ import {
   ThreeMonthReview
 } from './types';
 import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile, getAnnualPowerCurves, uploadWorkout } from './services/intervalsService';
-import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile, analyzeThreeMonthReview } from './services/geminiService';
+import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile, analyzeThreeMonthReview, normalizeBriefingDays } from './services/geminiService';
 import { 
   PlanDirective, 
   parsePlanDirectives, 
@@ -30,6 +30,7 @@ import { AerobicEfficiencyDecouplingChart } from './components/AerobicEfficiency
 import { SuggestedWorkoutCard, formatPlannedRideTitle } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
+import { MonthlyReportModal } from './components/MonthlyReportModal';
 import { WorkoutLibrary } from './components/WorkoutLibrary';
 import { LibraryWorkout } from './services/workoutLibrary';
 import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts, isEnduranceWorkout, VisualProfileChart } from './components/StepLabel';
@@ -230,7 +231,7 @@ const App: React.FC = () => {
   const [weeklyBriefing, setWeeklyBriefing] = useState<WeeklyBriefing | null>(() => {
     try {
       const saved = localStorage.getItem('wattson_saved_weekly_briefing');
-      if (saved) return JSON.parse(saved);
+      if (saved) return normalizeBriefingDays(JSON.parse(saved));
     } catch {}
     return null;
   });
@@ -488,6 +489,7 @@ const App: React.FC = () => {
   const [userGoal, setUserGoal] = useState<string>(() => localStorage.getItem('wattson_goal') || 'Improve cycling performance');
   const [showGoalEditor, setShowGoalEditor] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
+  const [showMonthlyReport, setShowMonthlyReport] = useState(false);
   const [formKey, setFormKey] = useState(creds?.apiKey || '');
   const [formId, setFormId] = useState(creds?.athleteId || '');
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
@@ -1581,6 +1583,27 @@ const App: React.FC = () => {
                     <span className="text-sm font-black italic text-emerald-400 font-mono mt-0.5">{stats.total7DayLoad}</span>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            {/* Section: Monthly Report */}
+            <div className="space-y-1.5 pt-0.5">
+              <div 
+                onClick={() => setShowMonthlyReport(true)}
+                className="glass-card px-3.5 py-2.5 rounded-2xl border border-blue-500/20 flex items-center justify-between gap-3 bg-blue-500/5 hover:border-blue-500/40 hover:bg-blue-500/10 cursor-pointer transition-all active:scale-[0.99]"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-7 h-7 rounded-lg bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                    <TrendingUp size={13} />
+                  </div>
+                  <div>
+                    <h2 className="text-xs font-bold text-slate-200 tracking-tight">
+                      Monthly Report
+                    </h2>
+                    <p className="text-[9px] text-slate-400 font-medium">Review your last 30 days of training</p>
+                  </div>
+                </div>
+                <ChevronRight size={13} className="text-slate-600 shrink-0" />
               </div>
             </div>
 
@@ -3265,6 +3288,12 @@ const App: React.FC = () => {
         onClose={() => setShowChangelog(false)}
         version={APP_VERSION}
         changes={APP_CHANGELOG}
+      />
+      <MonthlyReportModal
+        isOpen={showMonthlyReport}
+        onClose={() => setShowMonthlyReport(false)}
+        activities={activities || []}
+        ftp={ftp}
       />
 
       {/* Floating Modern Navigation Dock */}
