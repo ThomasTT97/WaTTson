@@ -534,6 +534,8 @@ const App: React.FC = () => {
   weeklyBriefingRef.current = weeklyBriefing;
   const generatedWeeksRef = useRef(generatedWeeks);
   generatedWeeksRef.current = generatedWeeks;
+  const credsRef = useRef(creds);
+  credsRef.current = creds;
 
   const syncToCloud = useCallback((updates: Partial<UserCloudProfile>) => {
     if (!currentUser) return;
@@ -548,6 +550,117 @@ const App: React.FC = () => {
         setCloudSyncStatus('error');
       });
   }, [currentUser]);
+
+  // Extract all existing local preferences to push to centrally stored user data
+  const extractLocalPreferencesToPush = useCallback((): { updates: Partial<UserCloudProfile>; hasPreferences: boolean } => {
+    const updates: Partial<UserCloudProfile> = {};
+
+    // 1. Goal
+    const storedGoal = localStorage.getItem('wattson_goal');
+    if (storedGoal && storedGoal.trim()) {
+      updates.userGoal = storedGoal.trim();
+    } else if (userGoalRef.current && userGoalRef.current.trim() && userGoalRef.current !== 'Improve cycling performance') {
+      updates.userGoal = userGoalRef.current.trim();
+    }
+
+    // 2. Training Methodology
+    const storedMethodology = localStorage.getItem('wattson_training_methodology');
+    if (storedMethodology && ['polarized', 'pyramidal', 'threshold'].includes(storedMethodology)) {
+      updates.trainingMethodology = storedMethodology as TrainingMethodology;
+    } else if (trainingMethodologyRef.current && trainingMethodologyRef.current !== 'polarized') {
+      updates.trainingMethodology = trainingMethodologyRef.current;
+    }
+
+    // 3. Training Mode
+    const storedMode = localStorage.getItem('wattson_training_mode');
+    if (storedMode && ['cycling', 'triathlon', 'running'].includes(storedMode)) {
+      updates.trainingMode = storedMode as TrainingMode;
+    } else if (trainingModeRef.current && trainingModeRef.current !== 'cycling') {
+      updates.trainingMode = trainingModeRef.current;
+    }
+
+    // 4. Plan Mode
+    const storedPlanMode = localStorage.getItem('wattson_plan_mode');
+    if (storedPlanMode && ['power', 'hr'].includes(storedPlanMode)) {
+      updates.planMode = storedPlanMode as ('power' | 'hr');
+    } else if (planModeRef.current && planModeRef.current !== 'power') {
+      updates.planMode = planModeRef.current;
+    }
+
+    // 5. FTP
+    const storedFtp = localStorage.getItem('wattson_ftp');
+    if (storedFtp) {
+      const f = parseInt(storedFtp, 10);
+      if (!isNaN(f) && f > 0 && f <= 1000) {
+        updates.ftp = f;
+      }
+    } else if (ftpRef.current && ftpRef.current > 0 && ftpRef.current <= 1000) {
+      updates.ftp = ftpRef.current;
+    }
+
+    // 6. Plan Context / Directives
+    const storedPlanContext = localStorage.getItem('wattson_plan_context');
+    if (storedPlanContext !== null) {
+      updates.planContext = storedPlanContext;
+    } else if (planContextRef.current) {
+      updates.planContext = planContextRef.current;
+    }
+
+    // 7. Chat History
+    const storedChat = localStorage.getItem('wattson_chat_history');
+    if (storedChat) {
+      try {
+        const parsed = JSON.parse(storedChat);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          updates.chatHistoryJson = JSON.stringify(parsed.slice(-50));
+        }
+      } catch {}
+    } else if (messagesRef.current.length > 0) {
+      updates.chatHistoryJson = JSON.stringify(messagesRef.current.slice(-50));
+    }
+
+    // 8. Intervals.icu Credentials
+    const activeCreds = credsRef.current;
+    if (activeCreds?.apiKey && activeCreds.apiKey !== 'demo') {
+      updates.intervalsApiKey = activeCreds.apiKey;
+      updates.intervalsAthleteId = activeCreds.athleteId || '0';
+    } else {
+      const storedCreds = localStorage.getItem('wattson_creds');
+      if (storedCreds) {
+        try {
+          const parsed = JSON.parse(storedCreds);
+          if (parsed.apiKey && parsed.apiKey !== 'demo') {
+            updates.intervalsApiKey = parsed.apiKey;
+            updates.intervalsAthleteId = parsed.athleteId || '0';
+          }
+        } catch {}
+      }
+    }
+
+    // 9. Weekly Briefing
+    const storedBriefing = localStorage.getItem('wattson_saved_weekly_briefing');
+    if (storedBriefing) {
+      updates.weeklyBriefingJson = storedBriefing;
+    } else if (weeklyBriefingRef.current) {
+      updates.weeklyBriefingJson = JSON.stringify(weeklyBriefingRef.current);
+    }
+
+    // 10. Generated Weeks
+    const storedWeeks = localStorage.getItem('wattson_saved_generated_weeks');
+    if (storedWeeks) {
+      try {
+        const parsedWeeks = JSON.parse(storedWeeks);
+        if (Array.isArray(parsedWeeks) && parsedWeeks.length > 0) {
+          updates.generatedWeeksJson = storedWeeks;
+        }
+      } catch {}
+    } else if (generatedWeeksRef.current.length > 0) {
+      updates.generatedWeeksJson = JSON.stringify(generatedWeeksRef.current);
+    }
+
+    const hasPreferences = Object.keys(updates).length > 0;
+    return { updates, hasPreferences };
+  }, []);
 
   // Apply cloud data to local state with conflict/loop avoidance
   const applyCloudProfile = useCallback((profile: UserCloudProfile) => {
@@ -628,7 +741,8 @@ const App: React.FC = () => {
       }
 
       // 5. Intervals credentials
-      if (profile.intervalsApiKey && (!creds || !creds.apiKey || creds.apiKey === 'demo')) {
+      const currentLocalCreds = credsRef.current;
+      if (profile.intervalsApiKey && (!currentLocalCreds || !currentLocalCreds.apiKey || currentLocalCreds.apiKey === 'demo')) {
         const restoredCreds = {
           apiKey: profile.intervalsApiKey,
           athleteId: profile.intervalsAthleteId || '0'
@@ -641,7 +755,7 @@ const App: React.FC = () => {
         isApplyingRemoteSyncRef.current = false;
       }, 300);
     }
-  }, [creds]);
+  }, []);
 
   // Subscribe to Firebase Auth and attach real-time multi-device cloud listener
   useEffect(() => {
@@ -659,31 +773,61 @@ const App: React.FC = () => {
       if (user) {
         try {
           setCloudSyncStatus('syncing');
+
+          // Detect whether user is logging in (explicit button click, account change, or from logged-out)
+          const isExplicitLogin = typeof window !== 'undefined' && sessionStorage.getItem('wattson_explicit_login') === 'true';
+          if (isExplicitLogin && typeof window !== 'undefined') {
+            sessionStorage.removeItem('wattson_explicit_login');
+          }
+          const lastAuthUserId = typeof window !== 'undefined' ? localStorage.getItem('wattson_auth_user_id') : null;
+          const isUserLoggingIn = isExplicitLogin || !lastAuthUserId || lastAuthUserId !== user.uid;
+
+          const { updates: localUpdates, hasPreferences } = extractLocalPreferencesToPush();
           const profile = await fetchUserCloudProfile(user.uid);
+
           if (profile) {
-            applyCloudProfile(profile);
+            if (isUserLoggingIn && hasPreferences) {
+              // When local preferences exist and a user logs in, push local preferences towards centrally stored user data in Firebase
+              console.log("[Firebase] User logged in with local preferences. Pushing to centrally stored cloud profile:", Object.keys(localUpdates));
+              await saveUserCloudProfile(user.uid, localUpdates);
+
+              // Merge: Local preferences overwrite cloud values, while preserving any cloud fields not defined locally
+              const mergedProfile: UserCloudProfile = {
+                ...profile,
+                ...localUpdates,
+                displayName: user.displayName || profile.displayName || '',
+                photoURL: user.photoURL || profile.photoURL || ''
+              };
+              applyCloudProfile(mergedProfile);
+            } else {
+              // Standard session resumption or device without local preferences: apply central cloud data
+              applyCloudProfile(profile);
+            }
+            safeSetItem('wattson_auth_user_id', user.uid);
             isCloudProfileLoadedRef.current = true;
             setCloudSyncStatus('synced');
             setLastSyncedAt(new Date());
           } else {
-            // First time user: initialize cloud profile with current local data
+            // First time user: initialize cloud profile with local preferences
             isCloudProfileLoadedRef.current = true;
-            saveUserCloudProfile(user.uid, {
+            const initialProfile: Partial<UserCloudProfile> = {
               displayName: user.displayName || '',
               photoURL: user.photoURL || '',
-              userGoal: userGoalRef.current,
-              chatHistoryJson: messagesRef.current.length > 0 ? JSON.stringify(messagesRef.current.slice(-50)) : undefined,
-              trainingMethodology: trainingMethodologyRef.current,
-              trainingMode: trainingModeRef.current,
-              planMode: planModeRef.current,
-              ftp: ftpRef.current || undefined,
-              planContext: planContextRef.current || undefined,
-              intervalsApiKey: creds?.apiKey && creds.apiKey !== 'demo' ? creds.apiKey : undefined,
-              intervalsAthleteId: creds?.athleteId,
-              weeklyBriefingJson: weeklyBriefingRef.current ? JSON.stringify(weeklyBriefingRef.current) : undefined,
-              generatedWeeksJson: generatedWeeksRef.current.length > 0 ? JSON.stringify(generatedWeeksRef.current) : undefined,
+              userGoal: localUpdates.userGoal || userGoalRef.current,
+              chatHistoryJson: localUpdates.chatHistoryJson ?? (messagesRef.current.length > 0 ? JSON.stringify(messagesRef.current.slice(-50)) : undefined),
+              trainingMethodology: localUpdates.trainingMethodology || trainingMethodologyRef.current,
+              trainingMode: localUpdates.trainingMode || trainingModeRef.current,
+              planMode: localUpdates.planMode || planModeRef.current,
+              ftp: localUpdates.ftp ?? (ftpRef.current || undefined),
+              planContext: localUpdates.planContext ?? (planContextRef.current || undefined),
+              intervalsApiKey: localUpdates.intervalsApiKey ?? (credsRef.current?.apiKey && credsRef.current.apiKey !== 'demo' ? credsRef.current.apiKey : undefined),
+              intervalsAthleteId: localUpdates.intervalsAthleteId ?? credsRef.current?.athleteId,
+              weeklyBriefingJson: localUpdates.weeklyBriefingJson ?? (weeklyBriefingRef.current ? JSON.stringify(weeklyBriefingRef.current) : undefined),
+              generatedWeeksJson: localUpdates.generatedWeeksJson ?? (generatedWeeksRef.current.length > 0 ? JSON.stringify(generatedWeeksRef.current) : undefined),
               createdAt: new Date().toISOString()
-            }).catch(console.error);
+            };
+            await saveUserCloudProfile(user.uid, initialProfile);
+            safeSetItem('wattson_auth_user_id', user.uid);
             setCloudSyncStatus('synced');
             setLastSyncedAt(new Date());
           }
@@ -702,6 +846,9 @@ const App: React.FC = () => {
         }
       } else {
         isCloudProfileLoadedRef.current = false;
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('wattson_auth_user_id');
+        }
         setCloudSyncStatus('idle');
       }
     });
@@ -712,7 +859,7 @@ const App: React.FC = () => {
         unsubscribeSnapshot();
       }
     };
-  }, [applyCloudProfile, creds]);
+  }, [applyCloudProfile, extractLocalPreferencesToPush]);
 
   // Sync Goal & Training Preferences to Firestore (debounced)
   useEffect(() => {

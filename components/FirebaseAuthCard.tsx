@@ -28,6 +28,9 @@ export const FirebaseAuthCard: React.FC<FirebaseAuthCardProps> = ({
     setErrorMsg(null);
     setUnauthorizedDomain(null);
     try {
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('wattson_explicit_login', 'true');
+      }
       const user = await loginWithGoogle();
       if (onAuthSuccess) {
         onAuthSuccess(user);
@@ -57,6 +60,10 @@ export const FirebaseAuthCard: React.FC<FirebaseAuthCardProps> = ({
     setLoading(true);
     setErrorMsg(null);
     try {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('wattson_auth_user_id');
+        sessionStorage.removeItem('wattson_explicit_login');
+      }
       await logoutUser();
     } catch (err: any) {
       console.error("Sign out failed:", err);
