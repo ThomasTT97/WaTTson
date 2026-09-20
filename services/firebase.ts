@@ -92,6 +92,8 @@ export interface UserCloudProfile {
   trainingMode?: 'cycling' | 'triathlon' | 'running';
   planMode?: 'power' | 'hr';
   ftp?: number;
+  planContext?: string;
+  chatHistoryJson?: string;
   intervalsApiKey?: string;
   intervalsAthleteId?: string;
   weeklyBriefingJson?: string;
@@ -154,6 +156,8 @@ export async function saveUserCloudProfile(userId: string, data: Partial<UserClo
     if (data.trainingMode !== undefined) cleanData.trainingMode = data.trainingMode;
     if (data.planMode !== undefined) cleanData.planMode = data.planMode;
     if (data.ftp !== undefined && data.ftp !== null) cleanData.ftp = Number(data.ftp);
+    if (data.planContext !== undefined) cleanData.planContext = data.planContext;
+    if (data.chatHistoryJson !== undefined) cleanData.chatHistoryJson = data.chatHistoryJson;
     if (data.intervalsApiKey !== undefined) cleanData.intervalsApiKey = data.intervalsApiKey;
     if (data.intervalsAthleteId !== undefined) cleanData.intervalsAthleteId = data.intervalsAthleteId;
     if (data.weeklyBriefingJson !== undefined) cleanData.weeklyBriefingJson = data.weeklyBriefingJson;

@@ -49,6 +49,16 @@
           "type": "number",
           "description": "Functional Threshold Power in watts"
         },
+        "planContext": {
+          "type": "string",
+          "description": "Active athlete coach directives and planning constraints",
+          "maxLength": 50000
+        },
+        "chatHistoryJson": {
+          "type": "string",
+          "description": "Serialized recent chat conversation history with waTTson coach",
+          "maxLength": 200000
+        },
         "intervalsApiKey": {
           "type": "string",
           "description": "Intervals.icu API key for cross-device sync",

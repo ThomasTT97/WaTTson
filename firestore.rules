@@ -32,6 +32,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'id', 'email', 'displayName', 'photoURL', 'userGoal',
           'trainingMethodology', 'trainingMode', 'planMode', 'ftp',
+          'planContext', 'chatHistoryJson',
           'intervalsApiKey', 'intervalsAthleteId', 'weeklyBriefingJson',
           'generatedWeeksJson', 'createdAt', 'updatedAt'
         ])
@@ -44,6 +45,8 @@ service cloud.firestore {
         && (!('trainingMode' in data) || data.trainingMode in ['cycling', 'triathlon', 'running'])
         && (!('planMode' in data) || data.planMode in ['power', 'hr'])
         && (!('ftp' in data) || (data.ftp is number && data.ftp >= 0 && data.ftp <= 1000))
+        && (!('planContext' in data) || (data.planContext is string && data.planContext.size() <= 50000))
+        && (!('chatHistoryJson' in data) || (data.chatHistoryJson is string && data.chatHistoryJson.size() <= 200000))
         && (!('intervalsApiKey' in data) || (data.intervalsApiKey is string && data.intervalsApiKey.size() <= 256))
         && (!('intervalsAthleteId' in data) || (data.intervalsAthleteId is string && data.intervalsAthleteId.size() <= 64))
         && (!('weeklyBriefingJson' in data) || (data.weeklyBriefingJson is string && data.weeklyBriefingJson.size() <= 50000))

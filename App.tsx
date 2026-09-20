@@ -39,6 +39,7 @@ import {
   subscribeAuth, 
   fetchUserCloudProfile, 
   saveUserCloudProfile, 
+  subscribeUserCloudProfile,
   logoutUser, 
   UserCloudProfile 
 } from './services/firebase';
@@ -510,6 +511,30 @@ const App: React.FC = () => {
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
+  // Guards against race conditions and echoing between devices
+  const isCloudProfileLoadedRef = useRef(false);
+  const isApplyingRemoteSyncRef = useRef(false);
+
+  // Live state refs for avoiding stale closures during cloud operations
+  const userGoalRef = useRef(userGoal);
+  userGoalRef.current = userGoal;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const planContextRef = useRef(planContext);
+  planContextRef.current = planContext;
+  const trainingMethodologyRef = useRef(trainingMethodology);
+  trainingMethodologyRef.current = trainingMethodology;
+  const trainingModeRef = useRef(trainingMode);
+  trainingModeRef.current = trainingMode;
+  const planModeRef = useRef(planMode);
+  planModeRef.current = planMode;
+  const ftpRef = useRef(ftp);
+  ftpRef.current = ftp;
+  const weeklyBriefingRef = useRef(weeklyBriefing);
+  weeklyBriefingRef.current = weeklyBriefing;
+  const generatedWeeksRef = useRef(generatedWeeks);
+  generatedWeeksRef.current = generatedWeeks;
+
   const syncToCloud = useCallback((updates: Partial<UserCloudProfile>) => {
     if (!currentUser) return;
     setCloudSyncStatus('syncing');
@@ -524,112 +549,201 @@ const App: React.FC = () => {
       });
   }, [currentUser]);
 
-  // Subscribe to Firebase Auth and pull cloud profile
+  // Apply cloud data to local state with conflict/loop avoidance
+  const applyCloudProfile = useCallback((profile: UserCloudProfile) => {
+    isApplyingRemoteSyncRef.current = true;
+    try {
+      // 1. Goal sync across devices
+      if (profile.userGoal && profile.userGoal !== userGoalRef.current) {
+        setUserGoal(profile.userGoal);
+        safeSetItem('wattson_goal', profile.userGoal);
+      }
+
+      // 2. Chat history sync across devices
+      if (profile.chatHistoryJson) {
+        try {
+          const parsedMessages = JSON.parse(profile.chatHistoryJson);
+          if (Array.isArray(parsedMessages)) {
+            const currentStr = JSON.stringify(messagesRef.current);
+            if (currentStr !== profile.chatHistoryJson) {
+              setMessages(parsedMessages);
+              safeSetItem('wattson_chat_history', profile.chatHistoryJson);
+            }
+          }
+        } catch (e) {
+          console.warn("Error parsing cloud chat history:", e);
+        }
+      }
+
+      // 3. Training preferences & directives sync across devices
+      if (profile.trainingMethodology && profile.trainingMethodology !== trainingMethodologyRef.current) {
+        setTrainingMethodology(profile.trainingMethodology);
+        safeSetItem('wattson_training_methodology', profile.trainingMethodology);
+      }
+      if (profile.trainingMode && profile.trainingMode !== trainingModeRef.current) {
+        setTrainingMode(profile.trainingMode);
+        safeSetItem('wattson_training_mode', profile.trainingMode);
+      }
+      if (profile.planMode && profile.planMode !== planModeRef.current) {
+        setPlanMode(profile.planMode);
+        safeSetItem('wattson_plan_mode', profile.planMode);
+      }
+      if (profile.ftp && profile.ftp !== ftpRef.current) {
+        setFtp(profile.ftp);
+        safeSetItem('wattson_ftp', profile.ftp.toString());
+      }
+      if (profile.planContext !== undefined && profile.planContext !== planContextRef.current) {
+        setPlanContext(profile.planContext || null);
+        if (profile.planContext) {
+          safeSetItem('wattson_plan_context', profile.planContext);
+        } else {
+          localStorage.removeItem('wattson_plan_context');
+        }
+      }
+
+      // 4. Training plan & briefing sync
+      if (profile.weeklyBriefingJson) {
+        try {
+          const parsed = normalizeBriefingDays(JSON.parse(profile.weeklyBriefingJson));
+          const currentBriefingStr = weeklyBriefingRef.current ? JSON.stringify(weeklyBriefingRef.current) : '';
+          if (currentBriefingStr !== profile.weeklyBriefingJson) {
+            setWeeklyBriefing(parsed);
+            safeSetItem('wattson_saved_weekly_briefing', profile.weeklyBriefingJson);
+          }
+        } catch (e) {
+          console.error("Error parsing cloud weekly briefing:", e);
+        }
+      }
+      if (profile.generatedWeeksJson) {
+        try {
+          const parsedWeeks = JSON.parse(profile.generatedWeeksJson);
+          const currentWeeksStr = JSON.stringify(generatedWeeksRef.current);
+          if (currentWeeksStr !== profile.generatedWeeksJson) {
+            setGeneratedWeeks(parsedWeeks);
+            safeSetItem('wattson_saved_generated_weeks', profile.generatedWeeksJson);
+          }
+        } catch (e) {
+          console.error("Error parsing cloud generated weeks:", e);
+        }
+      }
+
+      // 5. Intervals credentials
+      if (profile.intervalsApiKey && (!creds || !creds.apiKey || creds.apiKey === 'demo')) {
+        const restoredCreds = {
+          apiKey: profile.intervalsApiKey,
+          athleteId: profile.intervalsAthleteId || '0'
+        };
+        setCreds(restoredCreds);
+        safeSetItem('wattson_creds', JSON.stringify(restoredCreds));
+      }
+    } finally {
+      setTimeout(() => {
+        isApplyingRemoteSyncRef.current = false;
+      }, 300);
+    }
+  }, [creds]);
+
+  // Subscribe to Firebase Auth and attach real-time multi-device cloud listener
   useEffect(() => {
-    const unsubscribe = subscribeAuth(async (user) => {
+    let unsubscribeSnapshot: (() => void) | null = null;
+
+    const unsubscribeAuthHandler = subscribeAuth(async (user) => {
       setCurrentUser(user);
       setIsAuthLoading(false);
+
+      if (unsubscribeSnapshot) {
+        unsubscribeSnapshot();
+        unsubscribeSnapshot = null;
+      }
+
       if (user) {
         try {
           setCloudSyncStatus('syncing');
           const profile = await fetchUserCloudProfile(user.uid);
           if (profile) {
-            if (profile.userGoal) {
-              setUserGoal(profile.userGoal);
-              safeSetItem('wattson_goal', profile.userGoal);
-            }
-            if (profile.trainingMethodology) {
-              setTrainingMethodology(profile.trainingMethodology);
-              safeSetItem('wattson_training_methodology', profile.trainingMethodology);
-            }
-            if (profile.trainingMode) {
-              setTrainingMode(profile.trainingMode);
-              safeSetItem('wattson_training_mode', profile.trainingMode);
-            }
-            if (profile.planMode) {
-              setPlanMode(profile.planMode);
-              safeSetItem('wattson_plan_mode', profile.planMode);
-            }
-            if (profile.ftp) {
-              setFtp(profile.ftp);
-              safeSetItem('wattson_ftp', profile.ftp.toString());
-            }
-            if (profile.weeklyBriefingJson) {
-              try {
-                const parsed = normalizeBriefingDays(JSON.parse(profile.weeklyBriefingJson));
-                setWeeklyBriefing(parsed);
-                safeSetItem('wattson_saved_weekly_briefing', profile.weeklyBriefingJson);
-              } catch (e) {
-                console.error("Error parsing cloud weekly briefing", e);
-              }
-            }
-            if (profile.generatedWeeksJson) {
-              try {
-                const parsedWeeks = JSON.parse(profile.generatedWeeksJson);
-                setGeneratedWeeks(parsedWeeks);
-                safeSetItem('wattson_saved_generated_weeks', profile.generatedWeeksJson);
-              } catch (e) {
-                console.error("Error parsing cloud generated weeks", e);
-              }
-            }
-            if (profile.intervalsApiKey && (!creds || !creds.apiKey || creds.apiKey === 'demo')) {
-              const restoredCreds = {
-                apiKey: profile.intervalsApiKey,
-                athleteId: profile.intervalsAthleteId || '0'
-              };
-              setCreds(restoredCreds);
-              safeSetItem('wattson_creds', JSON.stringify(restoredCreds));
-            }
+            applyCloudProfile(profile);
+            isCloudProfileLoadedRef.current = true;
             setCloudSyncStatus('synced');
             setLastSyncedAt(new Date());
           } else {
-            // First time user: initialize cloud profile
+            // First time user: initialize cloud profile with current local data
+            isCloudProfileLoadedRef.current = true;
             saveUserCloudProfile(user.uid, {
               displayName: user.displayName || '',
               photoURL: user.photoURL || '',
-              userGoal,
-              trainingMethodology,
-              trainingMode,
-              planMode,
-              ftp: ftp || undefined,
+              userGoal: userGoalRef.current,
+              chatHistoryJson: messagesRef.current.length > 0 ? JSON.stringify(messagesRef.current.slice(-50)) : undefined,
+              trainingMethodology: trainingMethodologyRef.current,
+              trainingMode: trainingModeRef.current,
+              planMode: planModeRef.current,
+              ftp: ftpRef.current || undefined,
+              planContext: planContextRef.current || undefined,
               intervalsApiKey: creds?.apiKey && creds.apiKey !== 'demo' ? creds.apiKey : undefined,
               intervalsAthleteId: creds?.athleteId,
-              weeklyBriefingJson: weeklyBriefing ? JSON.stringify(weeklyBriefing) : undefined,
-              generatedWeeksJson: generatedWeeks.length > 0 ? JSON.stringify(generatedWeeks) : undefined,
+              weeklyBriefingJson: weeklyBriefingRef.current ? JSON.stringify(weeklyBriefingRef.current) : undefined,
+              generatedWeeksJson: generatedWeeksRef.current.length > 0 ? JSON.stringify(generatedWeeksRef.current) : undefined,
               createdAt: new Date().toISOString()
             }).catch(console.error);
             setCloudSyncStatus('synced');
             setLastSyncedAt(new Date());
           }
+
+          // Real-time listener: sync changes across open devices instantly
+          unsubscribeSnapshot = subscribeUserCloudProfile(user.uid, (remoteProfile) => {
+            if (remoteProfile && isCloudProfileLoadedRef.current) {
+              applyCloudProfile(remoteProfile);
+              setCloudSyncStatus('synced');
+              setLastSyncedAt(new Date());
+            }
+          });
         } catch (err) {
           console.error("Error syncing profile with cloud:", err);
           setCloudSyncStatus('error');
         }
       } else {
+        isCloudProfileLoadedRef.current = false;
         setCloudSyncStatus('idle');
       }
     });
-    return () => unsubscribe();
-  }, []);
 
-  // Sync preference updates to Firestore (debounced)
+    return () => {
+      unsubscribeAuthHandler();
+      if (unsubscribeSnapshot) {
+        unsubscribeSnapshot();
+      }
+    };
+  }, [applyCloudProfile, creds]);
+
+  // Sync Goal & Training Preferences to Firestore (debounced)
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || !isCloudProfileLoadedRef.current || isApplyingRemoteSyncRef.current) return;
     const timeout = setTimeout(() => {
       syncToCloud({
         userGoal,
         trainingMethodology,
         trainingMode,
         planMode,
-        ftp: ftp || undefined
+        ftp: ftp || undefined,
+        planContext: planContext || ''
       });
-    }, 1500);
+    }, 1200);
     return () => clearTimeout(timeout);
-  }, [userGoal, trainingMethodology, trainingMode, planMode, ftp, currentUser, syncToCloud]);
+  }, [userGoal, trainingMethodology, trainingMode, planMode, ftp, planContext, currentUser, syncToCloud]);
+
+  // Sync Chat History to Firestore (debounced)
+  useEffect(() => {
+    if (!currentUser || !isCloudProfileLoadedRef.current || isApplyingRemoteSyncRef.current) return;
+    const timeout = setTimeout(() => {
+      syncToCloud({
+        chatHistoryJson: JSON.stringify(messages.slice(-50))
+      });
+    }, 1200);
+    return () => clearTimeout(timeout);
+  }, [messages, currentUser, syncToCloud]);
 
   // Sync training plan changes to Firestore
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || !isCloudProfileLoadedRef.current || isApplyingRemoteSyncRef.current) return;
     if (weeklyBriefing) {
       syncToCloud({
         weeklyBriefingJson: JSON.stringify(weeklyBriefing),
@@ -1603,6 +1717,10 @@ const App: React.FC = () => {
               onClick={() => { 
                 if (confirmClear) {
                   setMessages([]);
+                  safeSetItem('wattson_chat_history', '[]');
+                  if (currentUser) {
+                    syncToCloud({ chatHistoryJson: '[]' });
+                  }
                   setConfirmClear(false);
                 } else {
                   setConfirmClear(true);
@@ -2342,6 +2460,7 @@ const App: React.FC = () => {
                         <button 
                           onClick={() => { 
                             safeSetItem("wattson_goal", userGoal); 
+                            if (currentUser) syncToCloud({ userGoal });
                             setSuggestion(null); 
                             setGeneratedWeeks([]);
                             setWeeklyBriefing(null);
@@ -2774,6 +2893,7 @@ const App: React.FC = () => {
           <button 
             onClick={() => { 
               safeSetItem('wattson_goal', userGoal); 
+              if (currentUser) syncToCloud({ userGoal });
               setSuggestion(null); 
               setShowGoalEditor(false); 
               setGeneratedWeeks([]);

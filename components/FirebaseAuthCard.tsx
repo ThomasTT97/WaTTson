@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { User } from 'firebase/auth';
 import { loginWithGoogle, logoutUser } from '../services/firebase';
-import { Cloud, CheckCircle2, RefreshCw, AlertCircle, LogOut, ShieldCheck, Sparkles } from 'lucide-react';
+import { Cloud, CheckCircle2, RefreshCw, AlertCircle, LogOut, ShieldCheck, ExternalLink, Copy, Check } from 'lucide-react';
 
 interface FirebaseAuthCardProps {
   currentUser: User | null;
@@ -20,10 +20,13 @@ export const FirebaseAuthCard: React.FC<FirebaseAuthCardProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const handleGoogleLogin = async () => {
     setLoading(true);
     setErrorMsg(null);
+    setUnauthorizedDomain(null);
     try {
       const user = await loginWithGoogle();
       if (onAuthSuccess) {
@@ -31,7 +34,14 @@ export const FirebaseAuthCard: React.FC<FirebaseAuthCardProps> = ({
       }
     } catch (err: any) {
       console.error("Sign in failed:", err);
-      if (err.code === 'auth/popup-closed-by-user') {
+      const isUnauthorizedDomain = 
+        err.code === 'auth/unauthorized-domain' || 
+        (err.message && err.message.includes('auth/unauthorized-domain'));
+
+      if (isUnauthorizedDomain) {
+        const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'your-domain';
+        setUnauthorizedDomain(currentHost);
+      } else if (err.code === 'auth/popup-closed-by-user') {
         setErrorMsg("Sign-in cancelled. Please try again.");
       } else if (err.code === 'auth/popup-blocked') {
         setErrorMsg("Pop-up blocked by your browser. Please allow pop-ups for this site.");
@@ -149,7 +159,7 @@ export const FirebaseAuthCard: React.FC<FirebaseAuthCardProps> = ({
             ) : (
               <>
                 <CheckCircle2 size={11} className="text-emerald-400" />
-                <span className="text-emerald-400 font-medium">Multi-device sync active</span>
+                <span className="text-emerald-400 font-medium">Goal, chat history & preferences synced</span>
               </>
             )}
           </div>
@@ -175,7 +185,7 @@ export const FirebaseAuthCard: React.FC<FirebaseAuthCardProps> = ({
                 Cross-Device Cloud Sync
               </p>
               <p className="text-[10px] text-slate-400 leading-relaxed mt-0.5">
-                Sign in with Google to sync your training plan, coach directives, and preferences across all your devices.
+                Sign in with Google to sync your goal, chat history with waTTson, training preferences, and training plan across all your devices.
               </p>
             </div>
           </div>
@@ -185,6 +195,67 @@ export const FirebaseAuthCard: React.FC<FirebaseAuthCardProps> = ({
           <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[10px] text-rose-400 font-medium flex items-center gap-2">
             <AlertCircle size={13} className="flex-shrink-0" />
             <span>{errorMsg}</span>
+          </div>
+        )}
+
+        {unauthorizedDomain && (
+          <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-left space-y-2.5">
+            <div className="flex items-start gap-2">
+              <AlertCircle size={15} className="text-amber-400 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-[11px] font-bold text-amber-300">Firebase Domain Authorization Required</p>
+                <p className="text-[10px] text-slate-300 mt-0.5 leading-relaxed">
+                  Firebase Authentication restricts logins to verified domains for security.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-2 bg-black/50 rounded-xl border border-white/10 flex items-center justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <span className="text-[8.5px] text-slate-400 block uppercase font-mono tracking-wider">Domain to add:</span>
+                <code className="text-[11px] text-emerald-400 font-mono font-bold truncate block">{unauthorizedDomain}</code>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(unauthorizedDomain);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+                className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 active:scale-95 text-[10px] font-bold text-white rounded-lg transition-all flex items-center gap-1 shrink-0"
+              >
+                {copied ? (
+                  <>
+                    <Check size={11} className="text-emerald-400" />
+                    <span>Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy size={11} />
+                    <span>Copy</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="space-y-1 text-[9.5px] text-slate-300 bg-white/[0.02] p-2.5 rounded-xl border border-white/5">
+              <p className="font-bold text-amber-200 uppercase tracking-wider text-[8.5px]">Steps to enable:</p>
+              <ol className="list-decimal list-inside space-y-1 leading-normal">
+                <li>Go to Firebase Console Settings</li>
+                <li>Under <strong>Authorized domains</strong>, click <strong>Add domain</strong></li>
+                <li>Paste <span className="text-emerald-300 font-mono font-semibold">{unauthorizedDomain}</span> and click Save</li>
+              </ol>
+            </div>
+
+            <a
+              href="https://console.firebase.google.com/project/gen-lang-client-0917341144/authentication/settings"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-[10.5px] font-bold text-amber-300 hover:text-amber-200 transition-colors pt-0.5"
+            >
+              <span>Open Firebase Auth Settings</span>
+              <ExternalLink size={12} />
+            </a>
           </div>
         )}
 
