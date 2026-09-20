@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global catch-all deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['id', 'email'])
+        && data.keys().hasOnly([
+          'id', 'email', 'displayName', 'photoURL', 'userGoal',
+          'trainingMethodology', 'trainingMode', 'planMode', 'ftp',
+          'intervalsApiKey', 'intervalsAthleteId', 'weeklyBriefingJson',
+          'generatedWeeksJson', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.email is string && data.email.size() <= 256
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024))
+        && (!('userGoal' in data) || (data.userGoal is string && data.userGoal.size() <= 500))
+        && (!('trainingMethodology' in data) || data.trainingMethodology in ['polarized', 'pyramidal', 'norwegian'])
+        && (!('trainingMode' in data) || data.trainingMode in ['cycling', 'triathlon', 'running'])
+        && (!('planMode' in data) || data.planMode in ['power', 'hr'])
+        && (!('ftp' in data) || (data.ftp is number && data.ftp >= 0 && data.ftp <= 1000))
+        && (!('intervalsApiKey' in data) || (data.intervalsApiKey is string && data.intervalsApiKey.size() <= 256))
+        && (!('intervalsAthleteId' in data) || (data.intervalsAthleteId is string && data.intervalsAthleteId.size() <= 64))
+        && (!('weeklyBriefingJson' in data) || (data.weeklyBriefingJson is string && data.weeklyBriefingJson.size() <= 50000))
+        && (!('generatedWeeksJson' in data) || (data.generatedWeeksJson is string && data.generatedWeeksJson.size() <= 1000))
+        && (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    // User document path
+    match /users/{userId} {
+      allow get: if isSignedIn() && isOwner(userId) && isValidId(userId);
+      allow list: if isSignedIn() && resource.data.id == request.auth.uid;
+      allow create: if isSignedIn()
+        && isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming())
+        && incoming().id == request.auth.uid;
+      allow update: if isSignedIn()
+        && isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming())
+        && incoming().id == existing().id;
+      allow delete: if isSignedIn() && isOwner(userId) && isValidId(userId);
+    }
+
+    // Connection testing endpoint for healthchecks
+    match /test/{docId} {
+      allow read: if true;
+    }
+  }
+}

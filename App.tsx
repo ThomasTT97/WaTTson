@@ -34,7 +34,16 @@ import { MonthlyReportModal } from './components/MonthlyReportModal';
 import { WorkoutLibrary } from './components/WorkoutLibrary';
 import { LibraryWorkout } from './services/workoutLibrary';
 import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts, isEnduranceWorkout, VisualProfileChart } from './components/StepLabel';
-import { CheckCircle } from 'lucide-react';
+import { User as FirebaseUser } from 'firebase/auth';
+import { 
+  subscribeAuth, 
+  fetchUserCloudProfile, 
+  saveUserCloudProfile, 
+  logoutUser, 
+  UserCloudProfile 
+} from './services/firebase';
+import { FirebaseAuthCard } from './components/FirebaseAuthCard';
+import { CheckCircle, Cloud, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { 
   LayoutDashboard, 
   Bike,
@@ -495,6 +504,140 @@ const App: React.FC = () => {
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
   const [expandedWeeks, setExpandedWeeks] = useState<Record<number, boolean>>({ 1: true });
 
+  // Firebase Auth & Cloud Sync State
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+
+  const syncToCloud = useCallback((updates: Partial<UserCloudProfile>) => {
+    if (!currentUser) return;
+    setCloudSyncStatus('syncing');
+    saveUserCloudProfile(currentUser.uid, updates)
+      .then(() => {
+        setCloudSyncStatus('synced');
+        setLastSyncedAt(new Date());
+      })
+      .catch((err) => {
+        console.error("Failed to sync to Firestore:", err);
+        setCloudSyncStatus('error');
+      });
+  }, [currentUser]);
+
+  // Subscribe to Firebase Auth and pull cloud profile
+  useEffect(() => {
+    const unsubscribe = subscribeAuth(async (user) => {
+      setCurrentUser(user);
+      setIsAuthLoading(false);
+      if (user) {
+        try {
+          setCloudSyncStatus('syncing');
+          const profile = await fetchUserCloudProfile(user.uid);
+          if (profile) {
+            if (profile.userGoal) {
+              setUserGoal(profile.userGoal);
+              safeSetItem('wattson_goal', profile.userGoal);
+            }
+            if (profile.trainingMethodology) {
+              setTrainingMethodology(profile.trainingMethodology);
+              safeSetItem('wattson_training_methodology', profile.trainingMethodology);
+            }
+            if (profile.trainingMode) {
+              setTrainingMode(profile.trainingMode);
+              safeSetItem('wattson_training_mode', profile.trainingMode);
+            }
+            if (profile.planMode) {
+              setPlanMode(profile.planMode);
+              safeSetItem('wattson_plan_mode', profile.planMode);
+            }
+            if (profile.ftp) {
+              setFtp(profile.ftp);
+              safeSetItem('wattson_ftp', profile.ftp.toString());
+            }
+            if (profile.weeklyBriefingJson) {
+              try {
+                const parsed = normalizeBriefingDays(JSON.parse(profile.weeklyBriefingJson));
+                setWeeklyBriefing(parsed);
+                safeSetItem('wattson_saved_weekly_briefing', profile.weeklyBriefingJson);
+              } catch (e) {
+                console.error("Error parsing cloud weekly briefing", e);
+              }
+            }
+            if (profile.generatedWeeksJson) {
+              try {
+                const parsedWeeks = JSON.parse(profile.generatedWeeksJson);
+                setGeneratedWeeks(parsedWeeks);
+                safeSetItem('wattson_saved_generated_weeks', profile.generatedWeeksJson);
+              } catch (e) {
+                console.error("Error parsing cloud generated weeks", e);
+              }
+            }
+            if (profile.intervalsApiKey && (!creds || !creds.apiKey || creds.apiKey === 'demo')) {
+              const restoredCreds = {
+                apiKey: profile.intervalsApiKey,
+                athleteId: profile.intervalsAthleteId || '0'
+              };
+              setCreds(restoredCreds);
+              safeSetItem('wattson_creds', JSON.stringify(restoredCreds));
+            }
+            setCloudSyncStatus('synced');
+            setLastSyncedAt(new Date());
+          } else {
+            // First time user: initialize cloud profile
+            saveUserCloudProfile(user.uid, {
+              displayName: user.displayName || '',
+              photoURL: user.photoURL || '',
+              userGoal,
+              trainingMethodology,
+              trainingMode,
+              planMode,
+              ftp: ftp || undefined,
+              intervalsApiKey: creds?.apiKey && creds.apiKey !== 'demo' ? creds.apiKey : undefined,
+              intervalsAthleteId: creds?.athleteId,
+              weeklyBriefingJson: weeklyBriefing ? JSON.stringify(weeklyBriefing) : undefined,
+              generatedWeeksJson: generatedWeeks.length > 0 ? JSON.stringify(generatedWeeks) : undefined,
+              createdAt: new Date().toISOString()
+            }).catch(console.error);
+            setCloudSyncStatus('synced');
+            setLastSyncedAt(new Date());
+          }
+        } catch (err) {
+          console.error("Error syncing profile with cloud:", err);
+          setCloudSyncStatus('error');
+        }
+      } else {
+        setCloudSyncStatus('idle');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Sync preference updates to Firestore (debounced)
+  useEffect(() => {
+    if (!currentUser) return;
+    const timeout = setTimeout(() => {
+      syncToCloud({
+        userGoal,
+        trainingMethodology,
+        trainingMode,
+        planMode,
+        ftp: ftp || undefined
+      });
+    }, 1500);
+    return () => clearTimeout(timeout);
+  }, [userGoal, trainingMethodology, trainingMode, planMode, ftp, currentUser, syncToCloud]);
+
+  // Sync training plan changes to Firestore
+  useEffect(() => {
+    if (!currentUser) return;
+    if (weeklyBriefing) {
+      syncToCloud({
+        weeklyBriefingJson: JSON.stringify(weeklyBriefing),
+        generatedWeeksJson: JSON.stringify(generatedWeeks)
+      });
+    }
+  }, [weeklyBriefing, generatedWeeks, currentUser, syncToCloud]);
+
   // Startup changelog popup removed per user preference
 
 
@@ -619,6 +762,13 @@ const App: React.FC = () => {
       if (credsChanged) {
         setCreds(activeCreds);
         safeSetItem('wattson_creds', JSON.stringify(activeCreds));
+      }
+
+      if (currentUser && activeCreds.apiKey && activeCreds.apiKey !== 'demo') {
+        syncToCloud({
+          intervalsApiKey: activeCreds.apiKey,
+          intervalsAthleteId: activeCreds.athleteId
+        });
       }
 
       // If initial load and we have history, greet the user
@@ -811,7 +961,7 @@ const App: React.FC = () => {
     }
   }, [settingsView, activities, userGoal]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     const keys = [
       'wattson_creds', 
       'wattson_activities_cache', 
@@ -826,6 +976,9 @@ const App: React.FC = () => {
       'wattson_saved_generated_weeks'
     ];
     keys.forEach(k => localStorage.removeItem(k));
+    try {
+      await logoutUser();
+    } catch {}
     window.location.reload();
   };
 
@@ -1302,16 +1455,36 @@ const App: React.FC = () => {
   );
 
   if (!creds || syncError) return (
-    <div className="fixed inset-0 flex flex-col p-8 justify-center items-center">
+    <div className="fixed inset-0 flex flex-col p-6 justify-center items-center overflow-y-auto">
       <div className="premium-bg"></div>
-      <div className="glass-card w-full max-w-sm p-8 rounded-[2rem] text-center">
-        <div className="w-12 h-12 bg-emerald-500/5 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/5 shadow-inner">
+      <div className="glass-card w-full max-w-sm p-6 rounded-[2rem] text-center my-auto">
+        <div className="w-12 h-12 bg-emerald-500/5 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-white/5 shadow-inner">
           <CyclistIcon size={24} className="text-emerald-400" />
         </div>
-        <h1 className="text-3xl font-black text-white italic mb-8 tracking-tight">
+        <h1 className="text-3xl font-black text-white italic mb-1 tracking-tight">
           wa<span className="text-emerald-400">TT</span>son
         </h1>
-        <div className="space-y-3">
+        <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-5">
+          Intelligent Cycling Architecture
+        </p>
+
+        <div className="space-y-3.5">
+          {/* Cloud User Profile & Cross-Device Sync */}
+          <FirebaseAuthCard 
+            currentUser={currentUser} 
+            cloudSyncStatus={cloudSyncStatus} 
+            lastSyncedAt={lastSyncedAt} 
+            compact={true}
+          />
+
+          <div className="flex items-center gap-2 pt-1 pb-0.5">
+            <div className="flex-1 h-px bg-white/10" />
+            <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">
+              Intervals.icu Connection
+            </span>
+            <div className="flex-1 h-px bg-white/10" />
+          </div>
+
           {syncError && (
             <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[10px] text-rose-400 font-bold leading-tight">
               {syncError}
@@ -1351,7 +1524,7 @@ const App: React.FC = () => {
           </button>
           <button 
             onClick={() => loadData({ apiKey: 'demo', athleteId: '0' }, true)}
-            className="w-full bg-white/5 text-slate-400 font-bold py-3.5 rounded-xl text-[10px] uppercase tracking-widest active:scale-95 transition-all border border-white/5"
+            className="w-full bg-white/5 text-slate-400 font-bold py-3 rounded-xl text-[10px] uppercase tracking-widest active:scale-95 transition-all border border-white/5"
           >
             Explore Demo Mode
           </button>
@@ -1426,6 +1599,28 @@ const App: React.FC = () => {
                 title="Refresh Intervals Data"
               >
                 <RefreshCw size={14} className={isSyncing ? 'animate-spin text-emerald-400' : ''} />
+              </button>
+              <button 
+                onClick={() => {
+                  setActiveTab('settings');
+                  setSettingsView('main');
+                }}
+                className="h-8 px-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 flex items-center gap-1.5 text-slate-300 hover:text-white active:scale-95 transition-all"
+                title={currentUser ? `Cloud Sync: ${currentUser.displayName || currentUser.email}` : "Cloud Profile (Sign In)"}
+              >
+                {currentUser?.photoURL ? (
+                  <img 
+                    src={currentUser.photoURL} 
+                    alt="User" 
+                    className="w-4 h-4 rounded-full object-cover border border-emerald-400/40"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <Cloud size={13} className={currentUser ? "text-emerald-400" : "text-slate-400"} />
+                )}
+                {currentUser && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_5px_rgba(52,211,153,0.8)]" />
+                )}
               </button>
             </>
           )}
@@ -1978,7 +2173,14 @@ const App: React.FC = () => {
 
               <div className="flex flex-col pb-2 px-1">
                 {settingsView === "main" && (
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-2.5">
+                    {/* Firebase Cloud Sync & User Profile */}
+                    <FirebaseAuthCard 
+                      currentUser={currentUser} 
+                      cloudSyncStatus={cloudSyncStatus} 
+                      lastSyncedAt={lastSyncedAt} 
+                    />
+
                     <button 
                       onClick={() => setSettingsView("rider_profile")}
                       className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-amber-500/10 shadow-sm"

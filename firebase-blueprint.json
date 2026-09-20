@@ -1,0 +1,92 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile, credentials, and synced training preferences",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "User's unique Firebase auth UID",
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address",
+          "maxLength": 256
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name",
+          "maxLength": 128
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Avatar image URL",
+          "maxLength": 1024
+        },
+        "userGoal": {
+          "type": "string",
+          "description": "Primary cycling target goal",
+          "maxLength": 500
+        },
+        "trainingMethodology": {
+          "type": "string",
+          "description": "Selected training methodology",
+          "enum": ["polarized", "pyramidal", "norwegian"]
+        },
+        "trainingMode": {
+          "type": "string",
+          "description": "Selected training sport mode",
+          "enum": ["cycling", "triathlon", "running"]
+        },
+        "planMode": {
+          "type": "string",
+          "description": "Target metric mode",
+          "enum": ["power", "hr"]
+        },
+        "ftp": {
+          "type": "number",
+          "description": "Functional Threshold Power in watts"
+        },
+        "intervalsApiKey": {
+          "type": "string",
+          "description": "Intervals.icu API key for cross-device sync",
+          "maxLength": 256
+        },
+        "intervalsAthleteId": {
+          "type": "string",
+          "description": "Intervals.icu Athlete ID for cross-device sync",
+          "maxLength": 64
+        },
+        "weeklyBriefingJson": {
+          "type": "string",
+          "description": "Serialized active weekly briefing training plan",
+          "maxLength": 50000
+        },
+        "generatedWeeksJson": {
+          "type": "string",
+          "description": "Serialized generated weeks list",
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of account document creation",
+          "maxLength": 64
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last document update",
+          "maxLength": 64
+        }
+      },
+      "required": ["id", "email"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Individual rider profile, credentials, and synced training preferences"
+    }
+  }
+}
