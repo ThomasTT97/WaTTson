@@ -53,7 +53,7 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
   // --- ENDURANCE ---
   {
     id: 'aerobic_endurance_60',
-    title: 'Endurance Ride (60m)',
+    title: 'Endurance Ride (1h)',
     description: '1-hour Zone 2 endurance ride. Great for active fat oxidation, baseline mitochondrial development, and cardiovascular health on limited time.',
     category: 'Endurance',
     intensity: 'Easy',
@@ -67,8 +67,8 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
   },
   {
     id: 'aerobic_endurance_75',
-    title: 'Endurance Ride (75m)',
-    description: 'Standard Zone 2 endurance ride. Highly effective for building mitochondrial density, increasing fat oxidation efficiency, and strengthening capillary networks.',
+    title: 'Endurance Ride (1h15)',
+    description: '1h15 Zone 2 endurance ride. Highly effective for building mitochondrial density, increasing fat oxidation efficiency, and strengthening capillary networks.',
     category: 'Endurance',
     intensity: 'Easy',
     duration_minutes: 75,
@@ -81,8 +81,8 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
   },
   {
     id: 'aerobic_engine_90',
-    title: 'Endurance Ride (90m)',
-    description: 'Longer Zone 2 ride designed to trigger deeper cardiovascular adaptations and stimulate muscle glycogen conservation and endurance fat-burning enzymes.',
+    title: 'Endurance Ride (1h30)',
+    description: '1.5-hour Zone 2 ride designed to trigger deeper cardiovascular adaptations and stimulate muscle glycogen conservation and endurance fat-burning enzymes.',
     category: 'Endurance',
     intensity: 'Easy',
     duration_minutes: 90,
@@ -95,7 +95,7 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
   },
   {
     id: 'aerobic_endurance_120',
-    title: 'Endurance Ride (120m)',
+    title: 'Endurance Ride (2h)',
     description: '2-hour Zone 2 base building endurance ride. Teaches the body to conserve glycogen reserves, utilizes fat as a primary fuel source, and strengthens muscular resilience.',
     category: 'Endurance',
     intensity: 'Easy',
@@ -109,7 +109,7 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
   },
   {
     id: 'aerobic_endurance_180',
-    title: 'Endurance Ride (180m)',
+    title: 'Endurance Ride (3h)',
     description: '3-hour Zone 2 steady-state aerobic endurance block. Promotes deeper adaptation in slow-twitch muscle fibers, improving cardiac output and fat clearance rates.',
     category: 'Endurance',
     intensity: 'Easy',
@@ -123,7 +123,7 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
   },
   {
     id: 'aerobic_endurance_240',
-    title: 'Endurance Ride (240m)',
+    title: 'Endurance Ride (4h)',
     description: '4-hour long aerobic endurance ride. Essential for ultra-endurance event preparation. Builds exceptional physical and mental stamina while optimizing metabolic efficiency.',
     category: 'Endurance',
     intensity: 'Easy',
@@ -137,7 +137,7 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
   },
   {
     id: 'aerobic_endurance_300',
-    title: 'Endurance Ride (300m)',
+    title: 'Endurance Ride (5h)',
     description: '5-hour epic Zone 2 base endurance ride. The ultimate simulation of long-distance events to maximize fat utilization pathways, skeletal muscle fatigue resistance, and endurance pacing.',
     category: 'Endurance',
     intensity: 'Easy',

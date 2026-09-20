@@ -239,6 +239,17 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
     ? selectedWorkout.workout_steps.reduce((sum, s) => sum + s.duration, 0)
     : 0;
 
+  const formatDisplayDuration = (mins: number, category?: string, title?: string) => {
+    const isEndurance = category === 'Endurance' || (title && title.toLowerCase().includes('endurance'));
+    if (isEndurance) {
+      if (mins % 60 === 0) return `${mins / 60}h`;
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return h > 0 ? `${h}h${m > 0 ? (m < 10 ? `0${m}` : m) : ''}` : `${m}m`;
+    }
+    return `${mins}m`;
+  };
+
   // View 1: Workout List Catalog
   if (!selectedWorkout) {
     return (
@@ -298,8 +309,8 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
                             {workout.title}
                           </span>
                           <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider bg-white/5 px-2 py-0.5 rounded-md">
-                              {workout.duration_minutes}m
+                            <span className="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider bg-white/5 px-2 py-0.5 rounded-md">
+                              {formatDisplayDuration(workout.duration_minutes, workout.category, workout.title)}
                             </span>
                             <span className="text-[9px] text-amber-500 font-black italic">
                               {workout.tss} TSS
@@ -360,7 +371,7 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
           <div className="flex flex-col items-center justify-center text-center border-r border-white/5">
             <span className="text-[8px] text-slate-500 font-black uppercase tracking-wider mb-0.5">Duration</span>
             <div className="flex items-center gap-1.5 text-sm font-black text-white uppercase">
-              <Clock size={13} className="text-blue-400 shrink-0" /> {selectedWorkout.duration_minutes} Mins
+              <Clock size={13} className="text-blue-400 shrink-0" /> {selectedWorkout.category === 'Endurance' || selectedWorkout.title.toLowerCase().includes('endurance') ? formatDisplayDuration(selectedWorkout.duration_minutes, selectedWorkout.category, selectedWorkout.title).toUpperCase() : `${selectedWorkout.duration_minutes} Mins`}
             </div>
           </div>
           <div className="flex flex-col items-center justify-center text-center">

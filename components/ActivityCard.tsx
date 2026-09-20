@@ -61,72 +61,72 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
   return (
     <div 
       onClick={() => onClick(activity)}
-      className={`glass-card p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border ${
+      className={`p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border ${
         isToday 
-          ? 'border-emerald-500/30 bg-emerald-950/20 shadow-sm hover:border-emerald-500/50' 
-          : 'border-white/[0.06] bg-slate-900/30 hover:border-white/10 hover:bg-slate-900/50'
+          ? 'border-emerald-500/25 bg-[#0a1512]/90 hover:border-emerald-500/40' 
+          : 'border-white/[0.05] bg-[#0b0e14]/80 hover:border-white/10 hover:bg-[#0e121b]'
       }`}
     >
       <div className={`w-9 h-9 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-colors ${
         isToday 
-          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
-          : 'bg-white/[0.02] border-white/[0.08] text-slate-200 group-hover:border-emerald-500/20'
+          ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400' 
+          : 'bg-white/[0.02] border-white/[0.06] text-slate-300 group-hover:border-white/10'
       }`}>
-        <span className={`text-[7px] font-black uppercase leading-none mb-0.5 tracking-wider ${isToday ? 'text-emerald-400' : 'text-slate-400'}`}>{weekday}</span>
-        <span className={`text-sm font-black italic leading-none ${isToday ? 'text-emerald-300' : 'text-white'}`}>{day}</span>
+        <span className={`text-[7.5px] font-bold uppercase leading-none mb-0.5 tracking-wider ${isToday ? 'text-emerald-400' : 'text-slate-400'}`}>{weekday}</span>
+        <span className={`text-xs font-bold font-mono leading-none ${isToday ? 'text-emerald-300' : 'text-white'}`}>{day}</span>
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col justify-center">
-        <div className="flex items-center gap-2 mb-1">
-          <h3 className={`font-bold text-xs truncate leading-tight tracking-tight transition-colors ${isToday ? 'text-emerald-300' : 'text-slate-200 group-hover:text-emerald-400'}`}>
+        <div className="flex items-center gap-2 mb-0.5">
+          <h3 className={`font-semibold text-xs truncate leading-tight tracking-tight transition-colors ${isToday ? 'text-emerald-300' : 'text-slate-200 group-hover:text-emerald-400'}`}>
             {displayName}
           </h3>
           {isToday && (
-            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-[7px] font-black text-emerald-300 uppercase tracking-widest shrink-0">
+            <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[7.5px] font-semibold text-emerald-300 uppercase tracking-wider shrink-0">
               Today
             </span>
           )}
           {isVirtual && !isToday && (
-            <span className="px-1.5 py-0.5 rounded bg-orange-500/10 border border-orange-500/20 text-[7px] font-black text-orange-400 uppercase tracking-widest shrink-0">
+            <span className="px-1.5 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-[7.5px] font-semibold text-amber-400 uppercase tracking-wider shrink-0">
               Virtual
             </span>
           )}
         </div>
         
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <div className="flex items-center gap-1 text-[10.5px] font-bold text-slate-400">
+          <div className="flex items-center gap-1 text-[10.5px] font-medium text-slate-400">
             <Clock size={10} className="text-slate-500" />
             <span>{formatDuration(displayDuration)}</span>
           </div>
 
           {(displayDistance > 0) && (
-            <div className="flex items-center gap-1 text-[10.5px] font-bold text-slate-400">
+            <div className="flex items-center gap-1 text-[10.5px] font-medium text-slate-400">
               <TrendingUp size={10} className="text-slate-500" />
               <span>{Math.round(displayDistance / 100) / 10}km</span>
             </div>
           )}
 
           {pace ? (
-            <div className="flex items-center gap-1 text-[10.5px] font-bold text-slate-400">
+            <div className="flex items-center gap-1 text-[10.5px] font-medium text-slate-400">
               <Zap size={10} className="text-indigo-400" />
               <span>{pace}</span>
             </div>
           ) : (activity.average_watts || activity.icu_average_watts || activity.weighted_average_watts || activity.icu_weighted_average_watts) ? (
-            <div className="flex items-center gap-1 text-[10.5px] font-bold text-slate-400">
+            <div className="flex items-center gap-1 text-[10.5px] font-medium text-slate-400">
               <Zap size={10} className="text-amber-400/80" />
               <span>
                 {Math.round(activity.average_watts ?? activity.icu_average_watts ?? activity.weighted_average_watts ?? activity.icu_weighted_average_watts ?? 0)}W
               </span>
             </div>
           ) : activity.average_heartrate ? (
-            <div className="flex items-center gap-1 text-[10.5px] font-bold text-slate-400">
+            <div className="flex items-center gap-1 text-[10.5px] font-medium text-slate-400">
               <Heart size={10} className="text-rose-400/80" />
               <span>{Math.round(activity.average_heartrate)}bpm</span>
             </div>
           ) : null}
 
           {activity.icu_eftp && activity.icu_eftp > 0 && (
-            <div className="flex items-center gap-1 text-[9.5px] font-black bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20 text-emerald-400">
+            <div className="flex items-center gap-1 text-[9px] font-semibold bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20 text-emerald-400">
               <span>eFTP</span>
               <span className="text-slate-200">{Math.round(activity.icu_eftp)}W</span>
             </div>
@@ -137,8 +137,8 @@ export const ActivityCard: React.FC<ActivityCardProps> = memo(({ activity, onCli
       <div className="flex flex-col items-end justify-center shrink-0">
         {load > 0 ? (
           <div className="flex flex-col items-end">
-            <span className="text-xs font-black text-emerald-400 italic font-mono leading-none">{load}</span>
-            <span className="text-[7px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">TSS</span>
+            <span className="text-xs font-bold text-emerald-400 font-mono leading-none">{load}</span>
+            <span className="text-[7.5px] font-semibold text-slate-500 uppercase tracking-wider mt-0.5">TSS</span>
           </div>
         ) : (
           <ChevronRight size={13} className="text-slate-600 group-hover:text-emerald-400 transition-colors" />

@@ -58,7 +58,10 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
     if (mins <= 0) return '0m';
     const hours = Math.floor(mins / 60);
     const minutes = mins % 60;
-    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+    if (hours > 0) {
+      return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+    }
+    return `${minutes}m`;
   };
 
   const getSportInfo = (focusStr?: string) => {
@@ -98,41 +101,41 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
     return (
       <div 
         onClick={() => onClick(day)}
-        className={`glass-card p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border ${
+        className={`p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border ${
           isToday 
-            ? 'border-indigo-500/30 bg-indigo-950/20 shadow-sm hover:border-indigo-500/50' 
-            : 'border-white/[0.06] bg-slate-900/30 hover:border-white/10 hover:bg-slate-900/50'
+            ? 'border-indigo-500/25 bg-[#0f1422]/90 hover:border-indigo-500/40' 
+            : 'border-white/[0.05] bg-[#0b0e14]/80 hover:border-white/10 hover:bg-[#0e121b]'
         }`}
       >
         {/* Date block */}
         <div className={`w-9 h-9 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-colors ${
           isToday
-            ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300'
-            : 'bg-white/[0.02] border-white/[0.08] text-slate-400 group-hover:border-indigo-500/20'
+            ? 'bg-indigo-500/10 border-indigo-500/25 text-indigo-300'
+            : 'bg-white/[0.02] border-white/[0.06] text-slate-400 group-hover:border-white/10'
         }`}>
-          <span className="text-[7px] font-black uppercase leading-none mb-0.5 tracking-wider">{weekday}</span>
-          <span className="text-sm font-black italic leading-none text-slate-200">{dayNum || '–'}</span>
+          <span className="text-[7.5px] font-bold uppercase leading-none mb-0.5 tracking-wider">{weekday}</span>
+          <span className="text-xs font-bold font-mono leading-none text-slate-200">{dayNum || '–'}</span>
         </div>
 
         {/* Focus description & REST badge */}
         <div className="flex-1 min-w-0 flex flex-col justify-center">
           <div className="flex items-center gap-2 mb-0.5">
-            <h3 className="font-bold text-xs truncate leading-tight tracking-tight text-slate-300 group-hover:text-white transition-colors">
+            <h3 className="font-semibold text-xs truncate leading-tight tracking-tight text-slate-300 group-hover:text-white transition-colors">
               {day.focus || 'Rest Day'}
             </h3>
-            <span className="text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest flex items-center gap-1 shrink-0 text-indigo-300 bg-indigo-500/10 border border-indigo-500/20">
+            <span className="text-[7.5px] font-semibold px-1.5 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1 shrink-0 text-indigo-300/90 bg-indigo-500/10 border border-indigo-500/20">
               <Coffee size={9} /> Rest
             </span>
           </div>
           
-          <p className="text-[10px] text-slate-400 font-medium tracking-tight truncate">
+          <p className="text-[10.5px] text-slate-400 font-normal tracking-tight truncate">
             {day.why || 'Time to recover, adapt, and rebuild muscles.'}
           </p>
         </div>
 
         {/* Cozy rest icon */}
         <div className="flex items-center justify-center shrink-0">
-          <div className="p-1.5 rounded-xl border border-white/[0.06] bg-white/[0.02] text-slate-500 flex items-center justify-center">
+          <div className="p-1.5 rounded-xl border border-white/[0.05] bg-white/[0.02] text-slate-500 flex items-center justify-center">
             <Coffee size={13} />
           </div>
         </div>
@@ -140,39 +143,39 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
     );
   }
 
-  const intensityColors = {
-    'Hard': 'text-orange-400 bg-orange-500/10 border-orange-500/20',
-    'Medium': 'text-amber-400 bg-amber-500/10 border-amber-500/20',
-    'Easy': 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+  const intensityColors: Record<string, string> = {
+    'Hard': 'text-amber-400/90 bg-amber-500/10 border-amber-500/20',
+    'Medium': 'text-blue-400/90 bg-blue-500/10 border-blue-500/20',
+    'Easy': 'text-emerald-400/90 bg-emerald-500/10 border-emerald-500/20',
     'Rest': 'text-slate-400 bg-slate-500/10 border-slate-500/20'
   };
 
   return (
     <div 
       onClick={() => onClick(day)}
-      className={`glass-card p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border ${
+      className={`p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border ${
         isToday 
-          ? 'border-blue-500/30 bg-blue-950/20 shadow-sm hover:border-blue-500/50' 
-          : 'border-white/[0.06] bg-slate-900/30 hover:border-white/10 hover:bg-slate-900/50'
+          ? 'border-blue-500/25 bg-[#0a1120]/90 hover:border-blue-500/40' 
+          : 'border-white/[0.05] bg-[#0b0e14]/80 hover:border-white/10 hover:bg-[#0e121b]'
       }`}
     >
       <div className={`w-9 h-9 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-colors ${
         isToday
-          ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
-          : 'bg-white/[0.02] border-white/[0.08] text-slate-200 group-hover:border-blue-500/20'
+          ? 'bg-blue-500/10 border-blue-500/25 text-blue-400'
+          : 'bg-white/[0.02] border-white/[0.06] text-slate-300 group-hover:border-white/10'
       }`}>
-        <span className={`text-[7px] font-black uppercase leading-none mb-0.5 tracking-wider ${isToday ? 'text-blue-400' : 'text-slate-400'}`}>{weekday}</span>
-        <span className={`text-sm font-black italic leading-none ${isToday ? 'text-blue-300' : 'text-white'}`}>{dayNum || '–'}</span>
+        <span className={`text-[7.5px] font-bold uppercase leading-none mb-0.5 tracking-wider ${isToday ? 'text-blue-400' : 'text-slate-400'}`}>{weekday}</span>
+        <span className={`text-xs font-bold font-mono leading-none ${isToday ? 'text-blue-300' : 'text-white'}`}>{dayNum || '–'}</span>
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col justify-center">
-        <div className="flex items-center gap-2 mb-1">
-          <h3 className={`font-bold text-xs truncate leading-tight tracking-tight transition-colors ${
+        <div className="flex items-center gap-2 mb-0.5">
+          <h3 className={`font-semibold text-xs truncate leading-tight tracking-tight transition-colors ${
             isToday ? 'text-blue-300' : 'text-slate-200 group-hover:text-blue-400'
           }`}>
             {formatPlannedRideTitle(day.focus)}
           </h3>
-          <span className={`text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest border ${
+          <span className={`text-[7.5px] font-semibold px-1.5 py-0.5 rounded-md uppercase tracking-wider border ${
             intensityColors[day.intensity] || intensityColors['Medium']
           }`}>
             {day.intensity}
@@ -180,12 +183,12 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
         </div>
         
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <div className="flex items-center gap-1 text-[10.5px] font-bold text-slate-400">
+          <div className="flex items-center gap-1 text-[10.5px] font-medium text-slate-400">
             <Clock size={10} className="text-slate-500" />
             <span>{formatWorkoutDuration(day.duration_target)}</span>
           </div>
 
-          <div className="flex items-center gap-1 text-[10.5px] font-bold text-slate-400">
+          <div className="flex items-center gap-1 text-[10.5px] font-medium text-slate-400">
             {sport.name === 'Run' ? (
               <Activity size={10} className="text-orange-400" />
             ) : sport.name === 'Swim' ? (
@@ -203,12 +206,12 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
       <div className="flex flex-col items-end justify-center shrink-0">
         {day.load_target > 0 ? (
           <div className="flex flex-col items-end">
-            <span className="text-xs font-black italic font-mono leading-none text-blue-400">{day.load_target}</span>
-            <span className="text-[7px] font-bold uppercase tracking-widest text-slate-500 mt-0.5">TSS</span>
+            <span className="text-xs font-bold font-mono leading-none text-blue-400">{day.load_target}</span>
+            <span className="text-[7.5px] font-semibold uppercase tracking-wider text-slate-500 mt-0.5">TSS</span>
           </div>
         ) : (
           <div className="flex flex-col items-end">
-            <span className="text-[10px] font-black text-slate-500 italic leading-none">REST</span>
+            <span className="text-[10px] font-semibold text-slate-500 leading-none">REST</span>
           </div>
         )}
       </div>

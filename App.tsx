@@ -32,6 +32,7 @@ import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
 import { MonthlyReportModal } from './components/MonthlyReportModal';
 import { WorkoutLibrary } from './components/WorkoutLibrary';
+import { PlanAndChangeModal } from './components/PlanAndChangeModal';
 import { LibraryWorkout } from './services/workoutLibrary';
 import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts, isEnduranceWorkout, VisualProfileChart } from './components/StepLabel';
 import { User as FirebaseUser } from 'firebase/auth';
@@ -125,11 +126,22 @@ const getFriendlyNextRideDay = (targetDate: Date) => {
 };
 
 const CHAT_SUGGESTIONS: string[] = [
+  "What should I do today?",
   "Analyze recent load",
   "Current readiness?",
   "Goal check",
   "Efficiency trend"
 ];
+
+export const getChatStorageKey = (uid?: string | null): string => {
+  if (uid) return `wattson_chat_history_${uid}`;
+  return 'wattson_chat_history_guest';
+};
+
+export const getChatClearedKey = (uid?: string | null): string => {
+  if (uid) return `wattson_chat_cleared_${uid}`;
+  return 'wattson_chat_cleared_guest';
+};
 
 const APP_VERSION = '1.1.1';
 const APP_CHANGELOG = [
@@ -299,8 +311,28 @@ const App: React.FC = () => {
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'rider_profile' | 'training_method' | 'ftp' | 'workout_library'>('main');
+  const [riderProfileTab, setRiderProfileTab] = useState<'dna' | 'power' | 'aerobic'>('dna');
   const [userProfile, setUserProfile] = useState<UserProfileAnalysis | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
+
+  // Text condensing helpers to prevent text walls and keep UI clean & minimalistic
+  const condenseText = (text: string | undefined | null, maxSentences: number = 2): string => {
+    if (!text) return '';
+    const clean = text.trim().replace(/^["']+|["']+$/g, '');
+    const sentences = clean.match(/[^.!?]+[.!?]+/g);
+    if (sentences && sentences.length > maxSentences) {
+      return sentences.slice(0, maxSentences).join(' ').trim();
+    }
+    return clean;
+  };
+
+  const condenseBullet = (text: string | undefined | null, maxWords: number = 16): string => {
+    if (!text) return '';
+    const clean = text.trim().replace(/^["'•\-*✓\d.]+\s*/g, '');
+    const words = clean.split(/\s+/);
+    if (words.length <= maxWords) return clean;
+    return words.slice(0, maxWords).join(' ') + '...';
+  };
 
   const handleFetchThreeMonthReview = async (force: boolean = false) => {
     if (!activities) return;
@@ -329,12 +361,15 @@ const App: React.FC = () => {
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     try {
-      const saved = localStorage.getItem('wattson_chat_history');
+      const lastUid = typeof window !== 'undefined' ? localStorage.getItem('wattson_auth_user_id') : null;
+      const targetKey = getChatStorageKey(lastUid);
+      const saved = localStorage.getItem(targetKey) || localStorage.getItem('wattson_chat_history');
       if (saved) return JSON.parse(saved);
     } catch {}
     return [];
   });
   const [confirmClear, setConfirmClear] = useState(false);
+  const hasGreetedRef = useRef(false);
 
   const safeSetItem = (key: string, value: string) => {
     try {
@@ -349,10 +384,6 @@ const App: React.FC = () => {
       }
     }
   };
-
-  useEffect(() => {
-    safeSetItem('wattson_chat_history', JSON.stringify(messages));
-  }, [messages]);
 
   useEffect(() => {
     if (weeklyBriefing) {
@@ -415,7 +446,7 @@ const App: React.FC = () => {
     return 4;
   };
 
-  const handleAddTweakFromApp = (newTweakDirective: string, weekIndex?: number) => {
+  const handleAddTweakFromApp = (newTweakDirective: string, weekIndex?: number, switchTab = true) => {
     const parsed = parsePlanDirectives(planContext);
     const today = getTodayDateString();
     const newDir: PlanDirective = {
@@ -431,7 +462,9 @@ const App: React.FC = () => {
     setShowTweakSuccessNotice(false);
     setPlanContext(newContext);
     safeSetItem('wattson_plan_context', newContext);
-    setActiveTab('rides');
+    if (switchTab) {
+      setActiveTab('rides');
+    }
     
     if (!weekIndex) {
       // Global tweak: clear existing weeks and fetch just week 1 for speed
@@ -516,10 +549,23 @@ const App: React.FC = () => {
   const isApplyingRemoteSyncRef = useRef(false);
 
   // Live state refs for avoiding stale closures during cloud operations
+  const currentUserRef = useRef<FirebaseUser | null>(null);
+  currentUserRef.current = currentUser;
   const userGoalRef = useRef(userGoal);
   userGoalRef.current = userGoal;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+
+  useEffect(() => {
+    const key = getChatStorageKey(currentUser?.uid);
+    safeSetItem(key, JSON.stringify(messages));
+    if (!currentUser) {
+      safeSetItem('wattson_chat_history', JSON.stringify(messages));
+    }
+    if (messages.length > 0) {
+      hasGreetedRef.current = true;
+    }
+  }, [messages, currentUser]);
   const planContextRef = useRef(planContext);
   planContextRef.current = planContext;
   const trainingMethodologyRef = useRef(trainingMethodology);
@@ -552,7 +598,7 @@ const App: React.FC = () => {
   }, [currentUser]);
 
   // Extract all existing local preferences to push to centrally stored user data
-  const extractLocalPreferencesToPush = useCallback((): { updates: Partial<UserCloudProfile>; hasPreferences: boolean } => {
+  const extractLocalPreferencesToPush = useCallback((targetUserId?: string): { updates: Partial<UserCloudProfile>; hasPreferences: boolean } => {
     const updates: Partial<UserCloudProfile> = {};
 
     // 1. Goal
@@ -606,8 +652,9 @@ const App: React.FC = () => {
       updates.planContext = planContextRef.current;
     }
 
-    // 7. Chat History
-    const storedChat = localStorage.getItem('wattson_chat_history');
+    // 7. Chat History - scoped per user
+    const userChatKey = getChatStorageKey(targetUserId);
+    const storedChat = localStorage.getItem(userChatKey) || (targetUserId ? null : localStorage.getItem('wattson_chat_history'));
     if (storedChat) {
       try {
         const parsed = JSON.parse(storedChat);
@@ -673,14 +720,15 @@ const App: React.FC = () => {
       }
 
       // 2. Chat history sync across devices
-      if (profile.chatHistoryJson) {
+      if (profile.chatHistoryJson !== undefined) {
         try {
           const parsedMessages = JSON.parse(profile.chatHistoryJson);
           if (Array.isArray(parsedMessages)) {
             const currentStr = JSON.stringify(messagesRef.current);
             if (currentStr !== profile.chatHistoryJson) {
               setMessages(parsedMessages);
-              safeSetItem('wattson_chat_history', profile.chatHistoryJson);
+              const activeUid = currentUserRef.current?.uid || profile.id;
+              safeSetItem(getChatStorageKey(activeUid), profile.chatHistoryJson);
             }
           }
         } catch (e) {
@@ -763,6 +811,7 @@ const App: React.FC = () => {
 
     const unsubscribeAuthHandler = subscribeAuth(async (user) => {
       setCurrentUser(user);
+      currentUserRef.current = user;
       setIsAuthLoading(false);
 
       if (unsubscribeSnapshot) {
@@ -782,11 +831,17 @@ const App: React.FC = () => {
           const lastAuthUserId = typeof window !== 'undefined' ? localStorage.getItem('wattson_auth_user_id') : null;
           const isUserLoggingIn = isExplicitLogin || !lastAuthUserId || lastAuthUserId !== user.uid;
 
-          const { updates: localUpdates, hasPreferences } = extractLocalPreferencesToPush();
+          const { updates: localUpdates, hasPreferences } = extractLocalPreferencesToPush(user.uid);
           const profile = await fetchUserCloudProfile(user.uid);
 
           if (profile) {
-            if (isUserLoggingIn && hasPreferences) {
+            // If the user already has a saved chat history in Firestore (even '[]' if cleared!),
+            // preserve the cloud chat history so guest or another user's chat does not overwrite it!
+            if (profile.chatHistoryJson !== undefined) {
+              delete localUpdates.chatHistoryJson;
+            }
+
+            if (isUserLoggingIn && Object.keys(localUpdates).length > 0) {
               // When local preferences exist and a user logs in, push local preferences towards centrally stored user data in Firebase
               console.log("[Firebase] User logged in with local preferences. Pushing to centrally stored cloud profile:", Object.keys(localUpdates));
               await saveUserCloudProfile(user.uid, localUpdates);
@@ -850,6 +905,22 @@ const App: React.FC = () => {
           localStorage.removeItem('wattson_auth_user_id');
         }
         setCloudSyncStatus('idle');
+        // When logged out, load the guest chat history (preserving the user's history in user storage & cloud!)
+        try {
+          const guestChat = localStorage.getItem('wattson_chat_history_guest') || localStorage.getItem('wattson_chat_history');
+          if (guestChat) {
+            const parsed = JSON.parse(guestChat);
+            if (Array.isArray(parsed)) {
+              setMessages(parsed);
+            } else {
+              setMessages([]);
+            }
+          } else {
+            setMessages([]);
+          }
+        } catch {
+          setMessages([]);
+        }
       }
     });
 
@@ -1069,8 +1140,12 @@ const App: React.FC = () => {
         });
       }
 
-      // If initial load and we have history, greet the user
-      if (isInitial && fetchedActivities && fetchedActivities.length > 0 && messages.length === 0) {
+      // If initial load and we have history, greet the user ONLY if not previously cleared
+      const activeUid = currentUserRef.current?.uid;
+      const wasCleared = typeof window !== 'undefined' && localStorage.getItem(getChatClearedKey(activeUid));
+
+      if (!isAuthLoading && !hasGreetedRef.current && !wasCleared && isInitial && fetchedActivities && fetchedActivities.length > 0 && messages.length === 0) {
+        hasGreetedRef.current = true;
         const sorted = [...fetchedActivities].sort((a,b) => a.start_date_local.localeCompare(b.start_date_local));
         const oldestRide = sorted[0];
         const oldestDateStr = new Date(oldestRide.start_date_local).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
@@ -1084,7 +1159,9 @@ const App: React.FC = () => {
           }
         }
         
-        setMessages([{ role: 'model', text: introMsg }]);
+        const initialMsgs: ChatMessage[] = [{ role: 'model', text: introMsg }];
+        setMessages(initialMsgs);
+        safeSetItem(getChatStorageKey(activeUid), JSON.stringify(initialMsgs));
       }
     } catch (err: any) {
       console.error("Sync error:", err);
@@ -1266,7 +1343,7 @@ const App: React.FC = () => {
       'wattson_wellness_cache', 
       'wattson_ftp', 
       'wattson_daily_cache', 
-      'wattson_chat_history',
+      // Do NOT remove chat history keys here; chat history is saved per user until the clear button is clicked!
       'wattson_goal',
       'wattson_seen_version',
       'wattson_plan_context',
@@ -1393,6 +1470,10 @@ const App: React.FC = () => {
 
   const handleSendMessage = async (text: string) => {
     if (!text.trim() || isChatLoading) return;
+    const activeUid = currentUserRef.current?.uid;
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(getChatClearedKey(activeUid));
+    }
     setMessages(prev => [...prev, { role: 'user', text }]);
     setChatInput('');
     if (chatInputRef.current) {
@@ -1424,18 +1505,22 @@ const App: React.FC = () => {
       }
 
       const rawText = hasPlanUpdate 
-        ? finalResponseText + "\n\n*System: Coach context updated. Your next weekly plan generation will reflect these changes.*"
+        ? finalResponseText + `\n\n*System: Coach context updated. Your training plan has been updated with: "${directive}".*`
         : finalResponseText;
 
       // Add empty model message first
       setMessages(prev => [...prev, { role: 'model', text: '' }]);
       
       let currentIdx = 0;
-      const speed = 10; // Fast and ultra-fluid typing simulation
+      // Dynamically calculate chunk size so the entire text displays briskly within ~250-400ms max
+      const totalLen = rawText.length;
+      const idealTicks = Math.min(20, Math.max(6, Math.floor(totalLen / 30)));
+      const dynamicChunkSize = Math.max(16, Math.ceil(totalLen / idealTicks));
+      const speed = 10; // Rapid and responsive streaming animation
       
       const typeNext = () => {
         if (currentIdx < rawText.length) {
-          const chunkSize = Math.min(3, rawText.length - currentIdx);
+          const chunkSize = Math.min(dynamicChunkSize, rawText.length - currentIdx);
           currentIdx += chunkSize;
           
           setMessages(prev => {
@@ -1453,13 +1538,22 @@ const App: React.FC = () => {
         } else {
           // Finished typing, synchronize context
           if (hasPlanUpdate && directive) {
-            handleAddTweakFromApp(directive);
+            handleAddTweakFromApp(directive, undefined, false);
           }
           setIsChatLoading(false);
+          // Immediate cloud sync of complete conversation
+          if (currentUserRef.current) {
+            setMessages(currentMsgs => {
+              saveUserCloudProfile(currentUserRef.current!.uid, {
+                chatHistoryJson: JSON.stringify(currentMsgs.slice(-50))
+              }).catch(console.error);
+              return currentMsgs;
+            });
+          }
         }
       };
       
-      setTimeout(typeNext, 50);
+      setTimeout(typeNext, 15);
 
     } catch {
       setMessages(prev => [...prev, { role: 'model', text: "Engine response error." }]);
@@ -1593,30 +1687,39 @@ const App: React.FC = () => {
     // Match actual activities today against suggested workouts today so completed rides replace corresponding suggested sessions (e.g. morning commute)
     let remainingTodaySuggested = [...todaySuggestedList];
     const sortedTodayActual = [...todayActualList].sort((a, b) => a.date.getTime() - b.date.getTime());
-    const ctxLower = getDirectivesTextList(parsePlanDirectives(planContext)).join(' ').toLowerCase();
-    const hasExplicitTodayRequest = ctxLower.includes('today') || ctxLower.includes('add') || ctxLower.includes('change') || ctxLower.includes('extra') || ctxLower.includes('second') || ctxLower.includes('rest');
 
-    sortedTodayActual.forEach(actual => {
-      const nameLower = (actual.activityData?.name || '').toLowerCase();
-      
-      let matchIdx = -1;
-      if (nameLower.includes('commute am') || nameLower.includes('morning')) {
-        matchIdx = remainingTodaySuggested.findIndex(s => s.dayData?.focus.toLowerCase().includes('commute am'));
-      } else if (nameLower.includes('commute pm') || nameLower.includes('afternoon') || nameLower.includes('evening')) {
-        matchIdx = remainingTodaySuggested.findIndex(s => s.dayData?.focus.toLowerCase().includes('commute pm'));
-      } else if (nameLower.includes('commute')) {
-        matchIdx = remainingTodaySuggested.findIndex(s => s.dayData?.focus.toLowerCase().includes('commute'));
-      }
-      
-      // Fallback: match first remaining suggested ride for today ONLY if there is no explicit request to add/change a ride for today
-      if (matchIdx === -1 && !hasExplicitTodayRequest && remainingTodaySuggested.length > 0) {
-        matchIdx = 0;
-      }
-      
-      if (matchIdx !== -1) {
-        remainingTodaySuggested.splice(matchIdx, 1);
-      }
-    });
+    if (sortedTodayActual.length > 0) {
+      // 1. Any planned "Rest" day for today is discarded because the user already rode today
+      remainingTodaySuggested = remainingTodaySuggested.filter(s => {
+        const isRest = s.dayData?.intensity === 'Rest' || 
+                       (s.dayData?.focus || '').toLowerCase().includes('rest') || 
+                       (s.dayData?.duration_target || 0) <= 0;
+        return !isRest;
+      });
+
+      // 2. Match each completed ride against suggested sessions
+      sortedTodayActual.forEach(actual => {
+        const nameLower = (actual.activityData?.name || '').toLowerCase();
+        
+        let matchIdx = -1;
+        if (nameLower.includes('commute am') || nameLower.includes('morning')) {
+          matchIdx = remainingTodaySuggested.findIndex(s => (s.dayData?.focus || '').toLowerCase().includes('commute am'));
+        } else if (nameLower.includes('commute pm') || nameLower.includes('afternoon') || nameLower.includes('evening')) {
+          matchIdx = remainingTodaySuggested.findIndex(s => (s.dayData?.focus || '').toLowerCase().includes('commute pm'));
+        } else if (nameLower.includes('commute')) {
+          matchIdx = remainingTodaySuggested.findIndex(s => (s.dayData?.focus || '').toLowerCase().includes('commute'));
+        }
+        
+        // Default fallback: match first remaining suggested ride for today
+        if (matchIdx === -1 && remainingTodaySuggested.length > 0) {
+          matchIdx = 0;
+        }
+        
+        if (matchIdx !== -1) {
+          remainingTodaySuggested.splice(matchIdx, 1);
+        }
+      });
+    }
 
     return [
       ...futureSuggestedList,
@@ -1715,7 +1818,22 @@ const App: React.FC = () => {
   }, [activeTab, sortedTimelineItems]);
 
   const nextRideFromPlan = useMemo(() => {
-    const upcoming = timelineItems.filter(i => (i.type === 'today_suggested' || i.type === 'future_suggested') && i.dayData);
+    const upcoming = timelineItems.filter(i => {
+      if (!i.dayData) return false;
+      if (i.type === 'future_suggested') return true;
+      if (i.type === 'today_suggested') {
+        const isRest = i.dayData.intensity === 'Rest' || 
+                       (i.dayData.focus || '').toLowerCase().includes('rest') || 
+                       (i.dayData.duration_target || 0) <= 0;
+        if (hasRideToday) {
+          // If a ride is already completed today, today's workout is done
+          return false;
+        }
+        return true;
+      }
+      return false;
+    });
+
     const sortedUpcoming = [...upcoming].sort((a, b) => {
       // First by date
       const dateDiff = a.date.getTime() - b.date.getTime();
@@ -1729,10 +1847,10 @@ const App: React.FC = () => {
     return {
       day: sortedUpcoming[0].dayData!,
       date: sortedUpcoming[0].date,
-      isRest: false, // We already filtered out rests when creating timelineItems for suggested rides
+      isRest: sortedUpcoming[0].dayData!.intensity === 'Rest' || (sortedUpcoming[0].dayData!.focus || '').toLowerCase().includes('rest'),
       absoluteIndex: sortedUpcoming[0].absoluteIndex ?? 0
     };
-  }, [timelineItems]);
+  }, [timelineItems, hasRideToday]);
 
 
 
@@ -1840,33 +1958,44 @@ const App: React.FC = () => {
       <div className="premium-bg"></div>
       
       {/* Global Top Bar */}
-      <header className="flex-none flex items-center justify-between pb-3 px-5 bg-transparent border-b border-white/[0.06] z-30" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 14px)' }}>
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-white/[0.03] border border-white/10 flex flex-shrink-0 items-center justify-center relative overflow-hidden shadow-sm">
+      <header className="flex-none flex items-center justify-between pb-3 px-5 bg-transparent border-b border-white/[0.05] z-30" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 14px)' }}>
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg bg-white/[0.03] border border-white/[0.08] flex flex-shrink-0 items-center justify-center relative overflow-hidden">
              {isSyncing && <div className="absolute inset-0 bg-emerald-500/20 animate-pulse" />}
-             {activeTab === 'chat' ? <Bot size={16} className="text-emerald-400" /> : <CyclistIcon size={18} className="text-emerald-400" />}
+             {activeTab === 'chat' ? <Bot size={15} className="text-emerald-400" /> : <CyclistIcon size={16} className="text-emerald-400" />}
           </div>
           <div className="flex items-center gap-2">
-            <h2 className="text-xl font-black text-white italic tracking-tight leading-none">
+            <h2 className="text-lg font-bold text-white tracking-tight leading-none">
               wa<span className="text-emerald-400">TT</span>son
             </h2>
             {isSyncing ? (
-              <RotateCcw size={11} className="animate-spin text-emerald-400" />
+              <RotateCcw size={10} className="animate-spin text-emerald-400" />
             ) : (
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/80" />
             )}
           </div>
         </div>
         
-        <div className="flex justify-end gap-2 items-center">
+        <div className="flex justify-end gap-1.5 items-center">
           {activeTab === 'chat' && (
             <button 
               onClick={() => { 
                 if (confirmClear) {
+                  const uid = currentUser?.uid;
+                  const key = getChatStorageKey(uid);
+                  const clearedKey = getChatClearedKey(uid);
+
                   setMessages([]);
-                  safeSetItem('wattson_chat_history', '[]');
+                  safeSetItem(key, '[]');
+                  safeSetItem(clearedKey, Date.now().toString());
+
+                  if (!uid) {
+                    safeSetItem('wattson_chat_history', '[]');
+                  }
+
                   if (currentUser) {
                     syncToCloud({ chatHistoryJson: '[]' });
+                    saveUserCloudProfile(currentUser.uid, { chatHistoryJson: '[]' }).catch(console.error);
                   }
                   setConfirmClear(false);
                 } else {
@@ -1874,13 +2003,14 @@ const App: React.FC = () => {
                   setTimeout(() => setConfirmClear(false), 3000);
                 }
               }}
-              className={`px-3 py-1.5 rounded-xl border text-[9.5px] font-black uppercase tracking-wider transition-all active:scale-95 ${
+              className={`px-2.5 py-1.5 rounded-lg border text-[9px] font-semibold uppercase tracking-wider transition-all active:scale-95 ${
                 confirmClear 
-                ? 'bg-rose-500/20 border-rose-500 text-rose-300' 
-                : 'bg-white/[0.03] border-white/10 text-slate-400 hover:text-rose-400 hover:border-rose-500/30'
+                ? 'bg-rose-500/20 border-rose-500/40 text-rose-300' 
+                : 'bg-white/[0.02] border-white/[0.08] text-slate-400 hover:text-rose-300 hover:border-rose-500/30'
               }`}
+              title="Clear chat conversation"
             >
-              {confirmClear ? 'Confirm Clear' : 'Clear'}
+              {confirmClear ? 'Confirm' : 'Clear'}
             </button>
           )}
 
@@ -1891,39 +2021,39 @@ const App: React.FC = () => {
                   setActiveTab('settings');
                   setSettingsView('workout_library');
                 }}
-                className="w-8 h-8 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 flex items-center justify-center text-slate-300 hover:text-white active:scale-95 transition-all"
+                className="w-7 h-7 rounded-lg bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-slate-400 hover:text-white active:scale-95 transition-all"
                 title="Workout Library"
               >
-                <BookOpen size={14} />
+                <BookOpen size={13} />
               </button>
               <button 
                 onClick={() => { setSuggestion(null); loadData(creds!); }}
                 disabled={isSyncing}
-                className="w-8 h-8 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 flex items-center justify-center text-slate-300 hover:text-emerald-400 active:scale-95 transition-all"
+                className="w-7 h-7 rounded-lg bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-slate-400 hover:text-emerald-400 active:scale-95 transition-all"
                 title="Refresh Intervals Data"
               >
-                <RefreshCw size={14} className={isSyncing ? 'animate-spin text-emerald-400' : ''} />
+                <RefreshCw size={13} className={isSyncing ? 'animate-spin text-emerald-400' : ''} />
               </button>
               <button 
                 onClick={() => {
                   setActiveTab('settings');
                   setSettingsView('main');
                 }}
-                className="h-8 px-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 flex items-center gap-1.5 text-slate-300 hover:text-white active:scale-95 transition-all"
+                className="h-7 px-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.08] flex items-center gap-1.5 text-slate-400 hover:text-white active:scale-95 transition-all"
                 title={currentUser ? `Cloud Sync: ${currentUser.displayName || currentUser.email}` : "Cloud Profile (Sign In)"}
               >
                 {currentUser?.photoURL ? (
                   <img 
                     src={currentUser.photoURL} 
                     alt="User" 
-                    className="w-4 h-4 rounded-full object-cover border border-emerald-400/40"
+                    className="w-3.5 h-3.5 rounded-full object-cover border border-emerald-400/40"
                     referrerPolicy="no-referrer"
                   />
                 ) : (
-                  <Cloud size={13} className={currentUser ? "text-emerald-400" : "text-slate-400"} />
+                  <Cloud size={12} className={currentUser ? "text-emerald-400" : "text-slate-400"} />
                 )}
                 {currentUser && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_5px_rgba(52,211,153,0.8)]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 )}
               </button>
             </>
@@ -1932,15 +2062,15 @@ const App: React.FC = () => {
       </header>
 
       {syncError && hasData && (
-        <div className="mx-4 mt-2 p-2.5 bg-rose-500/10 border border-rose-500/25 rounded-2xl flex items-center justify-between text-xs text-rose-300 backdrop-blur-md">
+        <div className="mx-4 mt-2 p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center justify-between text-xs text-rose-300">
           <div className="flex items-center gap-2 overflow-hidden">
-            <span className="w-2 h-2 rounded-full bg-rose-400 shrink-0 animate-pulse" />
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
             <span className="text-[11px] truncate">{syncError}</span>
           </div>
           <div className="flex items-center gap-2 shrink-0 ml-2">
             <button
               onClick={() => { setSyncError(null); if (creds) loadData(creds); }}
-              className="px-2.5 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-[10px] font-bold rounded-lg uppercase tracking-wider text-rose-200 active:scale-95 transition-all"
+              className="px-2 py-0.5 bg-rose-500/20 hover:bg-rose-500/30 text-[9px] font-semibold rounded-md uppercase tracking-wider text-rose-200 active:scale-95 transition-all"
             >
               Retry
             </button>
@@ -1965,12 +2095,12 @@ const App: React.FC = () => {
             {/* Section 1: Target Goal */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between px-1">
-                <span className="text-[9.5px] font-black uppercase tracking-[0.2em] text-slate-400">
+                <span className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">
                   Target Goal
                 </span>
                 <button
                   onClick={() => setShowGoalEditor(true)}
-                  className="text-[9.5px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors uppercase tracking-wider flex items-center gap-1"
+                  className="text-[9.5px] font-semibold text-emerald-400 hover:text-emerald-300 transition-colors uppercase tracking-wider flex items-center gap-1"
                 >
                   <Edit size={10} />
                   <span>Edit</span>
@@ -1979,13 +2109,13 @@ const App: React.FC = () => {
               
               <div 
                 onClick={() => setShowGoalEditor(true)}
-                className="glass-card px-3.5 py-2.5 rounded-2xl border border-white/[0.06] flex items-center justify-between gap-3 bg-slate-900/30 hover:border-emerald-500/30 cursor-pointer transition-all active:scale-[0.99]"
+                className="px-3.5 py-2.5 rounded-2xl border border-white/[0.05] flex items-center justify-between gap-3 bg-[#0b0e14]/80 hover:border-emerald-500/30 hover:bg-[#0e121b] cursor-pointer transition-all active:scale-[0.99]"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-                    <Target size={13} />
+                  <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                    <Target size={12} />
                   </div>
-                  <h2 className="text-xs font-bold text-slate-200 italic tracking-tight truncate">
+                  <h2 className="text-xs font-medium text-slate-200 tracking-tight truncate">
                     "{userGoal || 'Define your primary training goal'}"
                   </h2>
                 </div>
@@ -1996,10 +2126,10 @@ const App: React.FC = () => {
             {/* Section 2: Next Up */}
             <div className="space-y-1.5 pt-0.5">
               <div className="flex items-center justify-between px-1">
-                <span className="text-[9.5px] font-black uppercase tracking-[0.2em] text-slate-400">
+                <span className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">
                   Next Workout
                 </span>
-                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">
+                <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider">
                   Auto-Calibrated
                 </span>
               </div>
@@ -2007,22 +2137,22 @@ const App: React.FC = () => {
               <div className="space-y-2">
                 {/* Visual indicator when plan is updating or updated */}
                 {isPlanUpdating && (
-                  <div className="glass-card p-3 rounded-2xl border border-emerald-500/30 bg-emerald-950/20 animate-pulse flex items-center gap-3 shadow-md">
-                    <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
-                      <Loader2 size={14} className="animate-spin text-emerald-400" />
+                  <div className="p-3 rounded-2xl border border-emerald-500/20 bg-emerald-950/20 animate-pulse flex items-center gap-3">
+                    <div className="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                      <Loader2 size={13} className="animate-spin text-emerald-400" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-[8px] font-black uppercase tracking-widest text-emerald-400">
+                        <span className="text-[8px] font-semibold uppercase tracking-wider text-emerald-400">
                           Updating Plan
                         </span>
                         {lastAppliedTweak && (
-                          <span className="text-[8px] font-bold text-slate-400 truncate">
+                          <span className="text-[8px] font-medium text-slate-400 truncate">
                             "{lastAppliedTweak}"
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] font-bold text-slate-200 truncate mt-0.5">
+                      <p className="text-[11px] font-medium text-slate-200 truncate mt-0.5">
                         Recalibrating workouts to match requested change...
                       </p>
                     </div>
@@ -2030,14 +2160,14 @@ const App: React.FC = () => {
                 )}
 
                 {!isPlanUpdating && showTweakSuccessNotice && lastAppliedTweak && (
-                  <div className="glass-card p-2.5 px-3 rounded-2xl border border-emerald-500/20 bg-slate-900/60 flex items-center justify-between gap-2 shadow-sm animate-in fade-in duration-300">
+                  <div className="p-2.5 px-3 rounded-2xl border border-emerald-500/20 bg-[#0b0e14]/90 flex items-center justify-between gap-2 animate-in fade-in duration-300">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-5 h-5 rounded-md bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
                         <Check size={11} className="stroke-[3]" />
                       </div>
                       <div className="min-w-0">
-                        <span className="text-[8px] font-black uppercase tracking-widest text-emerald-400 block leading-none">Plan Updated</span>
-                        <p className="text-[10px] font-bold text-slate-200 truncate mt-0.5">
+                        <span className="text-[8px] font-semibold uppercase tracking-wider text-emerald-400 block leading-none">Plan Updated</span>
+                        <p className="text-[10px] font-medium text-slate-200 truncate mt-0.5">
                           "{lastAppliedTweak}"
                         </p>
                       </div>
@@ -2071,38 +2201,38 @@ const App: React.FC = () => {
             {/* Section 3: Performance Metrics */}
             <div className="space-y-1.5 pt-0.5">
               <div className="flex items-center justify-between px-1">
-                <span className="text-[9.5px] font-black uppercase tracking-[0.2em] text-slate-400">
+                <span className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">
                   Performance Metrics
                 </span>
-                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">
+                <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider">
                   Intervals.icu
                 </span>
               </div>
 
               {/* Unified 5-Metric Strip */}
-              <div className="glass-card p-3 rounded-2xl border border-white/[0.06] bg-slate-900/30">
-                <div className="grid grid-cols-5 gap-1 divide-x divide-white/[0.06]">
+              <div className="p-3 rounded-2xl border border-white/[0.05] bg-[#0b0e14]/80">
+                <div className="grid grid-cols-5 gap-1 divide-x divide-white/[0.05]">
                   <div className="flex flex-col items-center justify-center text-center px-1">
-                    <span className="text-[8px] font-bold uppercase text-slate-400 tracking-wider">Fitness</span>
-                    <span className="text-sm font-black italic text-cyan-400 font-mono mt-0.5">{stats.ctl}</span>
+                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">Fitness</span>
+                    <span className="text-sm font-semibold text-cyan-400 font-mono mt-0.5">{stats.ctl}</span>
                   </div>
                   <div className="flex flex-col items-center justify-center text-center px-1">
-                    <span className="text-[8px] font-bold uppercase text-slate-400 tracking-wider">Fatigue</span>
-                    <span className="text-sm font-black italic text-amber-400 font-mono mt-0.5">{stats.atl}</span>
+                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">Fatigue</span>
+                    <span className="text-sm font-semibold text-amber-400 font-mono mt-0.5">{stats.atl}</span>
                   </div>
                   <div className="flex flex-col items-center justify-center text-center px-1">
-                    <span className="text-[8px] font-bold uppercase text-slate-400 tracking-wider">Form</span>
-                    <span className={`text-sm font-black italic font-mono mt-0.5 ${stats.form >= 5 ? 'text-emerald-400' : stats.form < -25 ? 'text-rose-400' : stats.form < -10 ? 'text-amber-400' : 'text-slate-200'}`}>
+                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">Form</span>
+                    <span className={`text-sm font-semibold font-mono mt-0.5 ${stats.form >= 5 ? 'text-emerald-400' : stats.form < -25 ? 'text-rose-400' : stats.form < -10 ? 'text-amber-400' : 'text-slate-200'}`}>
                       {stats.form > 0 ? `+${stats.form}` : stats.form}
                     </span>
                   </div>
                   <div className="flex flex-col items-center justify-center text-center px-1">
-                    <span className="text-[8px] font-bold uppercase text-slate-400 tracking-wider">7D Time</span>
-                    <span className="text-sm font-black italic text-slate-100 font-mono mt-0.5">{stats.total7DayTime}h</span>
+                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">7D Time</span>
+                    <span className="text-sm font-semibold text-slate-100 font-mono mt-0.5">{stats.total7DayTime}h</span>
                   </div>
                   <div className="flex flex-col items-center justify-center text-center px-1">
-                    <span className="text-[8px] font-bold uppercase text-slate-400 tracking-wider">7D Load</span>
-                    <span className="text-sm font-black italic text-emerald-400 font-mono mt-0.5">{stats.total7DayLoad}</span>
+                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">7D Load</span>
+                    <span className="text-sm font-semibold text-emerald-400 font-mono mt-0.5">{stats.total7DayLoad}</span>
                   </div>
                 </div>
               </div>
@@ -2112,17 +2242,17 @@ const App: React.FC = () => {
             <div className="space-y-1.5 pt-0.5">
               <div 
                 onClick={() => setShowMonthlyReport(true)}
-                className="glass-card px-3.5 py-2.5 rounded-2xl border border-blue-500/20 flex items-center justify-between gap-3 bg-blue-500/5 hover:border-blue-500/40 hover:bg-blue-500/10 cursor-pointer transition-all active:scale-[0.99]"
+                className="px-3.5 py-2.5 rounded-2xl border border-blue-500/15 flex items-center justify-between gap-3 bg-[#0b101b]/80 hover:border-blue-500/30 hover:bg-[#0f1525] cursor-pointer transition-all active:scale-[0.99]"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-7 h-7 rounded-lg bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
-                    <TrendingUp size={13} />
+                  <div className="w-6 h-6 rounded-lg bg-blue-500/15 border border-blue-500/25 flex items-center justify-center text-blue-400 shrink-0">
+                    <TrendingUp size={12} />
                   </div>
                   <div>
-                    <h2 className="text-xs font-bold text-slate-200 tracking-tight">
+                    <h2 className="text-xs font-semibold text-slate-200 tracking-tight">
                       Monthly Report
                     </h2>
-                    <p className="text-[9px] text-slate-400 font-medium">Review your last 30 days of training</p>
+                    <p className="text-[9.5px] text-slate-400 font-normal">Review your last 30 days of training</p>
                   </div>
                 </div>
                 <ChevronRight size={13} className="text-slate-600 shrink-0" />
@@ -2133,10 +2263,10 @@ const App: React.FC = () => {
             {lastActivity && (
               <div className="space-y-1.5 pt-0.5">
                 <div className="flex items-center justify-between px-1">
-                  <span className="text-[9.5px] font-black uppercase tracking-[0.2em] text-slate-400">
+                  <span className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">
                     Latest Activity
                   </span>
-                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">
+                  <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider">
                     {new Date(lastActivity.start_date_local).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                   </span>
                 </div>
@@ -2152,6 +2282,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Rides Tab */}
+        {/* Rides Tab */}
         <div 
           className={`flex-1 hide-scrollbar scroll-smooth overflow-y-auto px-4 pt-3.5 pb-28 ${activeTab === 'rides' ? 'flex flex-col' : 'hidden'}`}
         >
@@ -2165,11 +2296,11 @@ const App: React.FC = () => {
                   <div className="flex items-center justify-between gap-2 px-1">
                     <button
                       onClick={() => setIsOtherFutureExpanded(!isOtherFutureExpanded)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/[0.03] hover:bg-white/[0.06] border border-white/10 text-slate-300 hover:text-white text-[9.5px] font-black uppercase tracking-[0.18em] rounded-xl shrink-0 whitespace-nowrap transition-all cursor-pointer active:scale-95"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/[0.02] hover:bg-white/[0.05] border border-white/[0.08] text-slate-300 hover:text-white text-[9.5px] font-semibold uppercase tracking-wider rounded-lg shrink-0 whitespace-nowrap transition-all cursor-pointer active:scale-95"
                     >
                       <span>Upcoming Plan</span>
                       {ridesSections.sortedFutureItems.length > 0 && (
-                        <span className="px-1.5 py-0.2 bg-blue-500/20 text-blue-300 rounded text-[8px] font-mono">
+                        <span className="px-1.5 py-0.2 bg-blue-500/15 text-blue-300 rounded text-[8px] font-mono">
                           +{ridesSections.sortedFutureItems.length}
                         </span>
                       )}
@@ -2180,35 +2311,34 @@ const App: React.FC = () => {
 
                     <button
                       onClick={() => {
-                        setRequestChangeInput('');
                         setShowRequestChangeModal(true);
                       }}
-                      className="px-2.5 py-1 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 text-emerald-300 text-[9.5px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-sm active:scale-95 shrink-0"
+                      className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-300 text-[9.5px] font-semibold uppercase tracking-wider transition-all flex items-center gap-1.5 active:scale-95 shrink-0 cursor-pointer"
                     >
                       <Sparkles size={10} className="text-emerald-400" />
-                      <span>Request Change</span>
+                      <span>Plan & Change</span>
                     </button>
                   </div>
 
                   <div className="space-y-2 pt-0.5">
                     {/* Plan Updating Indicator */}
                     {isPlanUpdating && (
-                      <div className="glass-card p-3 rounded-2xl border border-emerald-500/30 bg-emerald-950/20 animate-pulse flex items-center gap-3 shadow-md my-1">
-                        <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
-                          <Loader2 size={14} className="animate-spin text-emerald-400" />
+                      <div className="p-3 rounded-2xl border border-emerald-500/20 bg-emerald-950/20 animate-pulse flex items-center gap-3 my-1">
+                        <div className="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                          <Loader2 size={13} className="animate-spin text-emerald-400" />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="text-[8px] font-black uppercase tracking-widest text-emerald-400">
+                            <span className="text-[8px] font-semibold uppercase tracking-wider text-emerald-400">
                               Updating Plan
                             </span>
                             {lastAppliedTweak && (
-                              <span className="text-[8px] font-bold text-slate-400 truncate">
+                              <span className="text-[8px] font-medium text-slate-400 truncate">
                                 "{lastAppliedTweak}"
                               </span>
                             )}
                           </div>
-                          <p className="text-[11px] font-bold text-slate-200 truncate mt-0.5">
+                          <p className="text-[11px] font-medium text-slate-200 truncate mt-0.5">
                             Recalibrating workouts to match requested change...
                           </p>
                         </div>
@@ -2228,7 +2358,7 @@ const App: React.FC = () => {
                     {ridesSections.sortedTomorrowItems.length > 0 && (
                       <div className="flex flex-col space-y-1.5">
                         <div className="flex items-center justify-between px-1">
-                          <span className="text-[9.5px] font-black uppercase tracking-[0.2em] text-blue-400">
+                          <span className="text-[9.5px] font-semibold uppercase tracking-wider text-blue-400">
                             Tomorrow
                           </span>
                         </div>
@@ -2242,7 +2372,7 @@ const App: React.FC = () => {
                     {ridesSections.sortedTodayItems.length > 0 && (
                       <div className="flex flex-col space-y-1.5">
                         <div className="flex items-center justify-between px-1">
-                          <span className="text-[9.5px] font-black uppercase tracking-[0.2em] text-emerald-400">
+                          <span className="text-[9.5px] font-semibold uppercase tracking-wider text-emerald-400">
                             Today
                           </span>
                         </div>
@@ -2279,10 +2409,10 @@ const App: React.FC = () => {
               {ridesSections.sortedPastItems.length > 0 && (
                 <div className="flex flex-col space-y-2.5">
                   <div className="flex items-center justify-between px-1 pb-0.5">
-                    <span className="text-[9.5px] font-black uppercase tracking-[0.2em] text-slate-400">
+                    <span className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">
                       Training History
                     </span>
-                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">
+                    <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider">
                       {ridesSections.sortedPastItems.length} Sessions
                     </span>
                   </div>
@@ -2306,10 +2436,10 @@ const App: React.FC = () => {
                       <React.Fragment key={item.key}>
                         {showMonthHeader && (
                           <div className="flex items-center gap-3 px-1 pt-3 pb-0.5">
-                            <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">
+                            <span className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">
                               {monthLabel}
                             </span>
-                            <div className="flex-1 h-px bg-white/[0.06]" />
+                            <div className="flex-1 h-px bg-white/[0.05]" />
                           </div>
                         )}
                         {item.activityData && (
@@ -2331,23 +2461,22 @@ const App: React.FC = () => {
         <div 
           className={`flex-1 min-h-0 bg-transparent overflow-hidden relative ${activeTab === 'chat' ? 'flex flex-col' : 'hidden'}`}
         >
-             <div className="flex-1 min-h-0 overflow-y-auto space-y-4 px-4 py-4 custom-scrollbar">
+             <div className="flex-1 min-h-0 overflow-y-auto space-y-3.5 px-4 py-4 custom-scrollbar">
                {messages.length === 0 ? (
-                 <div className="h-full flex flex-col items-center justify-center text-center px-6 pb-12 animate-in fade-in duration-500">
-                    <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-5 shadow-inner animate-pulse relative">
-                       <div className="absolute inset-2 border border-emerald-500/20 rounded-2xl animate-ping [animation-duration:4s]" />
-                       <Bot size={28} className="text-emerald-400" />
+                 <div className="h-full flex flex-col items-center justify-center text-center px-6 pb-12 animate-in fade-in duration-300">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-4">
+                       <Bot size={22} className="text-emerald-400" />
                     </div>
-                    <p className="text-sm font-black text-white italic uppercase tracking-wider mb-2">waTTson Coach</p>
-                    <p className="text-[11px] text-slate-400 leading-relaxed mb-6 max-w-[240px]">
-                      Your performance engine is fully calibrated. Ask me anything or select a diagnostic focus chip below:
+                    <p className="text-xs font-semibold text-white uppercase tracking-wider mb-1.5">waTTson Coach</p>
+                    <p className="text-[11px] text-slate-400 leading-relaxed mb-5 max-w-[240px]">
+                      Your training assistant is ready. Ask any question or tap a quick focus below:
                     </p>
                     <div className="flex flex-wrap gap-2 justify-center max-w-[320px]">
                        {(CHAT_SUGGESTIONS as string[]).map((suggestionText) => (
                          <button 
                            key={suggestionText}
                            onClick={() => handleSendMessage(suggestionText)}
-                           className="text-[10px] font-black text-slate-200 bg-[#12141c]/80 border border-white/5 hover:border-emerald-500/30 hover:bg-emerald-500/5 hover:text-emerald-400 rounded-xl py-2.5 px-4 active:scale-95 transition-all flex items-center gap-1.5 uppercase tracking-wider shadow-md"
+                           className="text-[10px] font-medium text-slate-300 bg-[#0b0e14]/80 border border-white/[0.06] hover:border-emerald-500/30 hover:bg-emerald-500/5 hover:text-emerald-300 rounded-xl py-2 px-3.5 active:scale-95 transition-all flex items-center gap-1.5"
                          >
                            <Sparkles size={11} className="text-emerald-400" /> {suggestionText}
                          </button>
@@ -2355,7 +2484,7 @@ const App: React.FC = () => {
                     </div>
                  </div>
                ) : (
-                <div className="space-y-4">
+                <div className="space-y-3.5">
                   {(messages as ChatMessage[]).map((msg, idx) => {
                     const isUser = msg.role === 'user';
                     
@@ -2370,26 +2499,26 @@ const App: React.FC = () => {
                     return (
                       <div 
                         key={idx} 
-                        className={`flex gap-2.5 items-end ${isUser ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 duration-300`}
+                        className={`flex gap-2.5 items-end ${isUser ? 'justify-end' : 'justify-start'} animate-in fade-in duration-200`}
                       >
                         {/* waTTson Avatar */}
                         {!isUser && (
-                          <div className="w-8 h-8 rounded-xl bg-slate-900 border border-emerald-500/20 flex flex-shrink-0 items-center justify-center shadow-md relative overflow-hidden self-start mt-0.5">
-                            <Bot size={14} className="text-emerald-400" />
+                          <div className="w-7 h-7 rounded-lg bg-[#0b0e14] border border-white/[0.08] flex flex-shrink-0 items-center justify-center relative overflow-hidden self-start mt-0.5">
+                            <Bot size={13} className="text-emerald-400" />
                           </div>
                         )}
                         
-                        <div className={`max-w-[80%] px-4 py-3 rounded-2xl shadow-md ${
+                        <div className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl ${
                           isUser 
-                          ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 font-bold rounded-tr-none' 
-                          : 'glass-card text-slate-100 rounded-tl-none border border-emerald-500/5'
+                          ? 'bg-emerald-500 text-slate-950 font-medium rounded-tr-sm text-[13px]' 
+                          : 'bg-[#0b0e14]/90 text-slate-200 rounded-tl-sm border border-white/[0.06] text-[13px]'
                         }`}>
-                          <div className="text-[14px] leading-relaxed whitespace-pre-line">
+                          <div className="leading-relaxed whitespace-pre-line">
                             {isEmptyModel ? (
                               <div className="flex gap-1 items-center py-1">
-                                <div className="w-1.5 h-1.5 bg-emerald-400/40 rounded-full animate-bounce [animation-delay:0ms]"></div>
-                                <div className="w-1.5 h-1.5 bg-emerald-400/40 rounded-full animate-bounce [animation-delay:150ms]"></div>
-                                <div className="w-1.5 h-1.5 bg-emerald-400/40 rounded-full animate-bounce [animation-delay:300ms]"></div>
+                                <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce [animation-delay:0ms]"></div>
+                                <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce [animation-delay:150ms]"></div>
+                                <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce [animation-delay:300ms]"></div>
                               </div>
                             ) : (
                               mainText
@@ -2397,10 +2526,10 @@ const App: React.FC = () => {
                           </div>
                           
                           {systemText && (
-                            <div className="mt-3 pt-2.5 border-t border-emerald-500/10 flex items-start gap-2 text-[10px] text-emerald-400 font-mono tracking-wide leading-relaxed bg-emerald-500/5 p-2 rounded-xl border border-emerald-500/10">
-                              <Check size={11} className="text-emerald-400 mt-0.5 shrink-0" />
+                            <div className="mt-2.5 pt-2 border-t border-emerald-500/10 flex items-start gap-1.5 text-[10px] text-emerald-400 font-mono tracking-wide leading-relaxed bg-emerald-500/5 p-2 rounded-lg border border-emerald-500/10">
+                              <Check size={10} className="text-emerald-400 mt-0.5 shrink-0" />
                               <div>
-                                <span className="font-bold uppercase text-[8px] tracking-widest text-emerald-500 block mb-0.5">DIRECTIVE SYNCED</span>
+                                <span className="font-semibold uppercase text-[8px] tracking-wider text-emerald-400 block mb-0.5">DIRECTIVE SYNCED</span>
                                 {systemText}
                               </div>
                             </div>
@@ -2409,8 +2538,8 @@ const App: React.FC = () => {
 
                         {/* User Avatar */}
                         {isUser && (
-                          <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex flex-shrink-0 items-center justify-center shadow-md self-start mt-0.5">
-                            <User size={13} className="text-emerald-400" />
+                          <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex flex-shrink-0 items-center justify-center self-start mt-0.5">
+                            <User size={12} className="text-emerald-400" />
                           </div>
                         )}
                       </div>
@@ -2418,10 +2547,10 @@ const App: React.FC = () => {
                   })}
                   {isChatLoading && messages.length > 0 && messages[messages.length - 1].role === 'user' && (
                     <div className="flex justify-start gap-2.5 items-end animate-in fade-in duration-200">
-                        <div className="w-8 h-8 rounded-xl bg-slate-900 border border-emerald-500/20 flex flex-shrink-0 items-center justify-center relative overflow-hidden">
-                          <Bot size={14} className="text-emerald-400 animate-pulse" />
+                        <div className="w-7 h-7 rounded-lg bg-[#0b0e14] border border-white/[0.08] flex flex-shrink-0 items-center justify-center">
+                          <Bot size={13} className="text-emerald-400 animate-pulse" />
                         </div>
-                        <div className="glass-card px-4 py-3 rounded-2xl rounded-tl-none flex gap-1.5 items-center">
+                        <div className="bg-[#0b0e14]/90 border border-white/[0.06] px-3.5 py-2.5 rounded-2xl rounded-tl-sm flex gap-1.5 items-center">
                           <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce"></div>
                           <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce [animation-delay:0.2s]"></div>
                           <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce [animation-delay:0.4s]"></div>
@@ -2433,7 +2562,39 @@ const App: React.FC = () => {
                )}
              </div>
 
-             <div className={`flex-none px-4 pt-2.5 bg-[#05070a]/95 backdrop-blur-xl border-t border-white/10 z-20 flex flex-col gap-2 transition-all duration-300 ${isKeyboardOpen ? 'pb-3' : 'pb-[88px]'}`}>
+             <div className={`flex-none px-4 pt-2.5 bg-[#05070a]/95 backdrop-blur-xl border-t border-white/[0.06] z-20 flex flex-col gap-2 transition-all duration-300 ${isKeyboardOpen ? 'pb-3' : 'pb-[88px]'}`}>
+
+               {/* Interactive Confirmation Chips if Coach asked for plan confirmation */}
+               {(() => {
+                 if (isChatLoading || messages.length === 0) return null;
+                 const lastMsg = messages[messages.length - 1];
+                 if (lastMsg.role !== 'model' || !lastMsg.text) return null;
+                 const t = lastMsg.text.toLowerCase();
+                 const isAskingConfirmation = (t.includes('update your training plan') || t.includes('update the training plan') || t.includes('update your plan') || t.includes('like me to update') || t.includes('confirm this change') || t.includes('apply this change') || t.includes('like me to apply')) && t.includes('?');
+                 
+                 if (!isAskingConfirmation) return null;
+
+                 return (
+                   <div className="flex items-center gap-2 pt-1 pb-0.5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                     <button
+                       onClick={() => handleSendMessage("Yes, please update my training plan with this change.")}
+                       disabled={isChatLoading}
+                       className="flex-1 py-1.5 px-3 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 font-semibold text-[11px] rounded-xl flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-sm"
+                     >
+                       <Check size={12} className="stroke-[3]" />
+                       <span>Yes, update plan</span>
+                     </button>
+                     <button
+                       onClick={() => handleSendMessage("No, keep my current training plan.")}
+                       disabled={isChatLoading}
+                       className="flex-1 py-1.5 px-3 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-300 font-medium text-[11px] rounded-xl flex items-center justify-center gap-1.5 transition-all active:scale-95"
+                     >
+                       <X size={12} />
+                       <span>No, keep current plan</span>
+                     </button>
+                   </div>
+                 );
+               })()}
 
                {/* Input Field & Send Button */}
                <div className="flex gap-2 items-center">
@@ -2455,9 +2616,9 @@ const App: React.FC = () => {
                        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
                      }, 150);
                    }}
-                   placeholder="Ask waTTson anything... (Enter to send)"
+                   placeholder="Ask waTTson anything..."
                    rows={1}
-                   className="flex-1 bg-[#0a0d14] border border-white/10 focus:border-emerald-500/50 rounded-xl px-3.5 py-2 text-[12px] text-white placeholder-slate-500 focus:outline-none font-medium resize-none max-h-24 transition-all"
+                   className="flex-1 bg-[#0a0d14] border border-white/[0.08] focus:border-emerald-500/40 rounded-xl px-3.5 py-2 text-[12px] text-white placeholder-slate-500 focus:outline-none font-normal resize-none max-h-24 transition-all"
                  />
                  <button 
                    onClick={() => {
@@ -2467,10 +2628,10 @@ const App: React.FC = () => {
                      }
                    }}
                    disabled={!chatInput.trim() || isChatLoading}
-                   className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all shrink-0 active:scale-95 flex items-center justify-center gap-1 h-[36px]"
+                   className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-30 text-slate-950 px-3.5 py-2 rounded-xl font-semibold text-[10px] uppercase tracking-wider transition-all shrink-0 active:scale-95 flex items-center justify-center gap-1 h-[36px]"
                  >
                    <span>Send</span>
-                   <Send size={11} className="stroke-[3]" />
+                   <Send size={11} className="stroke-[2.5]" />
                  </button>
                </div>
              </div>
@@ -2664,7 +2825,7 @@ const App: React.FC = () => {
                 )}
 
                 {settingsView === "rider_profile" && (
-                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 px-1">
+                  <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300 px-1">
                     {isLoadingProfile ? (
                       <div className="glass-card p-12 rounded-[2rem] flex flex-col items-center justify-center text-center">
                         <div className="w-10 h-10 rounded-full border-t-2 border-emerald-500 animate-spin mb-4" />
@@ -2672,107 +2833,161 @@ const App: React.FC = () => {
                         <p className="text-[9px] text-slate-500 font-medium mt-1">Analyzing performance trends</p>
                       </div>
                     ) : userProfile ? (
-                      <div className="space-y-6">
-                        {/* Compact Cyclist Archetype Hero */}
-                        <div className="bg-gradient-to-r from-emerald-500/10 to-slate-950/40 p-4 rounded-2xl border border-emerald-500/15 flex items-center justify-between gap-4 relative overflow-hidden">
-                          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl -mr-6 -mt-6" />
-                          <div className="min-w-0 flex-1">
-                            <span className="text-[8px] font-black text-emerald-500 uppercase tracking-[0.2em] block mb-0.5">CYCLIST ARCHETYPE</span>
-                            <h3 className="text-sm sm:text-base font-black text-white italic uppercase tracking-tight leading-tight">
-                              {userProfile.athlete_type}
-                            </h3>
-                          </div>
+                      <div className="space-y-4">
+                        {/* Navigation Tabs: DNA / Power Curve / Aerobic Decoupling */}
+                        <div className="flex bg-slate-950/60 p-1 rounded-xl border border-white/5 gap-1">
+                          <button
+                            onClick={() => setRiderProfileTab("dna")}
+                            className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                              riderProfileTab === "dna"
+                                ? "bg-emerald-500 text-slate-950 shadow-md"
+                                : "text-slate-400 hover:text-white"
+                            }`}
+                          >
+                            DNA Profile
+                          </button>
+                          <button
+                            onClick={() => setRiderProfileTab("power")}
+                            className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                              riderProfileTab === "power"
+                                ? "bg-emerald-500 text-slate-950 shadow-md"
+                                : "text-slate-400 hover:text-white"
+                            }`}
+                          >
+                            Power Curve
+                          </button>
+                          <button
+                            onClick={() => setRiderProfileTab("aerobic")}
+                            className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                              riderProfileTab === "aerobic"
+                                ? "bg-emerald-500 text-slate-950 shadow-md"
+                                : "text-slate-400 hover:text-white"
+                            }`}
+                          >
+                            Aerobic (EF/Pw:HR)
+                          </button>
                         </div>
 
-                        {/* Power Curve Analysis */}
-                        <RiderPowerCurve 
-                          powerCurves={powerCurves || []} 
-                          athleteType={userProfile.athlete_type} 
-                          ftp={ftp || undefined} 
-                        />
-
-                        {/* Visual Aerobic Efficiency & Decoupling Chart (EF & Pw:HR) */}
-                        <AerobicEfficiencyDecouplingChart 
-                          activities={activities || []} 
-                          ftp={ftp || undefined} 
-                        />
-
-                        {/* Comments on Rider Type & Training Strategy */}
-                        <div className="glass-card p-5 rounded-[1.8rem] border border-white/5 space-y-4">
-                          <div>
-                            <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                              <Sparkles size={12} className="text-emerald-400" />
-                              Coaching Insights & Training Blueprint
-                            </h4>
-                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mt-0.5">
-                              Expert analysis of your physiological engine and training stimulus adaptation
-                            </p>
-                          </div>
-
-                          <div className="space-y-4 pt-1">
-                            {/* Comment on Rider Type */}
-                            <div className="space-y-1.5">
-                              <span className="text-[8px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                                Rider Type Analysis
+                        {/* Tab 1: DNA Profile */}
+                        {riderProfileTab === "dna" && (
+                          <div className="space-y-3.5 animate-in fade-in duration-200">
+                            {/* Archetype Hero Card */}
+                            <div className="bg-gradient-to-r from-emerald-500/10 via-slate-950/60 to-slate-950/80 p-4 rounded-2xl border border-emerald-500/20 relative overflow-hidden">
+                              <span className="text-[8px] font-black text-emerald-400 uppercase tracking-[0.2em] block mb-1">
+                                CYCLIST ARCHETYPE
                               </span>
-                              <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
-                                {userProfile.rider_story ? (
-                                  userProfile.rider_story.trim().replace(/^["|\\']+|["|\\']+$/g, '')
-                                ) : (
-                                  `As a ${userProfile.athlete_type}, you possess a distinctive physiological footprint. Your training adaptation response indicates high capacity for development with structured training.`
-                                )}
+                              <h3 className="text-base font-black text-white italic uppercase tracking-tight">
+                                {userProfile.athlete_type}
+                              </h3>
+                              <p className="text-[11px] text-slate-300 leading-relaxed font-medium mt-1.5">
+                                {condenseText(userProfile.rider_story, 2) ||
+                                  `You possess a strong physiological footprint with high aerobic endurance potential.`}
                               </p>
                             </div>
 
-                            {/* Split Divider */}
-                            <div className="h-px bg-white/5" />
+                            {/* Strengths & Limiters in compact pills */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {/* Strengths */}
+                              <div className="p-3.5 rounded-2xl bg-emerald-950/15 border border-emerald-500/15 space-y-2">
+                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                                  ✓ Core Strengths
+                                </span>
+                                <div className="space-y-1.5">
+                                  {(userProfile.strengths || ["High aerobic volume capacity", "Steady sub-threshold endurance", "Consistent weekly training"]).slice(0, 3).map((s, idx) => (
+                                    <div key={idx} className="flex items-center gap-2 text-[10.5px] text-slate-200 font-medium bg-emerald-500/5 px-2.5 py-1.5 rounded-lg border border-emerald-500/10">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                                      <span className="truncate">{condenseBullet(s, 8)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
 
-                            {/* How to Train to Become Better */}
-                            <div className="space-y-2">
-                              <span className="text-[8px] font-black text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-                                How to Train to Become Better
-                              </span>
-                              
-                              {userProfile.recommended_focus && (
-                                <p className="text-[11px] text-slate-300 leading-relaxed font-semibold italic bg-slate-950/30 p-3 rounded-xl border border-white/5">
-                                  {userProfile.recommended_focus}
+                              {/* Limiters */}
+                              <div className="p-3.5 rounded-2xl bg-rose-950/15 border border-rose-500/15 space-y-2">
+                                <span className="text-[9px] font-black text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
+                                  ⚠ Focus Areas
+                                </span>
+                                <div className="space-y-1.5">
+                                  {(userProfile.areas_for_improvement || ["VO2 max peak power", "Anaerobic repeatability", "High-intensity bursts"]).slice(0, 3).map((a, idx) => (
+                                    <div key={idx} className="flex items-center gap-2 text-[10.5px] text-slate-200 font-medium bg-rose-500/5 px-2.5 py-1.5 rounded-lg border border-rose-500/10">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
+                                      <span className="truncate">{condenseBullet(a, 8)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Recommended Training Focus */}
+                            {userProfile.recommended_focus && (
+                              <div className="p-3.5 rounded-2xl bg-slate-900/40 border border-white/5 space-y-1">
+                                <span className="text-[9px] font-black text-cyan-400 uppercase tracking-wider block">
+                                  🎯 Recommended Training Focus
+                                </span>
+                                <p className="text-[11px] text-slate-200 font-semibold leading-relaxed">
+                                  {condenseText(userProfile.recommended_focus, 1)}
                                 </p>
-                              )}
+                              </div>
+                            )}
 
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                            {/* Effective Stimuli & Avoid */}
+                            {(userProfile.effective_methods || userProfile.ineffective_methods) && (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-0.5">
                                 {userProfile.effective_methods && userProfile.effective_methods.length > 0 && (
-                                  <div className="space-y-1">
-                                    <span className="text-[8px] font-black text-emerald-500 uppercase tracking-wider block mb-1">✓ Recommended Stimuli</span>
-                                    <ul className="text-[10.5px] text-slate-400 font-semibold space-y-1">
-                                      {userProfile.effective_methods.slice(0, 3).map((m, i) => (
+                                  <div className="p-3 rounded-xl bg-slate-950/40 border border-white/5 space-y-1.5">
+                                    <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider block">
+                                      What Works
+                                    </span>
+                                    <ul className="space-y-1 text-[10px] text-slate-300 font-medium">
+                                      {userProfile.effective_methods.slice(0, 2).map((m, i) => (
                                         <li key={i} className="flex items-start gap-1.5">
-                                          <span className="text-emerald-500 select-none shrink-0">•</span>
-                                          <span>{m}</span>
+                                          <span className="text-emerald-400 shrink-0">✓</span>
+                                          <span>{condenseBullet(m, 10)}</span>
                                         </li>
                                       ))}
                                     </ul>
                                   </div>
                                 )}
-
-                                {userProfile.areas_for_improvement && userProfile.areas_for_improvement.length > 0 && (
-                                  <div className="space-y-1">
-                                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider block mb-1">⚠ Focus Areas</span>
-                                    <ul className="text-[10.5px] text-slate-400 font-semibold space-y-1">
-                                      {userProfile.areas_for_improvement.slice(0, 3).map((a, i) => (
+                                {userProfile.ineffective_methods && userProfile.ineffective_methods.length > 0 && (
+                                  <div className="p-3 rounded-xl bg-slate-950/40 border border-white/5 space-y-1.5">
+                                    <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider block">
+                                      To Avoid
+                                    </span>
+                                    <ul className="space-y-1 text-[10px] text-slate-300 font-medium">
+                                      {userProfile.ineffective_methods.slice(0, 2).map((m, i) => (
                                         <li key={i} className="flex items-start gap-1.5">
-                                          <span className="text-rose-400 select-none shrink-0">•</span>
-                                          <span>{a}</span>
+                                          <span className="text-rose-400 shrink-0">✕</span>
+                                          <span>{condenseBullet(m, 10)}</span>
                                         </li>
                                       ))}
                                     </ul>
                                   </div>
                                 )}
                               </div>
-                            </div>
+                            )}
                           </div>
-                        </div>
+                        )}
+
+                        {/* Tab 2: Power Curve */}
+                        {riderProfileTab === "power" && (
+                          <div className="animate-in fade-in duration-200">
+                            <RiderPowerCurve 
+                              powerCurves={powerCurves || []} 
+                              athleteType={userProfile.athlete_type} 
+                              ftp={ftp || undefined} 
+                            />
+                          </div>
+                        )}
+
+                        {/* Tab 3: Aerobic Efficiency */}
+                        {riderProfileTab === "aerobic" && (
+                          <div className="animate-in fade-in duration-200">
+                            <AerobicEfficiencyDecouplingChart 
+                              activities={activities || []} 
+                              ftp={ftp || undefined} 
+                            />
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="glass-card p-10 rounded-[2rem] text-center border border-white/5">
@@ -2880,7 +3095,7 @@ const App: React.FC = () => {
                     )}
 
                     {methodologyTab === "review" && (
-                      <div className="space-y-4">
+                      <div className="space-y-3.5 animate-in fade-in duration-200">
                         {isLoadingThreeMonthReview ? (
                           <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
                             <Loader2 size={28} className="text-cyan-400 animate-spin" />
@@ -2888,12 +3103,12 @@ const App: React.FC = () => {
                             <p className="text-[9px] text-slate-500 font-medium">Evaluating TSS, volume trends, and goal progression</p>
                           </div>
                         ) : threeMonthReview ? (
-                          <div className="space-y-4">
-                            <div className="p-5 rounded-3xl bg-slate-950/60 border border-white/5 space-y-5">
+                          <div className="space-y-3.5">
+                            <div className="p-4 sm:p-5 rounded-3xl bg-slate-950/60 border border-white/5 space-y-4">
                               {/* Header & Status */}
                               <div className="flex items-center justify-between border-b border-white/5 pb-3">
                                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">90-Day Progress</span>
-                                <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
+                                <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
                                   threeMonthReview.status === "on_track" 
                                     ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" 
                                     : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
@@ -2903,96 +3118,103 @@ const App: React.FC = () => {
                               </div>
 
                               {/* Headline */}
-                              <div className="space-y-1">
-                                <p className="text-[12px] text-slate-200 leading-relaxed font-black italic">
-                                  "{threeMonthReview.headline}"
+                              {threeMonthReview.headline && (
+                                <p className="text-[11.5px] text-slate-200 font-bold italic">
+                                  "{condenseText(threeMonthReview.headline, 1)}"
                                 </p>
-                              </div>
+                              )}
 
                               {/* Period Stats Row */}
                               {threeMonthReview.period_stats && (
-                                <div className="grid grid-cols-3 gap-2 bg-slate-900/40 p-3 rounded-2xl border border-white/5 text-center">
+                                <div className="grid grid-cols-3 gap-2 bg-slate-900/40 p-2.5 rounded-2xl border border-white/5 text-center">
                                   <div className="flex flex-col">
-                                    <span className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider">Volume</span>
+                                    <span className="text-[8.5px] font-extrabold text-slate-500 uppercase tracking-wider">Volume</span>
                                     <span className="text-[12px] font-black text-white italic font-mono">{threeMonthReview.period_stats.total_hours}h</span>
                                   </div>
                                   <div className="flex flex-col border-x border-white/5">
-                                    <span className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider">Total TSS</span>
+                                    <span className="text-[8.5px] font-extrabold text-slate-500 uppercase tracking-wider">Total TSS</span>
                                     <span className="text-[12px] font-black text-white italic font-mono">{threeMonthReview.period_stats.total_tss}</span>
                                   </div>
                                   <div className="flex flex-col">
-                                    <span className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider">Avg/Wk</span>
+                                    <span className="text-[8.5px] font-extrabold text-slate-500 uppercase tracking-wider">Avg/Wk</span>
                                     <span className="text-[12px] font-black text-white italic font-mono">{threeMonthReview.period_stats.avg_tss_per_week}</span>
                                   </div>
                                 </div>
                               )}
 
-                              {/* What's Going Well (Good things based on data) */}
-                              <div className="space-y-2 bg-emerald-950/10 border border-emerald-500/10 rounded-2xl p-4">
-                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                                  👍 WHAT'S GOING WELL
+                              {/* What's Going Well */}
+                              <div className="space-y-2 bg-emerald-950/15 border border-emerald-500/15 rounded-2xl p-3.5">
+                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-wider block">
+                                  ✓ What's Working
                                 </span>
                                 {threeMonthReview.good_things_achieved && threeMonthReview.good_things_achieved.length > 0 ? (
-                                  <ul className="space-y-1.5 text-left">
-                                    {threeMonthReview.good_things_achieved.map((good, idx) => (
-                                      <li key={idx} className="flex items-start gap-2 text-[10.5px] text-slate-300 font-medium leading-relaxed">
-                                        <span className="text-emerald-400 shrink-0 mt-0.5">✓</span>
-                                        <span>{good}</span>
-                                      </li>
+                                  <div className="space-y-1.5">
+                                    {threeMonthReview.good_things_achieved.slice(0, 3).map((good, idx) => (
+                                      <div key={idx} className="flex items-start gap-2 text-[10.5px] text-slate-200 font-medium">
+                                        <span className="text-emerald-400 shrink-0 select-none">•</span>
+                                        <span>{condenseBullet(good, 12)}</span>
+                                      </div>
                                     ))}
-                                  </ul>
+                                  </div>
                                 ) : (
-                                  <p className="text-[10.5px] text-slate-400 font-medium">
-                                    Your consistent weekly ride frequency demonstrates superb dedication and provides a robust foundation for building high-level aerobic efficiency.
+                                  <p className="text-[10.5px] text-slate-300 font-medium">
+                                    Solid training volume and consistent weekly ride habits established.
                                   </p>
                                 )}
                               </div>
 
-                              {/* Goal Contribution */}
-                              <div className="space-y-1.5">
-                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
-                                  🎯 Goal Compatibility
-                                </span>
-                                <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
-                                  {threeMonthReview.contributing_to_goal}
-                                </p>
+                              {/* Goal Compatibility & Intensity Balance (Compact Grid) */}
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                {threeMonthReview.contributing_to_goal && (
+                                  <div className="p-3 rounded-2xl bg-slate-900/40 border border-white/5 space-y-1">
+                                    <span className="text-[8.5px] font-black text-cyan-400 uppercase tracking-wider block">
+                                      🎯 Goal Alignment
+                                    </span>
+                                    <p className="text-[10.5px] text-slate-300 leading-relaxed font-medium">
+                                      {condenseText(threeMonthReview.contributing_to_goal, 2)}
+                                    </p>
+                                  </div>
+                                )}
+
+                                {threeMonthReview.intensity_distribution_summary && (
+                                  <div className="p-3 rounded-2xl bg-slate-900/40 border border-white/5 space-y-1">
+                                    <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider block">
+                                      📊 Intensity Split
+                                    </span>
+                                    <p className="text-[10.5px] text-slate-300 leading-relaxed font-medium">
+                                      {condenseText(threeMonthReview.intensity_distribution_summary, 1)}
+                                    </p>
+                                  </div>
+                                )}
                               </div>
 
-                              {/* Intensity Distribution */}
-                              <div className="space-y-1.5">
-                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
-                                  📊 Intensity Analysis
-                                </span>
-                                <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
-                                  {threeMonthReview.intensity_distribution_summary}
-                                </p>
-                              </div>
-
-                              {/* Needed Changes (Recommended Adjustments) */}
-                              <div className="space-y-2.5 pt-1 border-t border-white/5">
-                                <span className="text-[9px] font-black text-amber-400 uppercase tracking-wider block">
-                                  🛠️ Recommended Adjustments
-                                </span>
-                                <div className="space-y-2 text-left">
-                                  {threeMonthReview.needed_changes.map((change, idx) => (
-                                    <div key={idx} className="flex items-start gap-2.5 p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/10">
-                                      <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 font-black text-[9px] flex items-center justify-center shrink-0 mt-0.5">
-                                        {idx + 1}
-                                      </span>
-                                      <div className="flex-1 text-[10.5px] text-slate-300 font-medium leading-relaxed">
-                                        {change}
+                              {/* Recommended Adjustments */}
+                              {threeMonthReview.needed_changes && threeMonthReview.needed_changes.length > 0 && (
+                                <div className="space-y-2 pt-1 border-t border-white/5">
+                                  <span className="text-[9px] font-black text-amber-400 uppercase tracking-wider block">
+                                    🛠️ Recommended Adjustments
+                                  </span>
+                                  <div className="space-y-1.5">
+                                    {threeMonthReview.needed_changes.slice(0, 3).map((change, idx) => (
+                                      <div key={idx} className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/10">
+                                        <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 font-black text-[9px] flex items-center justify-center shrink-0 mt-0.5">
+                                          {idx + 1}
+                                        </span>
+                                        <span className="text-[10.5px] text-slate-200 font-medium leading-tight">
+                                          {condenseBullet(change, 14)}
+                                        </span>
                                       </div>
-                                    </div>
-                                  ))}
+                                    ))}
+                                  </div>
                                 </div>
-                              </div>
+                              )}
                             </div>
                             
                             <button
                               onClick={() => handleFetchThreeMonthReview(true)}
                               className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 border border-white/5 active:scale-95"
                             >
-                              <RefreshCw size={12} /> Refresh Analysis
+                              <RefreshCw size={12} /> Refresh Review
                             </button>
                           </div>
                         ) : (
@@ -3054,63 +3276,91 @@ const App: React.FC = () => {
         </div>
       )}
       {showWorkoutDetail && currentWorkout && (
-        <div className="absolute inset-0 z-[220] flex items-center justify-center p-4 bg-[#05070a]/90 backdrop-blur-md" onClick={() => setShowWorkoutDetail(false)}>
-          <div className="glass-card w-full max-w-[360px] rounded-[3.5rem] p-10 relative animate-in slide-in-from-bottom-4 duration-300 border border-white/10 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <button onClick={() => setShowWorkoutDetail(false)} className="absolute top-8 right-8 text-slate-600 hover:text-white transition-colors p-2 z-20">
-              <X size={22} />
-            </button>
-            <div className="flex flex-col items-center">
-              <div className="w-10 h-10 rounded-xl bg-slate-900/50 flex flex-col items-center justify-center shrink-0 border border-white/5 shadow-inner mb-8">
-                <span className="text-[7.5px] font-black text-slate-500 uppercase leading-none mb-0.5 tracking-tighter">WRK</span>
-                <span className="text-base font-black text-white italic leading-none">OUT</span>
-              </div>
-              
-              <h3 className="text-3xl font-black text-white italic tracking-tighter mb-10 uppercase text-center">
-                {currentWorkout.title}
-              </h3>
-              
-              <div className="bg-[#0a0c10] p-8 rounded-[3rem] border border-white/5 w-full text-left space-y-6 shadow-inner relative overflow-hidden">
-                 <div className="flex items-center justify-between border-b border-white/5 pb-5 mx-1">
-                    <div className="flex items-center gap-2 text-[16px] font-black text-white tracking-tighter">
-                       <Clock size={18} className="text-blue-400" /> {currentWorkout.duration_minutes} MIN
-                    </div>
-                    <div className="flex items-center gap-2 text-[16px] font-black text-amber-400 italic">
-                       <Zap size={18} fill="currentColor" className="text-amber-400" /> {currentWorkout.tss || '--'} TSS
-                    </div>
-                 </div>
+        <div className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => setShowWorkoutDetail(false)}>
+          <div className="bg-[#0c0e15] border-t sm:border border-white/10 w-full sm:max-w-md h-[100dvh] sm:h-auto sm:max-h-[88dvh] rounded-none sm:rounded-[2.2rem] p-5 sm:p-6 shadow-[0_-10px_40px_rgba(0,0,0,0.8)] sm:shadow-2xl flex flex-col overflow-hidden relative" onClick={e => e.stopPropagation()}>
+            
+            {/* Mobile drag handle */}
+            <div className="w-10 h-1 bg-white/20 rounded-full mx-auto mb-3 shrink-0 sm:hidden" />
 
-                 <div className="space-y-5 py-1 max-h-[220px] overflow-y-auto custom-scrollbar px-1">
-                   {currentWorkout.workout_steps && currentWorkout.workout_steps.length > 0 ? (
-                     isEnduranceWorkout(currentWorkout) ? (
-                       <VisualProfileChart 
-                         steps={currentWorkout.workout_steps} 
-                         currentFtp={ftp || undefined}
-                         originalFtp={weeklyBriefing?.ftp}
-                       />
-                     ) : (
-                       <GroupedWorkoutStepsList 
-                         steps={currentWorkout.workout_steps}
-                         currentFtp={ftp || undefined}
-                         originalFtp={weeklyBriefing?.ftp}
-                         fontSize="base"
-                       />
-                     )
-                   ) : (
-                      <p className="text-[14px] text-slate-400 leading-relaxed italic text-center px-4 font-medium opacity-80">
-                        {currentWorkout.description}
-                      </p>
-                   )}
-                 </div>
+            {/* Header */}
+            <div className="flex items-center justify-between shrink-0 mb-3 pb-3 border-b border-white/5">
+              <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                <div className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-extrabold text-[10px] tracking-wider uppercase shrink-0">
+                  WORKOUT
+                </div>
+                <h3 className="text-sm sm:text-base font-black text-white italic tracking-tight uppercase truncate">
+                  {currentWorkout.title}
+                </h3>
+              </div>
+              <button onClick={() => setShowWorkoutDetail(false)} className="text-slate-400 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors shrink-0">
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Scrollable body content */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 min-h-0 space-y-3.5">
+              {/* Compact Metrics Strip */}
+              <div className="grid grid-cols-2 gap-2 p-3 bg-white/[0.03] border border-white/5 rounded-2xl">
+                <div className="flex flex-col items-center justify-center text-center">
+                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                    <Clock size={11} className="text-blue-400" /> Duration
+                  </span>
+                  <span className="text-xs sm:text-sm font-black text-white mt-0.5">
+                    {currentWorkout.type === 'endurance' || currentWorkout.title.toLowerCase().includes('endurance')
+                      ? (currentWorkout.duration_minutes % 60 === 0
+                          ? `${currentWorkout.duration_minutes / 60}H`
+                          : `${Math.floor(currentWorkout.duration_minutes / 60)}H${currentWorkout.duration_minutes % 60 > 0 ? (currentWorkout.duration_minutes % 60 < 10 ? `0${currentWorkout.duration_minutes % 60}` : currentWorkout.duration_minutes % 60) : ''}`)
+                      : `${currentWorkout.duration_minutes} MIN`}
+                  </span>
+                </div>
+                <div className="flex flex-col items-center justify-center text-center border-l border-white/5">
+                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                    <Zap size={11} fill="currentColor" className="text-amber-400" /> Load
+                  </span>
+                  <span className="text-xs sm:text-sm font-black text-amber-400 mt-0.5">
+                    {currentWorkout.tss || '--'} TSS
+                  </span>
+                </div>
               </div>
 
-              <div className="mt-10 flex flex-col gap-4 w-full">
-                <button 
-                  onClick={() => setShowWorkoutDetail(false)}
-                  className="w-full py-5 bg-[#1a1c22] rounded-full text-[12px] font-black text-slate-400 hover:text-white transition-all uppercase tracking-[0.2em] active:scale-95"
-                >
-                  CLOSE
-                </button>
-              </div>
+              {currentWorkout.description && (
+                <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3 text-center">
+                  <p className="text-xs text-slate-300 leading-relaxed font-medium italic">
+                    "{currentWorkout.description}"
+                  </p>
+                </div>
+              )}
+
+              {currentWorkout.workout_steps && currentWorkout.workout_steps.length > 0 && (
+                <div className="space-y-2.5">
+                  <VisualProfileChart 
+                    steps={currentWorkout.workout_steps} 
+                    currentFtp={ftp || undefined}
+                    originalFtp={weeklyBriefing?.ftp}
+                  />
+                  <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3.5 space-y-2">
+                    <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1.5">
+                      Workout Structure
+                    </span>
+                    <GroupedWorkoutStepsList 
+                      steps={currentWorkout.workout_steps}
+                      currentFtp={ftp || undefined}
+                      originalFtp={weeklyBriefing?.ftp}
+                      fontSize="sm"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer close button */}
+            <div className="pt-3 shrink-0 border-t border-white/5 mt-auto">
+              <button 
+                onClick={() => setShowWorkoutDetail(false)}
+                className="w-full py-3 bg-white/5 hover:bg-white/10 active:scale-[0.98] text-slate-300 hover:text-white rounded-xl text-xs font-black uppercase tracking-[0.15em] transition-all cursor-pointer"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
@@ -3241,7 +3491,13 @@ const App: React.FC = () => {
                             <Clock size={11} className="text-blue-400" /> Duration
                           </span>
                           <span className="text-xs sm:text-sm font-black text-white mt-0.5">
-                            {isRest || selectedSuggestedDay.duration_target <= 0 ? '—' : `${selectedSuggestedDay.duration_target} MIN`}
+                            {isRest || selectedSuggestedDay.duration_target <= 0 
+                              ? '—' 
+                              : ((selectedSuggestedDay.focus || '').toLowerCase().includes('endurance')
+                                  ? (selectedSuggestedDay.duration_target % 60 === 0 
+                                      ? `${selectedSuggestedDay.duration_target / 60}H` 
+                                      : `${Math.floor(selectedSuggestedDay.duration_target / 60)}H${selectedSuggestedDay.duration_target % 60 > 0 ? (selectedSuggestedDay.duration_target % 60 < 10 ? `0${selectedSuggestedDay.duration_target % 60}` : selectedSuggestedDay.duration_target % 60) : ''}`)
+                                  : `${selectedSuggestedDay.duration_target} MIN`)}
                           </span>
                         </div>
                         <div className="flex flex-col items-center justify-center text-center border-x border-white/5">
@@ -3315,29 +3571,33 @@ const App: React.FC = () => {
                       ) : (
                         <div className="space-y-3">
                           {selectedSuggestedDay.why && (
-                            <p className="text-xs text-slate-300 leading-relaxed text-center px-2 font-medium italic">
-                              "{selectedSuggestedDay.why}"
-                            </p>
+                            <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3 text-center">
+                              <p className="text-xs text-slate-300 leading-relaxed font-medium italic">
+                                "{selectedSuggestedDay.why}"
+                              </p>
+                            </div>
                           )}
 
-                          <div className="space-y-3 py-1 max-h-[240px] overflow-y-auto custom-scrollbar">
-                            {selectedSuggestedDay.workout_steps && selectedSuggestedDay.workout_steps.length > 0 ? (
-                              isEnduranceWorkout(selectedSuggestedDay) ? (
-                                <VisualProfileChart 
-                                  steps={selectedSuggestedDay.workout_steps}
-                                  currentFtp={ftp || undefined}
-                                  originalFtp={weeklyBriefing?.ftp}
-                                />
-                              ) : (
+                          {selectedSuggestedDay.workout_steps && selectedSuggestedDay.workout_steps.length > 0 && (
+                            <div className="space-y-2.5">
+                              <VisualProfileChart 
+                                steps={selectedSuggestedDay.workout_steps}
+                                currentFtp={ftp || undefined}
+                                originalFtp={weeklyBriefing?.ftp}
+                              />
+                              <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3.5 space-y-2">
+                                <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1.5">
+                                  Workout Structure
+                                </span>
                                 <GroupedWorkoutStepsList 
                                   steps={selectedSuggestedDay.workout_steps}
                                   currentFtp={ftp || undefined}
                                   originalFtp={weeklyBriefing?.ftp}
                                   fontSize="sm"
                                 />
-                              )
-                            ) : null}
-                          </div>
+                              </div>
+                            </div>
+                          )}
 
                           <div className="bg-purple-500/5 border-l-2 border-purple-400/80 rounded-r-2xl p-3.5 space-y-1">
                             <div className="flex items-center gap-1.5 text-purple-400">
@@ -3380,335 +3640,28 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* Request Change Modal */}
-      {showRequestChangeModal && (() => {
-        if (showDirectivesSubModal) {
-          return (
-            <div 
-              className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-start sm:items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200"
-              onClick={() => {
-                setShowRequestChangeModal(false);
-                setShowDirectivesSubModal(false);
-              }}
-            >
-              <div 
-                className="bg-slate-950/95 w-full max-w-sm rounded-3xl sm:rounded-[2.5rem] p-4 sm:p-6 relative border border-white/10 shadow-2xl space-y-3 sm:space-y-4 max-h-[88dvh] flex flex-col overflow-y-auto custom-scrollbar my-auto"
-                onClick={e => e.stopPropagation()}
-              >
-                <button 
-                  onClick={() => setShowDirectivesSubModal(false)}
-                  className="absolute top-4 left-4 sm:top-5 sm:left-5 text-slate-400 hover:text-white transition-colors p-1.5 sm:p-2 z-20 bg-black/40 rounded-full flex items-center justify-center"
-                  title="Back"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-
-                <button 
-                  onClick={() => {
-                    setShowRequestChangeModal(false);
-                    setShowDirectivesSubModal(false);
-                  }}
-                  className="absolute top-4 right-4 sm:top-5 sm:right-5 text-slate-500 hover:text-white transition-colors p-1.5 sm:p-2 z-20 bg-black/40 rounded-full"
-                >
-                  <X size={16} />
-                </button>
-
-                <div className="text-center space-y-1 pt-1 sm:pt-2">
-                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9.5px] font-black uppercase tracking-wider mb-0.5">
-                    <Sparkles size={11} /> Plan Engine
-                  </div>
-                  <h3 className="text-base sm:text-lg font-black text-white italic tracking-tight uppercase">
-                    Active Directives
-                  </h3>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    Custom directives guiding your plan
-                  </p>
-                </div>
-
-                {(() => {
-                  const activeDirectivesList = parsePlanDirectives(planContext);
-                  
-                  if (activeDirectivesList.length > 0) {
-                    return (
-                      <div className="space-y-3">
-                        <div className="space-y-2 max-h-48 sm:max-h-60 overflow-y-auto custom-scrollbar p-1">
-                          {activeDirectivesList.map((dirObj, idx) => {
-                            const isToday = dirObj.requestedAt === getTodayDateString();
-                            const dateDisplay = isToday ? 'Today' : dirObj.requestedAt;
-                            return (
-                              <div 
-                                key={dirObj.id || `${idx}-${dirObj.text}`}
-                                className="bg-[#0a0d14] border border-emerald-500/20 hover:border-emerald-500/40 rounded-xl p-2.5 sm:p-3 transition-all shadow-sm flex flex-col gap-2"
-                              >
-                                {editingDirectiveIdx === idx ? (
-                                  <div className="w-full flex flex-col gap-2">
-                                    <textarea
-                                      value={editingDirectiveText}
-                                      onChange={(e) => setEditingDirectiveText(e.target.value)}
-                                      className="w-full bg-slate-950 border border-emerald-500/40 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 min-h-[60px] resize-none"
-                                    />
-                                    <div className="flex items-center justify-end gap-2">
-                                      <button
-                                        onClick={() => {
-                                          setEditingDirectiveIdx(null);
-                                        }}
-                                        className="px-3 py-1 rounded bg-slate-800 text-slate-300 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-700 transition-colors"
-                                      >
-                                        Cancel
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          if (!editingDirectiveText.trim()) return;
-                                          const updated = [...activeDirectivesList];
-                                          updated[idx] = { ...updated[idx], text: editingDirectiveText.trim() };
-                                          const { active } = pruneExpiredDirectives(updated);
-                                          const newContext = serializePlanDirectives(active);
-                                          setPlanContext(newContext);
-                                          safeSetItem('wattson_plan_context', newContext);
-                                          setLastAppliedTweak(`Updated: "${editingDirectiveText.trim()}"`);
-                                          setShowTweakSuccessNotice(false);
-                                          setGeneratedWeeks([]);
-                                          setWeeklyBriefing(null);
-                                          fetchWeeklyBriefingData(newContext, true, undefined, undefined, 1);
-                                          setEditingDirectiveIdx(null);
-                                        }}
-                                        className="px-3 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-500/30 transition-colors"
-                                      >
-                                        Save
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <div className="flex items-start justify-between gap-2.5">
-                                    <div className="flex items-start gap-2 min-w-0">
-                                      <span className="text-emerald-400 font-black text-[9px] mt-0.5 shrink-0 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md">
-                                        #{idx + 1}
-                                      </span>
-                                      <div className="flex flex-col min-w-0">
-                                        <span className="text-xs text-slate-200 font-medium leading-snug break-words">
-                                          {dirObj.text}
-                                        </span>
-                                        <span className="text-[9px] font-semibold text-emerald-400/80 mt-1 flex items-center gap-1">
-                                          Requested: {dateDisplay}
-                                        </span>
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-1 shrink-0">
-                                      <button
-                                        onClick={() => {
-                                          setEditingDirectiveIdx(idx);
-                                          setEditingDirectiveText(dirObj.text);
-                                        }}
-                                        title="Edit directive"
-                                        className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all active:scale-90 cursor-pointer"
-                                      >
-                                        <Edit size={14} />
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          const updated = activeDirectivesList.filter((_, i) => i !== idx);
-                                          if (updated.length === 0) {
-                                            setPlanContext(null);
-                                            localStorage.removeItem('wattson_plan_context');
-                                            setLastAppliedTweak(null);
-                                            setShowTweakSuccessNotice(false);
-                                            setGeneratedWeeks([]);
-                                            setWeeklyBriefing(null);
-                                            fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
-                                            setShowDirectivesSubModal(false);
-                                            setShowRequestChangeModal(false);
-                                          } else {
-                                            const { active } = pruneExpiredDirectives(updated);
-                                            const newContext = serializePlanDirectives(active);
-                                            setPlanContext(newContext);
-                                            safeSetItem('wattson_plan_context', newContext);
-                                            setGeneratedWeeks([]);
-                                            setWeeklyBriefing(null);
-                                            fetchWeeklyBriefingData(newContext, true, undefined, undefined, 1);
-                                          }
-                                        }}
-                                        title="Delete directive"
-                                        className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all active:scale-90 cursor-pointer"
-                                      >
-                                        <Trash2 size={14} />
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        <button
-                          onClick={() => {
-                            if (planContext) {
-                              setLastAppliedTweak("Updated Directives");
-                              setShowTweakSuccessNotice(false);
-                              setGeneratedWeeks([]);
-                              setWeeklyBriefing(null);
-                              fetchWeeklyBriefingData(planContext, true, undefined, undefined, 1);
-                            }
-                            setShowDirectivesSubModal(false);
-                            setShowRequestChangeModal(false);
-                          }}
-                          className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl transition-all active:scale-95 shadow-lg flex items-center justify-center gap-1.5 cursor-pointer mt-1"
-                        >
-                          <Sparkles size={13} />
-                          <span>Apply Directives & Recalibrate</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setPlanContext(null);
-                            localStorage.removeItem('wattson_plan_context');
-                            setLastAppliedTweak("Directives cleared — plan recalibrated to optimize goal progress based on current context");
-                            setShowTweakSuccessNotice(false);
-                            setGeneratedWeeks([]);
-                            setWeeklyBriefing(null);
-                            fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
-                            setShowDirectivesSubModal(false);
-                            setShowRequestChangeModal(false);
-                          }}
-                          className="w-full py-2 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 font-black text-[10px] uppercase tracking-wider rounded-xl transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <Trash2 size={12} />
-                          <span>Delete All Directives</span>
-                        </button>
-                      </div>
-                    );
-                  } else {
-                    return (
-                      <div className="bg-[#0a0d14] border border-white/5 rounded-2xl p-5 text-center space-y-1">
-                        <p className="text-xs text-slate-400 font-medium">No custom directives active.</p>
-                      </div>
-                    );
-                  }
-                })()}
-
-                <button 
-                  onClick={() => setShowDirectivesSubModal(false)}
-                  className="w-full py-2.5 bg-slate-900/80 rounded-xl text-[10px] font-black text-slate-300 hover:text-white transition-all uppercase tracking-widest flex items-center justify-center gap-1 border border-white/5"
-                >
-                  <ChevronLeft size={12} />
-                  <span>Back to Request Change</span>
-                </button>
-              </div>
-            </div>
-          );
-        }
-
-        return (
-          <div 
-            className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-start sm:items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200"
-            onClick={() => {
-              setShowRequestChangeModal(false);
-              setShowDirectivesSubModal(false);
-            }}
-          >
-            <div 
-              className="bg-slate-950/95 w-full max-w-sm rounded-3xl sm:rounded-[2.5rem] p-4 sm:p-6 relative border border-white/10 shadow-2xl space-y-3 sm:space-y-4 max-h-[88dvh] flex flex-col overflow-y-auto custom-scrollbar my-auto"
-              onClick={e => e.stopPropagation()}
-            >
-              <button 
-                onClick={() => {
-                  setShowRequestChangeModal(false);
-                  setShowDirectivesSubModal(false);
-                }}
-                className="absolute top-4 right-4 sm:top-5 sm:right-5 text-slate-500 hover:text-white transition-colors p-1.5 sm:p-2 z-20 bg-black/40 rounded-full"
-              >
-                <X size={16} />
-              </button>
-
-              <div className="text-center space-y-0.5 sm:space-y-1 pt-0.5">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9.5px] font-black uppercase tracking-wider mb-0.5">
-                  <Sparkles size={11} /> Plan AI Engine
-                </div>
-                <h3 className="text-base sm:text-lg font-black text-white italic tracking-tight uppercase">
-                  Request Change
-                </h3>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  Describe how you'd like to adjust your plan
-                </p>
-              </div>
-
-              {/* Active Directives trigger button (click through to dedicated screen) */}
-              {planContext && (
-                <button
-                  onClick={() => setShowDirectivesSubModal(true)}
-                  className="w-full flex items-center justify-between bg-slate-900/80 hover:bg-slate-900 border border-emerald-500/30 hover:border-emerald-500/50 rounded-xl sm:rounded-2xl p-2.5 sm:p-3 px-3.5 transition-all group text-left active:scale-95 shadow-sm cursor-pointer shrink-0"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg sm:rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-                      <Sparkles size={12} />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="text-[8.5px] font-black uppercase tracking-wider text-emerald-400 block leading-tight">
-                        Active Directives
-                      </span>
-                      <p className="text-[10.5px] font-bold text-slate-200 truncate mt-0.5">
-                        "{getDirectivesTextList(parsePlanDirectives(planContext)).join(' ; ')}"
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 text-slate-400 group-hover:text-emerald-400 text-[10px] font-bold uppercase tracking-wider shrink-0 ml-2">
-                    <span>View</span>
-                    <ChevronRight size={13} />
-                  </div>
-                </button>
-              )}
-
-              {/* Text Input Area */}
-              <div className="space-y-1 pt-0.5">
-                <textarea
-                  placeholder="e.g. Shorten tomorrow's ride to 45m, add a rest day on Friday, or lower overall intensity..."
-                  value={requestChangeInput}
-                  onChange={(e) => setRequestChangeInput(e.target.value)}
-                  rows={2}
-                  className="w-full bg-[#0a0d14] border border-white/10 rounded-xl sm:rounded-2xl p-3 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/40 font-medium resize-none shadow-inner min-h-[64px] max-h-[110px]"
-                />
-              </div>
-
-              {/* Apply Action */}
-              <div className="space-y-2 pt-0.5">
-                <button
-                  onClick={() => {
-                    if (requestChangeInput.trim()) {
-                      handleAddTweakFromApp(requestChangeInput.trim());
-                    } else if (planContext) {
-                      setLastAppliedTweak("Applied Directives");
-                      setShowTweakSuccessNotice(false);
-                      setGeneratedWeeks([]);
-                      setWeeklyBriefing(null);
-                      fetchWeeklyBriefingData(planContext, true, undefined, undefined, 1);
-                    } else {
-                      return;
-                    }
-                    setShowRequestChangeModal(false);
-                    setShowDirectivesSubModal(false);
-                    setRequestChangeInput('');
-                  }}
-                  disabled={!requestChangeInput.trim() && !planContext}
-                  className="w-full py-2.5 sm:py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl sm:rounded-2xl disabled:opacity-40 transition-all active:scale-95 shadow-lg flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Sparkles size={13} />
-                  <span>{requestChangeInput.trim() ? "Apply Change" : "Apply Changes"}</span>
-                </button>
-
-                <button 
-                  onClick={() => {
-                    setShowRequestChangeModal(false);
-                    setShowDirectivesSubModal(false);
-                  }}
-                  className="w-full py-2 bg-slate-900/60 rounded-xl text-[10px] font-black text-slate-400 hover:text-white transition-all uppercase tracking-widest"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {/* Plan & Change Modal */}
+      <PlanAndChangeModal
+        isOpen={showRequestChangeModal}
+        onClose={() => setShowRequestChangeModal(false)}
+        weeklyBriefing={weeklyBriefing}
+        activities={activities}
+        suggestion={suggestion}
+        onApplyPlan={(directiveText) => {
+          handleAddTweakFromApp(directiveText);
+        }}
+        planContext={planContext}
+        onUpdatePlanContext={(newContext) => {
+          setPlanContext(newContext);
+          if (newContext) {
+            safeSetItem('wattson_plan_context', newContext);
+          } else {
+            localStorage.removeItem('wattson_plan_context');
+          }
+        }}
+        userGoal={userGoal}
+        hasRideToday={hasRideToday}
+      />
 
       {reasoningPopup && (
         <div className="absolute inset-0 z-[220] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setReasoningPopup(null)}>
@@ -3829,7 +3782,7 @@ const App: React.FC = () => {
 
       {/* Floating Modern Navigation Dock */}
       {!isKeyboardOpen && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-[340px] bg-slate-950/80 backdrop-blur-2xl border border-white/[0.08] rounded-2xl p-1 shadow-[0_8px_32px_rgba(0,0,0,0.7)] flex items-center justify-between gap-1">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-[340px] bg-[#080b11]/90 backdrop-blur-xl border border-white/[0.08] rounded-2xl p-1 shadow-[0_8px_30px_rgba(0,0,0,0.6)] flex items-center justify-between gap-1">
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
             { id: 'rides', icon: Bike, label: 'Rides' },
@@ -3847,19 +3800,19 @@ const App: React.FC = () => {
                 {isActive && (
                   <motion.div
                     layoutId="activeTabPill"
-                    className="absolute inset-0 bg-emerald-500/10 border border-emerald-500/25 rounded-xl"
+                    className="absolute inset-0 bg-emerald-500/10 border border-emerald-500/20 rounded-xl"
                     transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                   />
                 )}
                 <Icon 
-                  size={16} 
+                  size={15} 
                   className={`transition-colors duration-200 ${
-                    isActive ? 'text-emerald-400' : 'text-slate-400 group-hover:text-white'
+                    isActive ? 'text-emerald-400' : 'text-slate-400 group-hover:text-slate-200'
                   }`} 
                 />
                 <span 
                   className={`text-[8.5px] uppercase tracking-wider transition-all duration-200 ${
-                    isActive ? 'text-emerald-400 font-black' : 'text-slate-500 group-hover:text-slate-300 font-medium'
+                    isActive ? 'text-emerald-400 font-semibold' : 'text-slate-500 group-hover:text-slate-400 font-normal'
                   }`}
                 >
                   {item.label}

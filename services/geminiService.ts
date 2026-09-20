@@ -221,9 +221,9 @@ const callGemini = async (params: any): Promise<GenerateContentResponse> => {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   
   // Model fallback chain: 
-  // 1. gemini-3.5-flash (Supported basic/general text model)
-  // 2. gemini-3.1-flash-lite (Supported lightweight model)
-  const models = ['gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+  // 1. gemini-3.8-flash (Supported high-performance fast general text model)
+  // 2. gemini-3.1-flash-lite (Supported ultra-fast lightweight model)
+  const models = ['gemini-3.8-flash', 'gemini-3.1-flash-lite'];
   
   let lastError: any = null;
   for (const model of models) {
@@ -1248,6 +1248,34 @@ POWER MILESTONES & SPIKES:
   const currentDateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
+  // Check today's completed activities
+  const todayActivities = sortedActivities.filter(a => {
+    if (!a.start_date_local || !a.start_date_local.startsWith(todayIso)) return false;
+    const dur = a.moving_time || a.elapsed_time || (a as any).time || (a as any).duration || (a as any).icu_recording_time || 0;
+    const dist = a.distance || (a as any).icu_distance || 0;
+    return dur >= 60 || dist >= 100;
+  });
+
+  const hasCompletedRideToday = todayActivities.length > 0;
+  let todayActivitiesSummary = "No activities/rides recorded yet today.";
+  if (hasCompletedRideToday) {
+    const actLines = todayActivities.map(a => {
+      const durM = Math.round((a.moving_time || a.elapsed_time || 0) / 60);
+      const distKm = Math.round((a.distance || 0) / 1000);
+      const tss = Math.round(a.icu_training_load || a.icu_tss || 0);
+      const avgW = Math.round(a.average_watts || a.icu_average_watts || 0);
+      const npW = Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0);
+      const avgHr = a.average_heartrate ? Math.round(a.average_heartrate) : undefined;
+      const laps = (a as any).icu_laps || (a as any).icu_intervals || (a as any).icu_intervals_edited || (a as any).laps || (a as any).intervals;
+      const detected = detectIntervalsFromLaps(a, laps);
+      let desc = `"${a.name}" (${a.type || 'Ride'}) - ${durM}m, ${distKm}km, TSS ${tss}, Avg ${avgW}W, NP ${npW}W`;
+      if (avgHr) desc += `, Avg HR ${avgHr}bpm`;
+      if (detected) desc += ` [${detected}]`;
+      return desc;
+    });
+    todayActivitiesSummary = `${todayActivities.length} session(s) already recorded TODAY (${todayIso}):\n${actLines.map(l => `- ${l}`).join('\n')}`;
+  }
+
   const powerCurveStr = safePowerCurves.map(pc => {
     const bests = pc.bests.map(b => `${b.duration}s: ${b.watts}W`).join(', ');
     return `${pc.year} Annual Bests: ${bests}`;
@@ -1265,7 +1293,9 @@ POWER MILESTONES & SPIKES:
     historicalTrainingMethods,
     trainingEffectivenessInsights,
     fullHistoryCompact,
-    totalActivities: context.activities.length
+    totalActivities: context.activities.length,
+    hasCompletedRideToday,
+    todayActivitiesSummary
   });
 
   const contents = history.map(m => ({

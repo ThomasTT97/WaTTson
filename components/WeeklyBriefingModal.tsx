@@ -448,106 +448,135 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
 
       {/* Selected Workout Detail View Drawer / Modal overlay */}
       {selectedDay ? (
-        <div className="fixed inset-0 z-[110] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedDay(null)}>
-          <div className="bg-slate-950/90 w-full max-w-sm rounded-[2rem] p-6 pb-6 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
-            <button onClick={() => setSelectedDay(null)} className="absolute top-5 right-5 text-slate-500 hover:text-white transition-colors p-2 z-20 bg-black/40 rounded-full">
-              <X size={18} />
-            </button>
+        <div className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => setSelectedDay(null)}>
+          <div className="bg-[#0c0e15] border-t sm:border border-white/10 w-full sm:max-w-md h-[100dvh] sm:h-auto sm:max-h-[88dvh] rounded-none sm:rounded-[2.2rem] p-5 sm:p-6 shadow-[0_-10px_40px_rgba(0,0,0,0.8)] sm:shadow-2xl flex flex-col overflow-hidden relative" onClick={e => e.stopPropagation()}>
             
-            <div className="flex flex-col items-center">
-              <div className="w-14 h-14 rounded-full bg-emerald-500/10 flex items-center justify-center mb-4 border border-emerald-500/20 shadow-[0_0_30px_rgba(16,185,129,0.1)] shrink-0">
-                <Trophy size={24} className="text-emerald-400" />
-              </div>
-              
-              <h3 className="text-lg font-black text-white italic tracking-tighter mb-4 uppercase text-center leading-tight">
-                {selectedDay.focus}
-              </h3>
-              
-              <div className="bg-black/60 p-4 rounded-3xl border border-white/5 w-full text-left space-y-4">
-                 {(() => {
-                    const isRestDay = selectedDay.intensity === 'Rest' || (selectedDay.focus || '').toLowerCase().includes('rest') || selectedDay.load_target === 0;
-                    return (
-                      <div className="flex items-center justify-center gap-6 border-b border-white/5 pb-3">
-                         <div className="flex items-center gap-1.5 text-xs font-black text-white tracking-tighter">
-                            <Clock size={14} className="text-blue-400" /> {isRestDay || selectedDay.duration_target <= 0 ? '—' : `${selectedDay.duration_target} MIN`}
-                         </div>
-                         <div className="flex items-center gap-1.5 text-xs font-black text-amber-400 italic">
-                            <Zap size={14} fill="currentColor" className="text-amber-400" /> {isRestDay || selectedDay.load_target <= 0 ? '—' : `${selectedDay.load_target} TSS`}
-                         </div>
-                      </div>
-                    );
-                  })()}
+            {/* Mobile drag handle */}
+            <div className="w-10 h-1 bg-white/20 rounded-full mx-auto mb-3 shrink-0 sm:hidden" />
 
-                 <div className="space-y-3 max-h-[180px] overflow-y-auto custom-scrollbar pr-1">
-                   {selectedDay.workout_steps && selectedDay.workout_steps.length > 0 ? (
-                      isEnduranceWorkout(selectedDay) ? (
-                        <VisualProfileChart 
-                          steps={selectedDay.workout_steps} 
-                          currentFtp={ftp || undefined}
-                          originalFtp={weeklyBriefing?.ftp}
-                        />
-                      ) : (
-                        <GroupedWorkoutStepsList 
-                          steps={selectedDay.workout_steps}
-                          currentFtp={ftp || undefined}
-                          originalFtp={weeklyBriefing?.ftp}
-                          fontSize="sm"
-                        />
-                      )
-                   ) : (
-                      <p className="text-xs text-slate-400 leading-relaxed text-center px-2 font-medium opacity-80">
-                        {selectedDay.why}
-                      </p>
-                   )}
-                 </div>
+            {/* Header */}
+            <div className="flex items-center justify-between shrink-0 mb-3 pb-3 border-b border-white/5">
+              <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                <div className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-extrabold text-[10px] tracking-wider uppercase shrink-0">
+                  {selectedDay.day.split(' ')[0]}
+                </div>
+                <h3 className="text-sm sm:text-base font-black text-white italic tracking-tight uppercase truncate">
+                  {selectedDay.focus}
+                </h3>
               </div>
+              <button onClick={() => setSelectedDay(null)} className="text-slate-400 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors shrink-0">
+                <X size={18} />
+              </button>
+            </div>
 
-                {/* Custom Tweak Input for this Ride */}
-                <div className="mt-3 relative flex items-center">
-                  <input
-                    type="text"
-                    id="weekly-custom-ride-tweak"
-                    placeholder="Modify this ride..."
-                    value={rideTweakText}
-                    onChange={(e) => setRideTweakText(e.target.value)}
-                    className="w-full bg-[#0a0d14] border border-white/10 rounded-xl pl-3 pr-16 py-2.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/30 font-semibold"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && rideTweakText.trim()) {
-                        const weekIdx = getWeekForDay(selectedDay);
-                        const directive = `Modify ${selectedDay.focus} on ${selectedDay.day.split(' ')[0]}: ${rideTweakText.trim()}. Please focus on this adjustment.`;
-                        handleAddTweak(directive, weekIdx);
-                        setRideTweakText('');
-                        setSelectedDay(null);
-                      }
-                    }}
+            {/* Scrollable body content */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 min-h-0 space-y-3.5">
+              {/* Compact Metrics Strip */}
+              {(() => {
+                const isRestDay = selectedDay.intensity === 'Rest' || (selectedDay.focus || '').toLowerCase().includes('rest') || selectedDay.load_target === 0;
+                return (
+                  <div className="grid grid-cols-2 gap-2 p-3 bg-white/[0.03] border border-white/5 rounded-2xl">
+                    <div className="flex flex-col items-center justify-center text-center">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                        <Clock size={11} className="text-blue-400" /> Duration
+                      </span>
+                      <span className="text-xs sm:text-sm font-black text-white mt-0.5">
+                        {isRestDay || selectedDay.duration_target <= 0 
+                          ? '—' 
+                          : ((selectedDay.focus || '').toLowerCase().includes('endurance') || selectedDay.duration_target >= 60
+                              ? (selectedDay.duration_target % 60 === 0 
+                                  ? `${selectedDay.duration_target / 60}H` 
+                                  : `${Math.floor(selectedDay.duration_target / 60)}H${selectedDay.duration_target % 60 > 0 ? (selectedDay.duration_target % 60 < 10 ? `0${selectedDay.duration_target % 60}` : selectedDay.duration_target % 60) : ''}`)
+                              : `${selectedDay.duration_target} MIN`)}
+                      </span>
+                    </div>
+                    <div className="flex flex-col items-center justify-center text-center border-l border-white/5">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                        <Zap size={11} fill="currentColor" className="text-amber-400" /> Load
+                      </span>
+                      <span className="text-xs sm:text-sm font-black text-amber-400 mt-0.5">
+                        {isRestDay || selectedDay.load_target <= 0 ? '—' : `${selectedDay.load_target} TSS`}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {selectedDay.why && (
+                <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3 text-center">
+                  <p className="text-xs text-slate-300 leading-relaxed font-medium italic">
+                    "{selectedDay.why}"
+                  </p>
+                </div>
+              )}
+
+              {selectedDay.workout_steps && selectedDay.workout_steps.length > 0 && (
+                <div className="space-y-2.5">
+                  <VisualProfileChart 
+                    steps={selectedDay.workout_steps} 
+                    currentFtp={ftp || undefined}
+                    originalFtp={weeklyBriefing?.ftp}
                   />
-                  <button
-                    onClick={() => {
-                      if (!rideTweakText.trim()) return;
+                  <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3.5 space-y-2">
+                    <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1.5">
+                      Workout Structure
+                    </span>
+                    <GroupedWorkoutStepsList 
+                      steps={selectedDay.workout_steps}
+                      currentFtp={ftp || undefined}
+                      originalFtp={weeklyBriefing?.ftp}
+                      fontSize="sm"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Custom Tweak Input for this Ride */}
+              <div className="relative flex items-center pt-1">
+                <input
+                  type="text"
+                  id="weekly-custom-ride-tweak"
+                  placeholder="Modify this ride..."
+                  value={rideTweakText}
+                  onChange={(e) => setRideTweakText(e.target.value)}
+                  className="w-full bg-[#0a0d14] border border-white/10 rounded-xl pl-3 pr-16 py-2.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/30 font-semibold"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && rideTweakText.trim()) {
                       const weekIdx = getWeekForDay(selectedDay);
                       const directive = `Modify ${selectedDay.focus} on ${selectedDay.day.split(' ')[0]}: ${rideTweakText.trim()}. Please focus on this adjustment.`;
                       handleAddTweak(directive, weekIdx);
                       setRideTweakText('');
                       setSelectedDay(null);
-                    }}
-                    disabled={!rideTweakText.trim()}
-                    className="absolute right-1 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-30 text-slate-950 font-black text-[9px] uppercase tracking-wider rounded-lg transition-colors cursor-pointer"
-                  >
-                    Apply
-                  </button>
-                </div>
-
-              {/* Action Buttons: Close */}
-              <div className="mt-5 flex flex-col gap-2 w-full">
-                <button 
-                  onClick={() => setSelectedDay(null)}
-                  className="w-full py-3 bg-[#13151b] hover:bg-slate-800 text-slate-400 hover:text-white rounded-2xl text-[10px] font-black transition-all uppercase tracking-widest"
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    if (!rideTweakText.trim()) return;
+                    const weekIdx = getWeekForDay(selectedDay);
+                    const directive = `Modify ${selectedDay.focus} on ${selectedDay.day.split(' ')[0]}: ${rideTweakText.trim()}. Please focus on this adjustment.`;
+                    handleAddTweak(directive, weekIdx);
+                    setRideTweakText('');
+                    setSelectedDay(null);
+                  }}
+                  disabled={!rideTweakText.trim()}
+                  className="absolute right-1 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-30 text-slate-950 font-black text-[9px] uppercase tracking-wider rounded-lg transition-colors cursor-pointer"
                 >
-                  Close
+                  Apply
                 </button>
               </div>
-
             </div>
+
+            {/* Footer close button */}
+            <div className="pt-3 shrink-0 border-t border-white/5 mt-auto">
+              <button 
+                onClick={() => setSelectedDay(null)}
+                className="w-full py-3 bg-white/5 hover:bg-white/10 active:scale-[0.98] text-slate-300 hover:text-white rounded-xl text-xs font-black uppercase tracking-[0.15em] transition-all cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+
           </div>
         </div>
       ) : null}
