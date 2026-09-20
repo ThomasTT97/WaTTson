@@ -706,21 +706,58 @@ const App: React.FC = () => {
         activeCreds.athleteId = realId;
       }
 
-      const [fetchedActivities, fetchedWellness, profile, curves] = await Promise.all([
-        fetchActivities(activeCreds, 3650),
-        fetchWellness(activeCreds, 3650),
-        activeCreds.apiKey === 'demo' ? Promise.resolve({ id: '0', icu_ftp: 250 }) : fetchAthleteProfile(activeCreds),
-        getAnnualPowerCurves(activeCreds, 3) // Last 3 years
-      ]);
+      // 1. Fetch Profile (validates API key and retrieves FTP)
+      let profile: any = null;
+      if (activeCreds.apiKey === 'demo') {
+        profile = { id: '0', icu_ftp: 250 };
+      } else {
+        try {
+          profile = await fetchAthleteProfile(activeCreds);
+        } catch (e: any) {
+          console.warn("Could not fetch athlete profile:", e);
+        }
+      }
+
+      if (profile?.icu_ftp) {
+        setFtp(profile.icu_ftp);
+        safeSetItem('wattson_ftp', profile.icu_ftp.toString());
+      }
+
+      // 2. Fetch Activities (recent 3 years, with graceful cache fallback)
+      let fetchedActivities: Activity[] = [];
+      try {
+        fetchedActivities = await fetchActivities(activeCreds, 1095);
+      } catch (e: any) {
+        console.warn("Activities sync incomplete or failed, checking cache:", e);
+        if (activities && activities.length > 0) {
+          fetchedActivities = activities;
+        } else {
+          throw e; // rethrow if we have no activities to display
+        }
+      }
+
+      // 3. Fetch Wellness (recent 3 years)
+      let fetchedWellness: Wellness[] = [];
+      try {
+        fetchedWellness = await fetchWellness(activeCreds, 1095);
+      } catch (e: any) {
+        console.warn("Wellness fetch failed, using cache:", e);
+        fetchedWellness = wellnessData || [];
+      }
+
+      // 4. Fetch Power Curves (non-blocking enrichment)
+      let curves: any[] = [];
+      try {
+        curves = await getAnnualPowerCurves(activeCreds, 3);
+      } catch (e: any) {
+        console.warn("Power curve fetch failed, using cache:", e);
+        curves = powerCurves || [];
+      }
       
       console.log("Fetched activities sample:", fetchedActivities?.length > 0 ? fetchedActivities[0] : "empty");
       setActivities(fetchedActivities || []);
       setWellnessData(fetchedWellness || []);
       setPowerCurves(curves || []);
-      if (profile?.icu_ftp) {
-        setFtp(profile.icu_ftp);
-        safeSetItem('wattson_ftp', profile.icu_ftp.toString());
-      }
       
       // Limit cache to avoid QuotaExceededError (5MB limit)
       // Save compact representation of recent activities to disk while keeping full history in memory
@@ -1454,7 +1491,9 @@ const App: React.FC = () => {
     </div>
   );
 
-  if (!creds || syncError) return (
+  const hasData = Boolean(activities && activities.length > 0);
+
+  if (!creds || (!hasData && syncError)) return (
     <div className="fixed inset-0 flex flex-col p-6 justify-center items-center overflow-y-auto">
       <div className="premium-bg"></div>
       <div className="glass-card w-full max-w-sm p-6 rounded-[2rem] text-center my-auto">
@@ -1626,6 +1665,29 @@ const App: React.FC = () => {
           )}
         </div>
       </header>
+
+      {syncError && hasData && (
+        <div className="mx-4 mt-2 p-2.5 bg-rose-500/10 border border-rose-500/25 rounded-2xl flex items-center justify-between text-xs text-rose-300 backdrop-blur-md">
+          <div className="flex items-center gap-2 overflow-hidden">
+            <span className="w-2 h-2 rounded-full bg-rose-400 shrink-0 animate-pulse" />
+            <span className="text-[11px] truncate">{syncError}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 ml-2">
+            <button
+              onClick={() => { setSyncError(null); if (creds) loadData(creds); }}
+              className="px-2.5 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-[10px] font-bold rounded-lg uppercase tracking-wider text-rose-200 active:scale-95 transition-all"
+            >
+              Retry
+            </button>
+            <button
+              onClick={() => setSyncError(null)}
+              className="text-rose-400 hover:text-rose-200 p-1 text-xs"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* View Container with persistent mounting & instantaneous tab switching */}
       <div className="flex-1 min-h-0 flex flex-col relative overflow-hidden">

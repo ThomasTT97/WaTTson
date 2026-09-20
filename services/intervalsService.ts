@@ -12,16 +12,78 @@ const toLocalDateString = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
+const INTERVALS_BASE_DIRECT = 'https://intervals.icu';
+const INTERVALS_BASE_PROXY = '/api/intervals-proxy';
+
+/**
+ * Robust fetch wrapper for Intervals.icu that handles:
+ * - Automatic retry with exponential backoff on 429 rate limits
+ * - Transparent fallback to Vite dev proxy if direct CORS / network request is blocked
+ * - Transient error resilience
+ */
+export const intervalsFetch = async (
+  endpointOrUrl: string,
+  options: RequestInit = {},
+  retries = 2
+): Promise<Response> => {
+  const isAbsolute = endpointOrUrl.startsWith('http://') || endpointOrUrl.startsWith('https://');
+  const path = isAbsolute 
+    ? endpointOrUrl.replace(/^https?:\/\/[^/]+/, '') 
+    : (endpointOrUrl.startsWith('/') ? endpointOrUrl : `/${endpointOrUrl}`);
+
+  const directUrl = `${INTERVALS_BASE_DIRECT}${path}`;
+  const proxyUrl = `${INTERVALS_BASE_PROXY}${path}`;
+
+  let attempt = 0;
+  let lastError: any = null;
+
+  while (attempt <= retries) {
+    try {
+      const res = await fetch(directUrl, options);
+      if (res.status === 429 && attempt < retries) {
+        const delay = (attempt + 1) * 1500;
+        console.warn(`[Intervals.icu] Rate limit (429) hit. Backing off ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+        attempt++;
+        continue;
+      }
+      return res;
+    } catch (err: any) {
+      lastError = err;
+      // If direct request failed with TypeError (e.g. CORS block, browser ad-blocker, or network drop)
+      if (typeof window !== 'undefined') {
+        try {
+          const proxyRes = await fetch(proxyUrl, options);
+          if (proxyRes.ok || proxyRes.status === 401 || proxyRes.status === 404 || proxyRes.status === 422) {
+            return proxyRes;
+          }
+        } catch {
+          // proxy fallback also failed
+        }
+      }
+
+      if (attempt < retries) {
+        const delay = (attempt + 1) * 1000;
+        await new Promise(r => setTimeout(r, delay));
+        attempt++;
+      } else {
+        break;
+      }
+    }
+  }
+
+  throw lastError || new Error("Failed to connect to Intervals.icu");
+};
+
 export const fetchAthleteId = async (apiKey: string): Promise<string> => {
   if (!apiKey) throw new Error("API Key is required.");
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
   try {
-    const response = await fetch('https://intervals.icu/api/v1/whoami', {
+    const response = await intervalsFetch('/api/v1/whoami', {
       headers: { 
         'Authorization': `Basic ${auth}`,
         'Accept': 'application/json'
-      },
-      cache: 'no-store'
+      }
     });
     
     if (response.status === 404) {
@@ -91,6 +153,8 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
 
   try {
     let remaining = true;
+    let rateLimitRetries = 0;
+
     while (remaining) {
       const chunkOldestDate = new Date(currentNewest);
       chunkOldestDate.setDate(currentNewest.getDate() - 364); // 1 year chunks
@@ -99,15 +163,15 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
       const oldestStr = toLocalDateString(actualOldestDate);
       const newestStr = toLocalDateString(currentNewest);
 
-      const activitiesUrl = `https://intervals.icu/api/v1/athlete/${athleteId}/activities?oldest=${oldestStr}&newest=${newestStr}&cols=${fields}&size=2000&_t=${Date.now()}`;
+      const activitiesUrl = `/api/v1/athlete/${athleteId}/activities?oldest=${oldestStr}&newest=${newestStr}&cols=${fields}&size=2000&_t=${Date.now()}`;
       
-      const response = await fetch(activitiesUrl, {
+      const response = await intervalsFetch(activitiesUrl, {
         method: 'GET',
-        headers,
-        cache: 'no-store'
+        headers
       });
       
       if (response.ok) {
+        rateLimitRetries = 0;
         const data = await response.json();
         if (Array.isArray(data)) {
           if (data.length === 0) {
@@ -125,8 +189,14 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
         if (response.status === 401) throw new Error("Authentication failed: Invalid API Key.");
         if (response.status === 404) throw new Error(`Athlete ID ${athleteId} not found.`);
         if (response.status === 429) {
-           console.warn("Intervals.icu rate limit hit. Throttling...");
-           await new Promise(resolve => setTimeout(resolve, 2000));
+          console.warn("Intervals.icu rate limit hit. Throttling...");
+          if (rateLimitRetries < 3) {
+            rateLimitRetries++;
+            await new Promise(resolve => setTimeout(resolve, 2000 * rateLimitRetries));
+            continue; // retry current chunk
+          } else {
+            remaining = false; // stop gracefully
+          }
         } else {
           remaining = false;
         }
@@ -139,8 +209,8 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
         remaining = false;
       }
       
-      // Fast transition between chunks
-      if (remaining) await new Promise(resolve => setTimeout(resolve, 50));
+      // Safe pacing between chunks to prevent burst rate limits
+      if (remaining) await new Promise(resolve => setTimeout(resolve, 150));
     }
 
     return allActivities
@@ -181,6 +251,8 @@ export const fetchWellness = async (creds: IntervalsCredentials, daysBack: numbe
 
   try {
     let remaining = true;
+    let rateLimitRetries = 0;
+
     while (remaining) {
       const chunkOldestDate = new Date(currentNewest);
       chunkOldestDate.setDate(currentNewest.getDate() - 364); // Max 1 year
@@ -191,10 +263,11 @@ export const fetchWellness = async (creds: IntervalsCredentials, daysBack: numbe
       const oldestStr = toLocalDateString(actualOldestDate);
       const newestStr = toLocalDateString(currentNewest);
       
-      const url = `https://intervals.icu/api/v1/athlete/${athleteId}/wellness?oldest=${oldestStr}&newest=${newestStr}`;
+      const url = `/api/v1/athlete/${athleteId}/wellness?oldest=${oldestStr}&newest=${newestStr}`;
       
-      const response = await fetch(url, { method: 'GET', headers });
+      const response = await intervalsFetch(url, { method: 'GET', headers });
       if (response.ok) {
+        rateLimitRetries = 0;
         const data = await response.json();
         if (Array.isArray(data)) {
           if (data.length === 0) {
@@ -209,7 +282,13 @@ export const fetchWellness = async (creds: IntervalsCredentials, daysBack: numbe
           }
         }
       } else if (response.status === 429) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        if (rateLimitRetries < 3) {
+          rateLimitRetries++;
+          await new Promise(resolve => setTimeout(resolve, 2000 * rateLimitRetries));
+          continue; // retry chunk
+        } else {
+          remaining = false;
+        }
       } else {
         remaining = false;
       }
@@ -222,14 +301,14 @@ export const fetchWellness = async (creds: IntervalsCredentials, daysBack: numbe
         remaining = false;
       }
 
-      // Fast transition between chunks
-      if (remaining) await new Promise(resolve => setTimeout(resolve, 50));
+      // Safe pacing between chunks
+      if (remaining) await new Promise(resolve => setTimeout(resolve, 150));
     }
     
     // Sort chronologically
     return allWellness.sort((a, b) => a.date.localeCompare(b.date));
   } catch (error) {
-    console.error("Wellness Fetch Error:", error);
+    console.warn("Wellness Fetch Warning:", error);
     return allWellness;
   }
 };
@@ -239,10 +318,10 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
   const { apiKey } = creds;
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
   const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
-  const url = `https://intervals.icu/api/v1/activity/${activityId}`;
+  const url = `/api/v1/activity/${activityId}`;
   
   try {
-    const response = await fetch(url, { method: 'GET', headers });
+    const response = await intervalsFetch(url, { method: 'GET', headers });
     if (!response.ok) return [];
     const data = await response.json();
     
@@ -263,7 +342,7 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
     // Fallback: if empty, query the dedicated /intervals endpoint
     if (rawIntervals.length === 0) {
       try {
-        const intervalsResp = await fetch(`https://intervals.icu/api/v1/activity/${activityId}/intervals`, { method: 'GET', headers });
+        const intervalsResp = await intervalsFetch(`/api/v1/activity/${activityId}/intervals`, { method: 'GET', headers });
         if (intervalsResp.ok) {
           const intervalsData = await intervalsResp.json();
           if (Array.isArray(intervalsData)) {
@@ -766,9 +845,9 @@ export const fetchPlannedWorkout = async (dateStr: string, creds: IntervalsCrede
   const { apiKey, athleteId } = creds;
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
   const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
-  const url = `https://intervals.icu/api/v1/athlete/${athleteId}/events?oldest=${dateStr}&newest=${dateStr}`;
+  const url = `/api/v1/athlete/${athleteId}/events?oldest=${dateStr}&newest=${dateStr}`;
   try {
-    const response = await fetch(url, { method: 'GET', headers });
+    const response = await intervalsFetch(url, { method: 'GET', headers });
     if (!response.ok) return null;
     const events = await response.json();
     if (!Array.isArray(events)) return null;
@@ -785,9 +864,9 @@ export const fetchAthleteProfile = async (creds: IntervalsCredentials): Promise<
   const { apiKey, athleteId } = creds;
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
   const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
-  const url = `https://intervals.icu/api/v1/athlete/${athleteId}`;
+  const url = `/api/v1/athlete/${athleteId}`;
   try {
-    const response = await fetch(url, { method: 'GET', headers });
+    const response = await intervalsFetch(url, { method: 'GET', headers });
     if (!response.ok) throw new Error("Could not fetch athlete profile");
     return await response.json();
   } catch (error) {
@@ -806,14 +885,14 @@ export const fetchPowerCurve = async (creds: IntervalsCredentials, year: number)
   
   const oldest = `${year}-01-01`;
   const newest = `${year}-12-31`;
-  const url = `https://intervals.icu/api/v1/athlete/${athleteId}/power-curve?oldest=${oldest}&newest=${newest}`;
+  const url = `/api/v1/athlete/${athleteId}/power-curve?oldest=${oldest}&newest=${newest}`;
   
   try {
-    const response = await fetch(url, { method: 'GET', headers });
+    const response = await intervalsFetch(url, { method: 'GET', headers });
     if (!response.ok) return null;
     return await response.json();
   } catch (error) {
-    console.error(`Error fetching power curve for ${year}:`, error);
+    console.warn(`Could not fetch power curve for ${year}:`, error);
     return null;
   }
 };
@@ -829,26 +908,30 @@ export const getAnnualPowerCurves = async (creds: IntervalsCredentials, yearsCou
   const durations = [1, 5, 10, 20, 30, 60, 120, 180, 240, 300, 480, 600, 1200, 1800, 2700, 3600, 5400, 7200, 10800];
 
   for (const year of years) {
-    const data = await fetchPowerCurve(creds, year);
-    if (data && data.watts && data.secs) {
-      const bests = durations.map(d => {
-        // Find closest duration in returned data
-        let idx = data.secs.indexOf(d);
-        if (idx === -1) {
-          // Find first index where secs >= d
-          idx = data.secs.findIndex((s: number) => s >= d);
-        }
-        return {
-          duration: d,
-          watts: idx !== -1 ? data.watts[idx] : 0
-        };
-      });
-      results.push({ year, bests });
-    } else if (creds.apiKey === 'demo') {
-      results.push({ year, bests: getMockPowerBests(year) });
+    try {
+      const data = await fetchPowerCurve(creds, year);
+      if (data && data.watts && data.secs) {
+        const bests = durations.map(d => {
+          // Find closest duration in returned data
+          let idx = data.secs.indexOf(d);
+          if (idx === -1) {
+            // Find first index where secs >= d
+            idx = data.secs.findIndex((s: number) => s >= d);
+          }
+          return {
+            duration: d,
+            watts: idx !== -1 ? data.watts[idx] : 0
+          };
+        });
+        results.push({ year, bests });
+      } else if (creds.apiKey === 'demo') {
+        results.push({ year, bests: getMockPowerBests(year) });
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch power curve for ${year}, skipping:`, e);
     }
-    // Small delay to be safe
-    if (creds.apiKey !== 'demo') await new Promise(r => setTimeout(r, 200));
+    // Small delay between years to prevent hitting rate limits
+    if (creds.apiKey !== 'demo') await new Promise(r => setTimeout(r, 250));
   }
   return results;
 };
@@ -877,9 +960,9 @@ export const uploadWorkout = async (
     workout: workout.workout_text
   };
 
-  const url = `https://intervals.icu/api/v1/athlete/${athleteId}/events`;
+  const url = `/api/v1/athlete/${athleteId}/events`;
   try {
-    const response = await fetch(url, { 
+    const response = await intervalsFetch(url, { 
       method: 'POST', 
       headers,
       body: JSON.stringify(body)

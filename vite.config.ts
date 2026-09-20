@@ -10,7 +10,15 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: 3000,
-      host: '0.0.0.0'
+      host: '0.0.0.0',
+      proxy: {
+        '/api/intervals-proxy': {
+          target: 'https://intervals.icu',
+          changeOrigin: true,
+          secure: true,
+          rewrite: (path) => path.replace(/^\/api\/intervals-proxy/, '')
+        }
+      }
     },
     define: {
       // Polyfill process.env.GEMINI_API_KEY for the @google/genai SDK
