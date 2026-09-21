@@ -257,7 +257,8 @@ const App: React.FC = () => {
   const [trainingMethodology, setTrainingMethodology] = useState<TrainingMethodology>(() => {
     return (localStorage.getItem('wattson_training_methodology') as TrainingMethodology) || 'polarized';
   });
-  const [insightsPeriod, setInsightsPeriod] = useState<'week' | 'month' | '6months' | 'year'>('month');
+  const [insightsPeriod, setInsightsPeriod] = useState<'week' | 'month' | '6months' | 'year' | 'season'>('month');
+  const [selectedSeasonYear, setSelectedSeasonYear] = useState(new Date().getFullYear());
   
   const [suggestion, setSuggestion] = useState<DailySuggestion | null>(() => {
     try {
@@ -3750,31 +3751,54 @@ const App: React.FC = () => {
             </div>
 
             {/* Period Selector */}
-            <div className="flex p-0.5 bg-white/[0.02] border border-white/[0.06] rounded-xl mb-4 shrink-0">
-              {(['week', 'month', '6months', 'year'] as const).map((period) => (
-                <button
-                  key={period}
-                  onClick={() => setInsightsPeriod(period)}
-                  className={`flex-1 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                    insightsPeriod === period
-                      ? 'bg-white/10 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {period === 'week' ? 'Last Week' : period === 'month' ? 'Month' : period === '6months' ? '6 Months' : 'Year'}
-                </button>
-              ))}
+            <div className="flex flex-col gap-2 mb-4">
+              <div className="flex p-0.5 bg-white/[0.02] border border-white/[0.06] rounded-xl shrink-0">
+                {(['week', 'month', '6months', 'year', 'season'] as const).map((period) => (
+                  <button
+                    key={period}
+                    onClick={() => setInsightsPeriod(period)}
+                    className={`flex-1 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                      insightsPeriod === period
+                        ? 'bg-white/10 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {period === 'week' ? 'Last Week' : period === 'month' ? 'Month' : period === '6months' ? '6 Months' : period === 'season' ? 'Season' : 'Year'}
+                  </button>
+                ))}
+              </div>
+              
+              {insightsPeriod === 'season' && (
+                <div className="flex items-center justify-center gap-2 px-2 py-1 bg-white/[0.02] border border-white/[0.06] rounded-xl">
+                  <button onClick={() => setSelectedSeasonYear(y => y - 1)} className="text-slate-400 hover:text-white p-1">‹</button>
+                  <span className="text-xs font-bold text-white font-mono">{selectedSeasonYear}</span>
+                  <button onClick={() => setSelectedSeasonYear(y => y + 1)} className="text-slate-400 hover:text-white p-1">›</button>
+                </div>
+              )}
             </div>
 
             {/* Computed Insights Metrics */}
             <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-0.5">
               {(() => {
                 const now = new Date();
-                const daysMap = { week: 7, month: 30, '6months': 180, year: 365 };
-                const days = daysMap[insightsPeriod];
-                const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+                let cutoff, endCutoff, weeks;
+                if (insightsPeriod === 'season') {
+                  cutoff = new Date(selectedSeasonYear, 0, 1);
+                  endCutoff = new Date(selectedSeasonYear, 11, 31, 23, 59, 59, 999);
+                  if (endCutoff > now) endCutoff = now;
+                  weeks = Math.max(1, (endCutoff.getTime() - cutoff.getTime()) / (7 * 24 * 60 * 60 * 1000));
+                } else {
+                  const daysMap = { week: 7, month: 30, '6months': 180, year: 365 };
+                  const days = daysMap[insightsPeriod];
+                  cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+                  endCutoff = now;
+                  weeks = days / 7;
+                }
 
-                const filtered = (activities || []).filter(a => new Date(a.start_date_local) >= cutoff);
+                const filtered = (activities || []).filter(a => {
+                  const d = new Date(a.start_date_local);
+                  return d >= cutoff && d <= endCutoff;
+                });
                 const formatThousand = (val: number | string, decimals: number = 0) => {
                   const num = typeof val === 'number' ? val : parseFloat(val as string);
                   if (isNaN(num)) return val;
@@ -3787,7 +3811,7 @@ const App: React.FC = () => {
                 const totalHoursNum = filtered.reduce((acc, a) => acc + (a.moving_time || 0), 0) / 3600;
                 const totalHours = formatThousand(totalHoursNum, 1);
                 const totalTss = formatThousand(Math.round(filtered.reduce((acc, a) => acc + (a.icu_training_load || a.icu_tss || 0), 0)));
-                const avgTssPerWeek = formatThousand(Math.round(filtered.reduce((acc, a) => acc + (a.icu_training_load || a.icu_tss || 0), 0) / Math.max(1, days / 7)));
+                const avgTssPerWeek = formatThousand(Math.round(filtered.reduce((acc, a) => acc + (a.icu_training_load || a.icu_tss || 0), 0) / Math.max(1, weeks)));
                 const totalRides = formatThousand(filtered.length);
                 const avgWattsVal = Math.round(filtered.reduce((acc, a) => acc + (a.average_watts || a.icu_average_watts || 0), 0) / Math.max(1, filtered.filter(a => a.average_watts || a.icu_average_watts).length));
                 const avgWatts = avgWattsVal ? `${formatThousand(avgWattsVal)}W` : '—';

@@ -364,7 +364,7 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
       onClick={onClose}
     >
       <div 
-        className="bg-[#0b0f19] w-full max-w-sm rounded-3xl p-4 sm:p-5 relative border border-white/10 shadow-2xl space-y-3.5 my-auto flex flex-col"
+        className="bg-[#0b0f19] w-full h-full p-4 sm:p-5 relative border border-white/10 shadow-2xl space-y-3.5 flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         {/* Minimalist Header */}
@@ -388,7 +388,7 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
         </div>
 
         {/* Minimalist Days List: Only days & hours available per day */}
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 overflow-y-auto flex-1">
           {days.map((day, idx) => {
             const isRest = day.durationMins <= 0;
             const displayStr = formatDurationDisplay(day.durationMins);
@@ -449,6 +449,49 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
 
         {/* Minimalist Actions */}
         <div className="flex items-center gap-2 pt-1 border-t border-white/5">
+          <button
+            onClick={() => {
+              // Reset to planned schedule
+              const saved = loadSavedAvailability();
+              const today = new Date();
+              const toLocalDateStr = (d: Date) => {
+                const year = d.getFullYear();
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+              };
+              const getDayShort = (d: Date) => {
+                return ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][d.getDay()];
+              };
+
+              setDays(days.map((day, i) => {
+                const d = new Date();
+                d.setDate(today.getDate() + i);
+                const dayShort = getDayShort(d);
+
+                const plannedDay = weeklyBriefing?.days?.find(dayItem => {
+                  if (dayItem.day && dayShort) {
+                    return dayItem.day.toUpperCase().startsWith(dayShort) || dayShort.startsWith(dayItem.day.toUpperCase());
+                  }
+                  return false;
+                });
+
+                let mins = 60;
+                if (plannedDay) {
+                  const isRest = plannedDay.intensity === 'Rest' || 
+                                 (plannedDay.focus || '').toLowerCase().includes('rest') || 
+                                 (plannedDay.duration_target || 0) <= 0;
+                  mins = isRest ? 0 : (plannedDay.duration_target || 60);
+                }
+                
+                return { ...day, durationMins: mins };
+              }));
+            }}
+            className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold text-slate-300 hover:text-white transition-all cursor-pointer text-center"
+          >
+            Reset to Optimal
+          </button>
+          
           <button
             onClick={onClose}
             className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold text-slate-300 hover:text-white transition-all cursor-pointer text-center"
