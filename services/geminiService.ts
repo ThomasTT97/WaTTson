@@ -28,7 +28,8 @@ import {
   parsePlanDirectives,
   pruneExpiredDirectives,
   formatDirectivesForPrompt,
-  serializePlanDirectives
+  serializePlanDirectives,
+  parseScheduleDurationsFromDirective
 } from "./directiveService";
 
 
@@ -582,7 +583,7 @@ export const getDailySuggestion = async (
   return result;
 };
 
-export const normalizeBriefingDays = (briefing: WeeklyBriefing): WeeklyBriefing => {
+export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: string): WeeklyBriefing => {
   if (!briefing || !briefing.days) return briefing;
 
   let ftp = briefing.ftp;
@@ -591,9 +592,21 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing): WeeklyBriefing 
   }
   if (!ftp) ftp = 250;
 
+  // Check for active weekly schedule directive in planContext
+  const scheduleMap = planContext ? parseScheduleDurationsFromDirective(planContext) : null;
+
+  // Helper to extract weekday short name e.g. "mon" from "Mon (Sep 21)" or "MON"
+  const extractWeekdayToken = (dayStr: string): string | null => {
+    const match = (dayStr || '').match(/\b(mon|tue|wed|thu|fri|sat|sun)\b/i);
+    return match ? match[1].toLowerCase() : null;
+  };
+
   // Pass 1: Normalize durations, units, and weekday vs weekend duration caps
   let normalizedDays = briefing.days.map((day, idx) => {
-    const isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || (day.focus || '').toLowerCase().includes('off');
+    const token = extractWeekdayToken(day.day);
+    const customRule = (token && scheduleMap) ? scheduleMap[token] : null;
+
+    let isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || (day.focus || '').toLowerCase().includes('off');
     const isCommute = (day.day || '').toLowerCase().includes('commute') || (day.focus || '').toLowerCase().includes('commute');
     const isWeekend = /sat|sun/i.test(day.day || '');
     
@@ -601,42 +614,74 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing): WeeklyBriefing 
     if (typeof targetDuration === 'number' && targetDuration > 0 && targetDuration <= 6) {
       targetDuration = Math.round(targetDuration * 60);
     }
-    if (!targetDuration || targetDuration <= 0) {
-      targetDuration = isRest ? 0 : 60;
-    }
 
-    // Weekday rides shouldn't default to marathon 4h (240m) or 3h (180m) sessions unless weekend
-    if (!isRest && !isWeekend && targetDuration > 120) {
-      // Normal weekday session should be 60-90m
-      targetDuration = 75;
+    if (customRule) {
+      if (customRule.isRest) {
+        return {
+          ...day,
+          focus: 'Rest Day',
+          intensity: 'Rest' as const,
+          duration_target: 0,
+          load_target: 0,
+          why: 'Scheduled rest day for physiological recovery.',
+          workout_steps: []
+        };
+      } else {
+        targetDuration = customRule.durationMins;
+        isRest = false;
+      }
+    } else {
+      if (!targetDuration || targetDuration <= 0) {
+        targetDuration = isRest ? 0 : 60;
+      }
+
+      // Weekday rides shouldn't default to marathon 4h (240m) or 3h (180m) sessions unless weekend
+      if (!isRest && !isWeekend && targetDuration > 120) {
+        // Normal weekday session should be 60-90m
+        targetDuration = 75;
+      }
     }
 
     let currentDay = {
       ...day,
-      duration_target: targetDuration
+      duration_target: targetDuration,
+      intensity: isRest ? ('Rest' as const) : (day.intensity === 'Rest' ? ('Easy' as const) : day.intensity || ('Medium' as const))
     };
 
     if (!isRest && !isCommute) {
       const matched = matchWorkoutToLibrary(currentDay.focus || '', targetDuration, currentDay.intensity || 'Medium');
       if (matched) {
-        const scaledSteps = matched.workout_steps.map(step => ({
-          duration: step.duration,
-          target_watts: Math.round(step.target_pct * ftp),
-          target_pct: step.target_pct,
-          label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
-        }));
+        const matchedDuration = matched.duration_minutes || 60;
+        const scaleFactor = targetDuration / matchedDuration;
+
+        const scaledSteps = matched.workout_steps.map(step => {
+          const scaledDur = Math.max(1, Math.round(step.duration * scaleFactor));
+          return {
+            duration: scaledDur,
+            target_watts: Math.round(step.target_pct * ftp),
+            target_pct: step.target_pct,
+            label: `${scaledDur}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+          };
+        });
+
+        // Ensure sum of step durations exactly matches targetDuration
+        const totalStepDur = scaledSteps.reduce((sum, s) => sum + s.duration, 0);
+        if (totalStepDur !== targetDuration && scaledSteps.length > 0) {
+          scaledSteps[scaledSteps.length - 1].duration += (targetDuration - totalStepDur);
+        }
+
         return {
           ...currentDay,
           focus: matched.title,
           workout_steps: scaledSteps,
-          duration_target: matched.duration_minutes,
-          load_target: matched.tss || currentDay.load_target,
+          duration_target: targetDuration,
+          load_target: matched.tss ? Math.round(matched.tss * scaleFactor) : currentDay.load_target,
           why: `${matched.category} focus: ${matched.description}`
         };
       }
     }
     
-    if (currentDay.workout_steps) {
+    if (currentDay.workout_steps && currentDay.workout_steps.length > 0) {
       const sanitizedSteps = sanitizeWorkoutSteps(currentDay.workout_steps, ftp);
       const computedDuration = sanitizedSteps ? sanitizedSteps.reduce((sum, s) => sum + s.duration, 0) : currentDay.duration_target;
       return {
@@ -649,11 +694,17 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing): WeeklyBriefing 
     return currentDay;
   });
 
-  // Pass 2: Guard against consecutive long sessions (e.g. back-to-back 4h / 240m or >120m sessions)
+  // Pass 2: Guard against consecutive long sessions (unless explicitly scheduled by user)
   for (let i = 0; i < normalizedDays.length - 1; i++) {
     const current = normalizedDays[i];
     const next = normalizedDays[i + 1];
     if (!current || !next) continue;
+
+    const nextToken = extractWeekdayToken(next.day);
+    const hasCustomForNext = (nextToken && scheduleMap && scheduleMap[nextToken]);
+    if (hasCustomForNext) {
+      continue;
+    }
 
     const isCurrentRest = current.intensity === 'Rest' || (current.focus || '').toLowerCase().includes('rest');
     const isNextRest = next.intensity === 'Rest' || (next.focus || '').toLowerCase().includes('rest');
@@ -818,7 +869,8 @@ export const getWeeklyBriefing = async (
   planMode: 'power' | 'hr' = 'power',
   trainingMode: TrainingMode = 'cycling',
   weekIndex?: number,
-  methodology?: TrainingMethodology
+  methodology?: TrainingMethodology,
+  existingBriefing?: WeeklyBriefing | null
 ): Promise<WeeklyBriefing> => {
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -846,7 +898,7 @@ export const getWeeklyBriefing = async (
   
   if (!force) {
     const cached = getCache(cacheKey);
-    if (cached) return normalizeBriefingDays(cached);
+    if (cached) return normalizeBriefingDays(cached, planContext);
   }
 
   const latestWellness = wellness[wellness.length - 1];
@@ -912,6 +964,14 @@ export const getWeeklyBriefing = async (
     }
   }
 
+  let existingPlanSummary = '';
+  if (existingBriefing?.days && existingBriefing.days.length > 0) {
+    existingPlanSummary = existingBriefing.days.map(d => {
+      const isRest = d.intensity === 'Rest' || (d.focus || '').toLowerCase().includes('rest') || (d.duration_target || 0) === 0;
+      return `${d.day}: ${isRest ? 'Rest Day' : `${d.focus} (${d.duration_target}m, ${d.intensity})`}`;
+    }).join('\n');
+  }
+
   const prompt = getWeeklyBriefingPrompt({
     userGoal: userGoal || 'Increase endurance',
     stats,
@@ -923,7 +983,8 @@ export const getWeeklyBriefing = async (
     hasPowerOnMostRides,
     hrStatsText,
     trainingMode,
-    methodology
+    methodology,
+    existingPlanSummary: existingPlanSummary || undefined
   });
 
   const response = await callGemini({
@@ -971,7 +1032,7 @@ export const getWeeklyBriefing = async (
     }
   });
   const rawResult = safeParseJSON(response.text) as WeeklyBriefing;
-  const result = normalizeBriefingDays(rawResult);
+  const result = normalizeBriefingDays(rawResult, planContext);
   result.ftp = ftp || 250;
   setCache(cacheKey, result);
   return result;

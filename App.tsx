@@ -32,9 +32,9 @@ import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
 import { MonthlyReportModal } from './components/MonthlyReportModal';
 import { WorkoutLibrary } from './components/WorkoutLibrary';
-import { PlanAndChangeModal } from './components/PlanAndChangeModal';
+import { PlanAndChangeModal, DayDurationItem } from './components/PlanAndChangeModal';
 import { LibraryWorkout } from './services/workoutLibrary';
-import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts, isEnduranceWorkout, VisualProfileChart } from './components/StepLabel';
+import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts, isEnduranceWorkout, VisualProfileChart, calculateWorkoutAverageWatts } from './components/StepLabel';
 import { User as FirebaseUser } from 'firebase/auth';
 import { 
   subscribeAuth, 
@@ -150,43 +150,6 @@ const APP_CHANGELOG = [
   "Improvement: Maximized screen real-estate by removing dead space.",
   "Update: Reorganized Training Plan and Recovery Advice on the home screen for better visibility."
 ];
-
-const getCoachingInsight = (day: any, profile: any, goal: string) => {
-  const focus = (day.focus || '').toLowerCase();
-  const intensity = (day.intensity || '').toLowerCase();
-  const athleteType = profile?.athlete_type || 'Kermesse Specialist & Punchy All-Rounder';
-  const cleanGoal = goal || 'Improve cycling performance';
-  
-  if (focus.includes('rest') || intensity === 'rest') {
-    return `Complete rest is where the actual physiological adaptation occurs. For a high-torque ${athleteType}, allowing full muscle glycogen replenishment and nervous system recovery is the secret key to successfully meeting your goal: ${cleanGoal}.`;
-  }
-
-  if (focus.includes('endurance') || focus.includes('base') || focus.includes('aerobic') || focus.includes('zone 2') || focus.includes('z2')) {
-    return `Building a wide aerobic base is the absolute bedrock for holding high speeds and surviving late-race selections. For a ${athleteType}, this Endurance ride optimizes mitochondrial density and fat oxidation, saving your high-powered anaerobic matches for when you need them to execute your goal: ${cleanGoal}.`;
-  }
-
-  if (focus.includes('recovery') || focus.includes('recup') || focus.includes('flush') || focus.includes('spin')) {
-    return `As a ${athleteType}, your muscular system generates massive anaerobic torque during peak efforts. This Active Recovery Spin is crucial to stimulate blood flow and clear metabolic waste from your fast-twitch fibers, facilitating muscle protein synthesis without adding systemic stress, directly supporting your goal: ${cleanGoal}.`;
-  }
-  
-  if (focus.includes('vo2') || focus.includes('aerobic capacity') || (focus.includes('interval') && intensity.includes('hard'))) {
-    return `This high-intensity session targets your natural strengths as a ${athleteType}. Elevating your maximal aerobic capacity allows you to recover quicker from repeated high-power bursts, making this workout highly specific to achieving your goal: ${cleanGoal}.`;
-  }
-
-  if (focus.includes('anaerobic') || focus.includes('sprint') || focus.includes('capacity') || focus.includes('neuromuscular')) {
-    return `This explosive session targets your peak power and glycolytic capacity. As a ${athleteType}, your punchy nature is a primary race-winning weapon. Sharpening this system is crucial for achieving your goal: ${cleanGoal}.`;
-  }
-  
-  if (focus.includes('sweet') || focus.includes('threshold') || focus.includes('sst') || focus.includes('tempo') || focus.includes('ftp')) {
-    return `This sustained session raising your functional threshold power directly expands your steady-state speed. For a ${athleteType}, this helps you sustain longer speeds during breakaways or bridging attempts to deliver on your goal: ${cleanGoal}.`;
-  }
-
-  if (intensity.includes('easy')) {
-    return `Building aerobic efficiency at controlled intensities develops cardiovascular resilience. For a ${athleteType}, easy endurance mileage builds fatigue resistance to keep you sharp for your goal: ${cleanGoal}.`;
-  }
-
-  return `This session is calculated to balance your current cumulative training stress, maintaining fitness progression toward your target: ${cleanGoal}.`;
-};
 
 const App: React.FC = () => {
   const [creds, setCreds] = useState<IntervalsCredentials | null>(() => {
@@ -446,35 +409,178 @@ const App: React.FC = () => {
     return 4;
   };
 
-  const handleAddTweakFromApp = (newTweakDirective: string, weekIndex?: number, switchTab = true) => {
-    const parsed = parsePlanDirectives(planContext);
+  const adaptBriefingWithSchedule = (
+    currentBriefing: WeeklyBriefing | null | undefined,
+    updatedDays: DayDurationItem[],
+    userFtp: number = 250
+  ): WeeklyBriefing => {
+    const base: WeeklyBriefing = currentBriefing ? { ...currentBriefing } : {
+      phase: 'Build / Aerobic Base',
+      focus: 'Custom Training Schedule',
+      outlook_summary: 'Personalized training week aligned with your custom availability schedule.',
+      ftp: userFtp,
+      days: []
+    };
+
+    const existingDays = base.days || [];
+    
+    // Compute day offsets for existing days
+    const dayOffsets: number[] = [];
+    let currentOffset = 0;
+    let prevDayStr = '';
+    existingDays.forEach((day, idx) => {
+      if (idx > 0) {
+        const curDayNormalized = (day.day || '').trim().toLowerCase();
+        const prevDayNormalized = prevDayStr.trim().toLowerCase();
+        if (curDayNormalized !== prevDayNormalized) {
+          currentOffset += 1;
+        }
+      }
+      dayOffsets.push(currentOffset);
+      prevDayStr = day.day || '';
+    });
+
+    const adaptedDays: WeeklyBriefing['days'] = [];
+
+    // For week 1 (offsets 0 to 6), map directly from updatedDays
+    updatedDays.forEach((dayItem, i) => {
+      const requestedMins = dayItem.durationMins;
+      const isRest = requestedMins <= 0;
+
+      // Find any existing day matching offset i
+      const existingIdx = dayOffsets.findIndex(offset => offset === i);
+      const existingDay = existingIdx !== -1 ? existingDays[existingIdx] : undefined;
+
+      const dayName = existingDay?.day || `${dayItem.dayShort} (${dayItem.dateStr})`;
+
+      if (isRest) {
+        adaptedDays.push({
+          day: dayName,
+          focus: 'Rest Day',
+          intensity: 'Rest',
+          duration_target: 0,
+          load_target: 0,
+          why: 'Scheduled rest day for physiological recovery and adaptation.',
+          workout_steps: []
+        });
+      } else {
+        // If we have an existing workout on this day that wasn't Rest, preserve its focus and theme
+        const hadExistingWorkout = existingDay && 
+          existingDay.intensity !== 'Rest' && 
+          !existingDay.focus.toLowerCase().includes('rest') &&
+          (existingDay.duration_target || 0) > 0;
+
+        if (hadExistingWorkout && existingDay) {
+          const oldDur = existingDay.duration_target || 60;
+          const scale = requestedMins / oldDur;
+
+          let scaledSteps = (existingDay.workout_steps && existingDay.workout_steps.length > 0)
+            ? existingDay.workout_steps.map(s => {
+                const scaledDur = Math.max(1, Math.round(s.duration * scale));
+                return {
+                  ...s,
+                  duration: scaledDur,
+                  label: s.label ? s.label.replace(/^\d+m\s*/, `${scaledDur}m `) : `${scaledDur}m Workout Step`
+                };
+              })
+            : [
+                { duration: Math.max(5, Math.round(requestedMins * 0.15)), target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${Math.max(5, Math.round(requestedMins * 0.15))}m Warm-up (55% FTP)` },
+                { duration: Math.max(10, Math.round(requestedMins * 0.7)), target_pct: 0.68, target_watts: Math.round(userFtp * 0.68), label: `${Math.max(10, Math.round(requestedMins * 0.7))}m Aerobic Pace (68% FTP)` },
+                { duration: Math.max(5, Math.round(requestedMins * 0.15)), target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${Math.max(5, Math.round(requestedMins * 0.15))}m Cool-down (55% FTP)` }
+              ];
+
+          const sumStepDur = scaledSteps.reduce((sum, s) => sum + s.duration, 0);
+          if (sumStepDur !== requestedMins && scaledSteps.length > 0) {
+            scaledSteps[scaledSteps.length - 1].duration += (requestedMins - sumStepDur);
+          }
+
+          adaptedDays.push({
+            ...existingDay,
+            day: dayName,
+            duration_target: requestedMins,
+            load_target: Math.round((existingDay.load_target || Math.round(oldDur * 0.7)) * scale),
+            workout_steps: scaledSteps,
+            why: existingDay.why || 'Targeted aerobic development and progression.'
+          });
+        } else {
+          const defaultFocus = requestedMins >= 120 ? 'Endurance Ride' : (requestedMins >= 75 ? 'Aerobic Foundation' : 'Endurance Spin');
+          const defaultIntensity = requestedMins >= 90 ? 'Medium' : 'Easy';
+          const warmMins = Math.max(5, Math.round(requestedMins * 0.15));
+          const coolMins = Math.max(5, Math.round(requestedMins * 0.12));
+          const mainMins = requestedMins - warmMins - coolMins;
+
+          adaptedDays.push({
+            day: dayName,
+            focus: defaultFocus,
+            intensity: defaultIntensity as any,
+            duration_target: requestedMins,
+            load_target: Math.round(requestedMins * (defaultIntensity === 'Medium' ? 0.75 : 0.62)),
+            why: 'Aerobic base development and cardiovascular adaptation.',
+            workout_steps: [
+              { duration: warmMins, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${warmMins}m Progressive Warm-up (55% FTP)` },
+              { duration: mainMins, target_pct: 0.68, target_watts: Math.round(userFtp * 0.68), label: `${mainMins}m Steady Zone 2 (68% FTP)` },
+              { duration: coolMins, target_pct: 0.52, target_watts: Math.round(userFtp * 0.52), label: `${coolMins}m Easy Spin Cool-down (52% FTP)` }
+            ]
+          });
+        }
+      }
+    });
+
+    const remainingDays = existingDays.filter((_, idx) => dayOffsets[idx] >= 7);
+
+    return {
+      ...base,
+      ftp: userFtp,
+      days: [...adaptedDays, ...remainingDays]
+    };
+  };
+
+  const handleApplyScheduleChange = (
+    newTweakDirective: string,
+    updatedDays?: DayDurationItem[],
+    weekIndex?: number,
+    switchTab = true
+  ) => {
     const today = getTodayDateString();
+    const parsed = parsePlanDirectives(planContext);
+    
     const newDir: PlanDirective = {
       id: `dir_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       text: newTweakDirective.trim(),
       requestedAt: today,
     };
-    const updated = [...parsed, newDir];
-    const { active } = pruneExpiredDirectives(updated, today);
+
+    // Filter out previous weekly schedule directives to avoid conflicting schedule rules
+    const filteredParsed = parsed.filter(d => !d.text.toLowerCase().includes('weekly schedule'));
+    const updatedDirectives = [...filteredParsed, newDir];
+    const { active } = pruneExpiredDirectives(updatedDirectives, today);
     const newContext = serializePlanDirectives(active);
-    
+
     setLastAppliedTweak(newTweakDirective.trim());
     setShowTweakSuccessNotice(false);
     setPlanContext(newContext);
     safeSetItem('wattson_plan_context', newContext);
+
     if (switchTab) {
       setActiveTab('rides');
     }
-    
-    if (!weekIndex) {
-      // Global tweak: clear existing weeks and fetch just week 1 for speed
-      setGeneratedWeeks([]);
-      setWeeklyBriefing(null);
-      fetchWeeklyBriefingData(newContext, true, undefined, undefined, 1);
-    } else {
-      // Tweak for a specific week
-      fetchWeeklyBriefingData(newContext, true, undefined, undefined, weekIndex);
+
+    // 1. Immediately adapt existing weeklyBriefing to reflect user's requested durations and rest days!
+    if (updatedDays && updatedDays.length > 0) {
+      const adapted = adaptBriefingWithSchedule(weeklyBriefing, updatedDays, ftp || 250);
+      setWeeklyBriefing(adapted);
+      safeSetItem('wattson_saved_weekly_briefing', JSON.stringify(adapted));
+      if (currentUserRef.current) {
+        syncToCloud({ weeklyBriefingJson: JSON.stringify(adapted) });
+      }
     }
+
+    // 2. Recalibrate in background while preserving weeklyBriefing continuity
+    fetchWeeklyBriefingData(newContext, true, undefined, undefined, weekIndex || 1);
+  };
+
+  const handleAddTweakFromApp = (newTweakDirective: string, weekIndex?: number, switchTab = true) => {
+    handleApplyScheduleChange(newTweakDirective, undefined, weekIndex, switchTab);
   };
 
   const handleSyncToIntervalsFromApp = async (day: any, absoluteIndex: number) => {
@@ -1243,7 +1349,7 @@ const App: React.FC = () => {
       const activeMode = mode || planMode;
       const activeTrainingMode = trainingModeArg || trainingMode;
 
-      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode, activeTrainingMode, weekIndex, trainingMethodology);
+      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode, activeTrainingMode, weekIndex, trainingMethodology, weeklyBriefing);
       setWeeklyBriefing(prev => {
         if (!prev) return data;
         
@@ -3300,28 +3406,52 @@ const App: React.FC = () => {
             {/* Scrollable body content */}
             <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 min-h-0 space-y-3.5">
               {/* Compact Metrics Strip */}
-              <div className="grid grid-cols-2 gap-2 p-3 bg-white/[0.03] border border-white/5 rounded-2xl">
-                <div className="flex flex-col items-center justify-center text-center">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                    <Clock size={11} className="text-blue-400" /> Duration
-                  </span>
-                  <span className="text-xs sm:text-sm font-black text-white mt-0.5">
-                    {currentWorkout.type === 'endurance' || currentWorkout.title.toLowerCase().includes('endurance')
-                      ? (currentWorkout.duration_minutes % 60 === 0
-                          ? `${currentWorkout.duration_minutes / 60}H`
-                          : `${Math.floor(currentWorkout.duration_minutes / 60)}H${currentWorkout.duration_minutes % 60 > 0 ? (currentWorkout.duration_minutes % 60 < 10 ? `0${currentWorkout.duration_minutes % 60}` : currentWorkout.duration_minutes % 60) : ''}`)
-                      : `${currentWorkout.duration_minutes} MIN`}
-                  </span>
-                </div>
-                <div className="flex flex-col items-center justify-center text-center border-l border-white/5">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                    <Zap size={11} fill="currentColor" className="text-amber-400" /> Load
-                  </span>
-                  <span className="text-xs sm:text-sm font-black text-amber-400 mt-0.5">
-                    {currentWorkout.tss || '--'} TSS
-                  </span>
-                </div>
-              </div>
+              {(() => {
+                const workoutAvgWatts = calculateWorkoutAverageWatts(
+                  currentWorkout.workout_steps,
+                  ftp || 250,
+                  weeklyBriefing?.ftp,
+                  {
+                    duration: currentWorkout.duration_minutes,
+                    focus: currentWorkout.title,
+                    intensity: currentWorkout.intensity,
+                    tss: currentWorkout.tss
+                  }
+                );
+
+                return (
+                  <div className="grid grid-cols-3 gap-2 p-3 bg-white/[0.03] border border-white/5 rounded-2xl">
+                    <div className="flex flex-col items-center justify-center text-center">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                        <Clock size={11} className="text-blue-400" /> Duration
+                      </span>
+                      <span className="text-xs sm:text-sm font-black text-white mt-0.5">
+                        {currentWorkout.type === 'endurance' || currentWorkout.title.toLowerCase().includes('endurance')
+                          ? (currentWorkout.duration_minutes % 60 === 0
+                              ? `${currentWorkout.duration_minutes / 60}H`
+                              : `${Math.floor(currentWorkout.duration_minutes / 60)}H${currentWorkout.duration_minutes % 60 > 0 ? (currentWorkout.duration_minutes % 60 < 10 ? `0${currentWorkout.duration_minutes % 60}` : currentWorkout.duration_minutes % 60) : ''}`)
+                          : `${currentWorkout.duration_minutes} MIN`}
+                      </span>
+                    </div>
+                    <div className="flex flex-col items-center justify-center text-center border-x border-white/5">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                        <Zap size={11} fill="currentColor" className="text-amber-400" /> Load
+                      </span>
+                      <span className="text-xs sm:text-sm font-black text-amber-400 mt-0.5">
+                        {currentWorkout.tss || '--'} TSS
+                      </span>
+                    </div>
+                    <div className="flex flex-col items-center justify-center text-center">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                        <ActivityIcon size={11} className="text-emerald-400" /> Target
+                      </span>
+                      <span className="text-xs sm:text-sm font-black text-emerald-400 mt-0.5 uppercase">
+                        {workoutAvgWatts ? `${workoutAvgWatts}W` : '—'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {currentWorkout.description && (
                 <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3 text-center">
@@ -3340,7 +3470,7 @@ const App: React.FC = () => {
                   />
                   <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3.5 space-y-2">
                     <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1.5">
-                      Workout Structure
+                      Intervals
                     </span>
                     <GroupedWorkoutStepsList 
                       steps={currentWorkout.workout_steps}
@@ -3391,50 +3521,19 @@ const App: React.FC = () => {
           const targetWattsDisplay = (() => {
             if (isRest) return 'Rest';
             
-            // Check if there are structured workout steps
-            if (selectedSuggestedDay.workout_steps && selectedSuggestedDay.workout_steps.length > 0) {
-              const steps = selectedSuggestedDay.workout_steps;
-              // Filter steps that have power target or percent
-              const validSteps = steps.filter((s: any) => (s.target_pct && s.target_pct > 0) || (s.target_watts && s.target_watts > 0));
-              if (validSteps.length > 0) {
-                // Find main work step (highest duration, or if equal, highest target)
-                const sorted = [...validSteps].sort((a, b) => (b.duration - a.duration) || ((b.target_pct || 0) - (a.target_pct || 0)));
-                const mainStep = sorted[0];
-                if (mainStep.target_pct && mainStep.target_pct > 0) {
-                  return `${Math.round(mainStep.target_pct * currentFtp)}W`;
-                }
-                if (mainStep.target_watts && mainStep.target_watts > 0) {
-                  const baseFtp = weeklyBriefing?.ftp || 250;
-                  const ratio = currentFtp / baseFtp;
-                  return `${Math.round(mainStep.target_watts * ratio)}W`;
-                }
+            const avgWatts = calculateWorkoutAverageWatts(
+              selectedSuggestedDay.workout_steps,
+              currentFtp,
+              weeklyBriefing?.ftp,
+              {
+                duration: selectedSuggestedDay.duration_target,
+                focus: selectedSuggestedDay.focus,
+                intensity: selectedSuggestedDay.intensity,
+                load_target: selectedSuggestedDay.load_target
               }
-            }
+            );
 
-            // Fallback by zone and user's FTP
-            const f = (selectedSuggestedDay.focus || '').toLowerCase();
-            if (f.includes('endurance') || f.includes('base') || f.includes('aerobic') || f.includes('zone 2') || f.includes('z2')) {
-              return `${Math.round(currentFtp * 0.67)}W`; // ~201W for 300W FTP
-            }
-            if (f.includes('recovery') || f.includes('recup') || f.includes('spin') || f.includes('flush')) {
-              return `${Math.round(currentFtp * 0.52)}W`; // ~156W for 300W FTP
-            }
-            if (f.includes('tempo')) {
-              return `${Math.round(currentFtp * 0.82)}W`; // ~246W for 300W FTP
-            }
-            if (f.includes('sweet spot') || f.includes('sst')) {
-              return `${Math.round(currentFtp * 0.90)}W`; // ~270W for 300W FTP
-            }
-            if (f.includes('threshold') || f.includes('ftp')) {
-              return `${Math.round(currentFtp * 1.00)}W`; // ~300W for 300W FTP
-            }
-            if (f.includes('vo2')) {
-              return `${Math.round(currentFtp * 1.15)}W`; // ~345W for 300W FTP
-            }
-            if (f.includes('anaerobic') || f.includes('sprint')) {
-              return `${Math.round(currentFtp * 1.30)}W`; // ~390W for 300W FTP
-            }
-            return `${Math.round(currentFtp * 0.67)}W`;
+            return avgWatts ? `${avgWatts}W` : '—';
           })();
 
           // Calibrated load target for display
@@ -3557,16 +3656,6 @@ const App: React.FC = () => {
                               "{selectedSuggestedDay.why}"
                             </p>
                           )}
-
-                          <div className="bg-purple-500/5 border-l-2 border-purple-400/80 rounded-r-2xl p-3.5 space-y-1">
-                            <div className="flex items-center gap-1.5 text-purple-400">
-                              <Sparkles size={12} className="animate-pulse" />
-                              <span className="text-[9.5px] font-black uppercase tracking-widest">waTTson Coach Insight</span>
-                            </div>
-                            <p className="text-[11px] text-slate-300 leading-relaxed font-normal">
-                              {getCoachingInsight(selectedSuggestedDay, userProfile, userGoal)}
-                            </p>
-                          </div>
                         </div>
                       ) : (
                         <div className="space-y-3">
@@ -3587,7 +3676,7 @@ const App: React.FC = () => {
                               />
                               <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3.5 space-y-2">
                                 <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1.5">
-                                  Workout Structure
+                                  Intervals
                                 </span>
                                 <GroupedWorkoutStepsList 
                                   steps={selectedSuggestedDay.workout_steps}
@@ -3598,16 +3687,6 @@ const App: React.FC = () => {
                               </div>
                             </div>
                           )}
-
-                          <div className="bg-purple-500/5 border-l-2 border-purple-400/80 rounded-r-2xl p-3.5 space-y-1">
-                            <div className="flex items-center gap-1.5 text-purple-400">
-                              <Sparkles size={12} className="animate-pulse" />
-                              <span className="text-[9.5px] font-black uppercase tracking-widest">waTTson Coach Insight</span>
-                            </div>
-                            <p className="text-[11px] text-slate-300 leading-relaxed font-normal">
-                              {getCoachingInsight(selectedSuggestedDay, userProfile, userGoal)}
-                            </p>
-                          </div>
                         </div>
                       )}
                     </>
@@ -3647,8 +3726,8 @@ const App: React.FC = () => {
         weeklyBriefing={weeklyBriefing}
         activities={activities}
         suggestion={suggestion}
-        onApplyPlan={(directiveText) => {
-          handleAddTweakFromApp(directiveText);
+        onApplyPlan={(directiveText, updatedDays) => {
+          handleApplyScheduleChange(directiveText, updatedDays);
         }}
         planContext={planContext}
         onUpdatePlanContext={(newContext) => {

@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useState } from "react";
+import { ChevronDown } from "lucide-react";
 
 interface StepLabelProps {
   label: string;
@@ -16,6 +17,31 @@ export const sanitizeStepLabel = (label: string): string => {
   cleaned = cleaned.replace(/\b(?:rep|set|interval|lap)\s*#?\d+\b/gi, '');
   cleaned = cleaned.replace(/#\d+/g, '');
 
+  // Convert minutes to short "m"
+  cleaned = cleaned.replace(/(\d+)\s*(?:minutes|minute|mins|min)\b/gi, '$1m');
+
+  // Shorten wordy cycling jargon into clean, concise interval labels
+  cleaned = cleaned.replace(/\baerobic\s+warmup(?:\s+with\s+openers)?\b/gi, 'Warm-up');
+  cleaned = cleaned.replace(/\bwarmup\s+with\s+openers\b/gi, 'Warm-up');
+  cleaned = cleaned.replace(/\bprogressive\s+warmup\b/gi, 'Warm-up');
+  cleaned = cleaned.replace(/\baerobic\s+warmup\b/gi, 'Warm-up');
+  cleaned = cleaned.replace(/\bwarmup\b/gi, 'Warm-up');
+  cleaned = cleaned.replace(/\bwarm\s+up\b/gi, 'Warm-up');
+  cleaned = cleaned.replace(/\bspinning\s+cooldown\b/gi, 'Cool-down');
+  cleaned = cleaned.replace(/\bcooldown\s+spin\b/gi, 'Cool-down');
+  cleaned = cleaned.replace(/\beasy\s+cooldown\b/gi, 'Cool-down');
+  cleaned = cleaned.replace(/\bcooldown\b/gi, 'Cool-down');
+  cleaned = cleaned.replace(/\bcool\s+down\b/gi, 'Cool-down');
+  cleaned = cleaned.replace(/\bunder\s+(?:block|effort|threshold)\b/gi, 'Under');
+  cleaned = cleaned.replace(/\bover\s+(?:surge|block|effort|threshold)\b/gi, 'Over');
+  cleaned = cleaned.replace(/\b(?:rest|recovery|easy)\s+spin\b/gi, 'Recovery');
+  cleaned = cleaned.replace(/\bactive\s+recovery\b/gi, 'Recovery');
+  cleaned = cleaned.replace(/\bthreshold\s+(?:block|effort|rep)\b/gi, 'Threshold');
+  cleaned = cleaned.replace(/\bvo2(?:max)?\s*(?:rep|block|effort)\b/gi, 'VO2 Max');
+  cleaned = cleaned.replace(/\bsweet\s*spot\s*(?:block|effort|rep)\b/gi, 'Sweet Spot');
+  cleaned = cleaned.replace(/\btempo\s+(?:block|effort|rep)\b/gi, 'Tempo');
+  cleaned = cleaned.replace(/\bendurance\s+(?:spin|effort|ride|steady)\b/gi, 'Endurance');
+
   // Remove duplicate percentages and FTP patterns like "@ 88% FTP (88% FTP)", "(88% FTP) (88% FTP)", "@ 88% FTP @ 88% FTP"
   cleaned = cleaned.replace(/@?\s*(\d+%\s*FTP)\s*(\(\s*\1\s*\)|\1|@\s*\1)/gi, '($1)');
   cleaned = cleaned.replace(/\(\s*(\d+%\s*FTP)\s*\)\s*\(\s*\1\s*\)/gi, '($1)');
@@ -24,15 +50,15 @@ export const sanitizeStepLabel = (label: string): string => {
   cleaned = cleaned.replace(/@\s*(\d+%\s*FTP)/gi, '($1)');
   cleaned = cleaned.replace(/\(\s*\(\s*(\d+%\s*FTP)\s*\)\s*\)/gi, '($1)');
 
+  // Shorten (XX% FTP) to (XX%)
+  cleaned = cleaned.replace(/\((\d+%)\s*FTP\)/gi, '($1)');
+
   // Remove duplicate @ Xw occurrences or @ followed by @
   cleaned = cleaned.replace(/(@\s*\d+\s*[wW])\s*@\s*\d+\s*[wW]/gi, '$1');
   cleaned = cleaned.replace(/@\s*@+/g, '@');
 
-  // Remove duplicate percentage when next to each other e.g. "(88% FTP) (88% FTP)"
-  cleaned = cleaned.replace(/\((\d+%\s*FTP)\)\s*\((\d+%\s*FTP)\)/gi, '($1)');
-
-  // Standardize duration wording
-  cleaned = cleaned.replace(/(\d+)\s*(?:minutes|minute|mins|min|m)\b/gi, '$1 min');
+  // Remove duplicate percentage when next to each other
+  cleaned = cleaned.replace(/\((\d+%)\)\s*\((\d+%)\)/gi, '($1)');
 
   // Collapse multiple spaces
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
@@ -89,6 +115,9 @@ export const StepLabel: React.FC<StepLabelProps> = ({ label, target_pct, target_
     formattedLabel = formattedLabel.replace(/\b(\d+)\s*w\b/g, '$1W');
   }
 
+  // If label has percentage before watts, e.g. "3m Under (95%) @ 285W", rearrange cleanly to "3m Under @ 285W (95%)"
+  formattedLabel = formattedLabel.replace(/\((\d+%)\)\s*@\s*(\d+[wW])/gi, '@ $2 ($1)');
+
   // Handle explicit "3x: ..." or "3 times: ..." strings
   const match = formattedLabel.match(/^(\d+)\s*(?:times|x)\s*:\s*(.+)$/i) || 
                 formattedLabel.match(/^(\d+)\s*x\s+(.+)$/i);
@@ -138,8 +167,11 @@ export const getStepPhaseLabel = (sIdx: number, totalSteps: number, label: strin
 
 export interface GroupedStep {
   isGroup: boolean;
+  isCompoundGroup?: boolean;
   multiplier?: number;
+  innerMultiplier?: number;
   steps?: any[];
+  recoveryBetweenSets?: any;
   singleStep?: any;
   originalIndex?: number;
 }
@@ -185,7 +217,7 @@ export const groupWorkoutSteps = (steps: any[]): GroupedStep[] => {
     let bestP = 0;
     let bestScore = 0;
 
-    for (let L = 1; L <= 3; L++) {
+    for (let L = 1; L <= 4; L++) {
       if (i + L > n) continue;
       
       const pattern = steps.slice(i, i + L);
@@ -248,7 +280,305 @@ export const groupWorkoutSteps = (steps: any[]): GroupedStep[] => {
     }
   }
 
-  return grouped;
+  // Pass 2: Detect compound repeating sets
+  // e.g. [Group G (3 rounds), Recovery R, Group G (3 rounds), Recovery R, Group G (3 rounds)]
+  // => Compound Group (3 sets of 3 rounds w/ R recovery between sets)
+  const isRecovery = (step: any) => {
+    if (!step) return false;
+    const clean = (step.label || '').toLowerCase();
+    const pct = step.target_pct || 0;
+    return /rec|rest|spin|easy|recover/i.test(clean) || (pct > 0 && pct <= 0.65);
+  };
+
+  const groupsMatch = (g1: GroupedStep, g2: GroupedStep) => {
+    if (!g1.isGroup || !g2.isGroup) return false;
+    if (g1.multiplier !== g2.multiplier) return false;
+    if (!g1.steps || !g2.steps || g1.steps.length !== g2.steps.length) return false;
+    for (let s = 0; s < g1.steps.length; s++) {
+      if (!stepsMatch(g1.steps[s], g2.steps[s])) return false;
+    }
+    return true;
+  };
+
+  const finalGrouped: GroupedStep[] = [];
+  let j = 0;
+  while (j < grouped.length) {
+    const item = grouped[j];
+    
+    // Check if item is a group and could be the start of a compound set
+    if (item.isGroup && item.steps && j + 2 < grouped.length) {
+      const candidateRest = grouped[j + 1];
+      const nextGroup = grouped[j + 2];
+
+      if (!candidateRest.isGroup && candidateRest.singleStep && isRecovery(candidateRest.singleStep) && groupsMatch(item, nextGroup)) {
+        // We found at least 2 identical groups separated by recovery
+        let setK = 2;
+        let p = j + 2; // currently pointing at nextGroup
+        const restStep = candidateRest.singleStep;
+
+        while (p + 2 < grouped.length) {
+          const subsequentRest = grouped[p + 1];
+          const subsequentGroup = grouped[p + 2];
+          if (!subsequentRest.isGroup && subsequentRest.singleStep && 
+              stepsMatch(subsequentRest.singleStep, restStep) && 
+              groupsMatch(item, subsequentGroup)) {
+            setK++;
+            p += 2;
+          } else {
+            break;
+          }
+        }
+
+        finalGrouped.push({
+          isGroup: true,
+          isCompoundGroup: true,
+          multiplier: setK,
+          innerMultiplier: item.multiplier,
+          steps: item.steps,
+          recoveryBetweenSets: restStep
+        });
+
+        // Advance j past all spanned groups and separating rests
+        j = p + 1;
+        continue;
+      }
+    }
+
+    finalGrouped.push(item);
+    j++;
+  }
+
+  return finalGrouped;
+};
+
+export interface IntervalBulletItem {
+  text: string;
+  isRest?: boolean;
+}
+
+export interface IntervalBulletGroup {
+  header?: string;
+  bullets: IntervalBulletItem[];
+}
+
+export interface MinimalistPrescription {
+  groups: IntervalBulletGroup[];
+  intervalLines: string[];
+  footnote: string;
+}
+
+export const getMinimalistPrescription = (
+  steps: any[],
+  currentFtp: number = 250,
+  originalFtp?: number
+): MinimalistPrescription => {
+  if (!steps || steps.length === 0) {
+    return {
+      groups: [{ bullets: [{ text: 'Rest Day' }] }],
+      intervalLines: ['Rest Day'],
+      footnote: ''
+    };
+  }
+
+  const effFtp = currentFtp || originalFtp || 250;
+
+  const getWatts = (s: any): number => {
+    if (s.target_watts && s.target_watts > 0) {
+      if (originalFtp && currentFtp && originalFtp !== currentFtp) {
+        return Math.round(s.target_watts * (currentFtp / originalFtp));
+      }
+      return Math.round(s.target_watts);
+    }
+    if (s.target_pct && s.target_pct > 0) {
+      return Math.round(s.target_pct * effFtp);
+    }
+    return 0;
+  };
+
+  const isRecovery = (s: any): boolean => {
+    if (!s) return false;
+    const l = (s.label || '').toLowerCase();
+    const pct = s.target_pct || (s.target_watts ? s.target_watts / effFtp : 0);
+    return /rec|rest|spin|easy|recover/i.test(l) || (pct > 0 && pct <= 0.65);
+  };
+
+  // Detect Warm-up & Cool-down to keep the main intervals clean
+  let warmupMins = 0;
+  let cooldownMins = 0;
+
+  let startIndex = 0;
+  let endIndex = steps.length - 1;
+
+  if (steps.length > 1) {
+    const first = steps[0];
+    const isWarmup = /warm|open/i.test(first.label || '') || ((first.target_pct || (first.target_watts ? first.target_watts / effFtp : 0)) <= 0.65 && !/interval|rep|set/i.test(first.label || ''));
+    if (isWarmup) {
+      warmupMins = first.duration || 0;
+      startIndex = 1;
+    }
+
+    const last = steps[steps.length - 1];
+    const isCooldown = /cool|spin|easy/i.test(last.label || '') || ((last.target_pct || (last.target_watts ? last.target_watts / effFtp : 0)) <= 0.60 && !/interval|rep|set/i.test(last.label || ''));
+    if (isCooldown && endIndex >= startIndex) {
+      cooldownMins = last.duration || 0;
+      endIndex = steps.length - 2;
+    }
+  }
+
+  const grouped = groupWorkoutSteps(steps);
+  const groups: IntervalBulletGroup[] = [];
+  const intervalLines: string[] = [];
+
+  // 1. Check for compound groups (e.g. 3 sets x 3 rounds of 3m Under / 1m Over)
+  const compoundGroups = grouped.filter(g => g.isGroup && g.isCompoundGroup && g.steps && g.steps.length > 0);
+  if (compoundGroups.length > 0) {
+    compoundGroups.forEach(cg => {
+      const bullets: IntervalBulletItem[] = [];
+
+      cg.steps!.forEach(s => {
+        const dur = s.duration || 1;
+        const w = getWatts(s);
+        const l = (s.label || '').toLowerCase();
+        const isOver = /over|surge/i.test(l);
+        const isUnder = /under/i.test(l);
+        const tag = isOver ? ' (Over)' : isUnder ? ' (Under)' : '';
+        const wattStr = w > 0 ? ` @ ${w}W` : '';
+        bullets.push({ text: `${dur}m${wattStr}${tag}` });
+      });
+
+      if (cg.recoveryBetweenSets && cg.recoveryBetweenSets.duration) {
+        bullets.push({
+          text: `${cg.recoveryBetweenSets.duration}m rest between sets`,
+          isRest: true
+        });
+      }
+
+      const headerText = `${cg.multiplier} sets × ${cg.innerMultiplier} rounds:`;
+      groups.push({
+        header: headerText,
+        bullets
+      });
+
+      // Backward-compatible single line string
+      const sub = bullets.filter(b => !b.isRest).map(b => b.text).join(' + ');
+      intervalLines.push(`${cg.multiplier} sets × ${cg.innerMultiplier} × (${sub})`);
+    });
+  } else {
+    // 2. Check for regular repeating groups (e.g. 3 x 15m @ 300W)
+    const regularGroups = grouped.filter(g => g.isGroup && !g.isCompoundGroup && g.steps && g.steps.length > 0);
+    if (regularGroups.length > 0) {
+      regularGroups.forEach(rg => {
+        const mult = rg.multiplier || 1;
+        const bullets: IntervalBulletItem[] = [];
+
+        if (rg.steps!.length === 2) {
+          const [s1, s2] = rg.steps!;
+          const isRec1 = isRecovery(s1);
+          const isRec2 = isRecovery(s2);
+          const workStep = isRec1 && !isRec2 ? s2 : s1;
+          const recStep = isRec1 && !isRec2 ? s1 : (isRec2 ? s2 : null);
+
+          const dur = workStep.duration || 1;
+          const w = getWatts(workStep);
+          const wattStr = w > 0 ? ` @ ${w}W` : '';
+          const l = (workStep.label || '').toLowerCase();
+          const tag = /over/i.test(l) ? ' (Over)' : /under/i.test(l) ? ' (Under)' : '';
+
+          bullets.push({ text: `${mult} × ${dur}m${wattStr}${tag}` });
+          if (recStep && recStep.duration) {
+            bullets.push({
+              text: `${recStep.duration}m rest between intervals`,
+              isRest: true
+            });
+          }
+
+          intervalLines.push(`${mult} × ${dur}m${wattStr}`);
+        } else if (rg.steps!.length === 1) {
+          const s = rg.steps![0];
+          const dur = s.duration || 1;
+          const w = getWatts(s);
+          const wattStr = w > 0 ? ` @ ${w}W` : '';
+          bullets.push({ text: `${mult} × ${dur}m${wattStr}` });
+          intervalLines.push(`${mult} × ${dur}m${wattStr}`);
+        } else {
+          rg.steps!.forEach(s => {
+            const dur = s.duration || 1;
+            const w = getWatts(s);
+            const isRec = isRecovery(s);
+            const wattStr = w > 0 ? ` @ ${w}W` : '';
+            bullets.push({
+              text: `${mult} × ${dur}m${wattStr}`,
+              isRest: isRec
+            });
+          });
+          intervalLines.push(`${mult} × intervals`);
+        }
+
+        groups.push({ bullets });
+      });
+    }
+  }
+
+  // 3. If no interval groups were detected, look at single work steps (e.g. Steady Endurance, Tempo, single block)
+  if (groups.length === 0) {
+    const mainWorkSteps = steps.slice(startIndex, endIndex + 1);
+    const bullets: IntervalBulletItem[] = [];
+
+    if (mainWorkSteps.length === 1) {
+      const s = mainWorkSteps[0];
+      const dur = s.duration || 1;
+      const w = getWatts(s);
+      let labelClean = sanitizeStepLabel(s.label);
+      labelClean = labelClean.replace(/^\d+m\s*/i, '').replace(/@.*$/, '').trim();
+      const tag = labelClean ? ` (${labelClean})` : '';
+      bullets.push({ text: `${dur}m @ ${w > 0 ? `${w}W` : 'Target'}${tag}` });
+      intervalLines.push(`${dur}m @ ${w > 0 ? `${w}W` : 'Target'}${tag}`);
+    } else if (mainWorkSteps.length > 1) {
+      const nonRecovery = mainWorkSteps.filter(s => !isRecovery(s));
+      if (nonRecovery.length > 0) {
+        nonRecovery.forEach(s => {
+          const dur = s.duration || 1;
+          const w = getWatts(s);
+          let labelClean = sanitizeStepLabel(s.label);
+          labelClean = labelClean.replace(/^\d+m\s*/i, '').replace(/@.*$/, '').trim();
+          const tag = labelClean ? ` (${labelClean})` : '';
+          bullets.push({ text: `${dur}m @ ${w > 0 ? `${w}W` : 'Target'}${tag}` });
+          intervalLines.push(`${dur}m @ ${w > 0 ? `${w}W` : 'Target'}${tag}`);
+        });
+      } else {
+        const totalDur = mainWorkSteps.reduce((acc, s) => acc + (s.duration || 0), 0);
+        bullets.push({ text: `${totalDur}m Easy Recovery Ride` });
+        intervalLines.push(`${totalDur}m Easy Recovery Ride`);
+      }
+    } else {
+      const totalDur = steps.reduce((acc, s) => acc + (s.duration || 0), 0);
+      bullets.push({ text: `${totalDur}m Ride` });
+      intervalLines.push(`${totalDur}m Ride`);
+    }
+
+    groups.push({ bullets });
+  }
+
+  // Assemble footnote (Warm-up & Cool-down)
+  const footnoteParts: string[] = [];
+  if (warmupMins > 0) footnoteParts.push(`${warmupMins}m warm-up`);
+  if (cooldownMins > 0) footnoteParts.push(`${cooldownMins}m cool-down`);
+
+  return {
+    groups,
+    intervalLines,
+    footnote: footnoteParts.join(' • ')
+  };
+};
+
+// Backward-compatible string summary helper
+export const getWorkoutIntervalSummary = (steps: any[], currentFtp: number = 250): string => {
+  const prescription = getMinimalistPrescription(steps, currentFtp);
+  if (prescription.intervalLines.length > 0) {
+    const main = prescription.intervalLines.join(' • ');
+    return prescription.footnote ? `${main} (${prescription.footnote})` : main;
+  }
+  return '';
 };
 
 // Helper to determine intensity color dot/class based on step power
@@ -312,72 +642,143 @@ export const GroupedWorkoutStepsList: React.FC<GroupedWorkoutStepsListProps> = (
   originalFtp,
   fontSize = 'sm'
 }) => {
+  const [showBreakdown, setShowBreakdown] = useState(false);
+  const prescription = getMinimalistPrescription(steps, currentFtp, originalFtp);
   const grouped = groupWorkoutSteps(steps);
 
   return (
     <div className="space-y-2.5 text-left">
-      {grouped.map((item, idx) => {
-        if (item.isGroup && item.steps) {
-          return (
-            <div key={idx} className="flex flex-col gap-1.5 my-1">
-              {/* Group Header Badge (e.g. 2X or 3X) */}
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 text-[10px] font-black uppercase tracking-wider rounded-md">
-                  {item.multiplier}×
-                </span>
-                <span className="text-[10px] font-bold text-emerald-400/90 uppercase tracking-wider">
-                  Interval Set ({item.multiplier} Rounds)
-                </span>
+      {/* Minimalist Interval Prescription Bullets */}
+      <div className="space-y-2">
+        {prescription.groups.map((group, gIdx) => (
+          <div key={gIdx} className="space-y-1">
+            {group.header && (
+              <div className="text-[11px] font-black uppercase tracking-wider text-emerald-400">
+                {group.header}
               </div>
-              
-              {/* Indented Group Container */}
-              <div className="pl-3 border-l-2 border-emerald-500/30 ml-2 space-y-1.5 py-0.5">
-                {item.steps.map((step, sIdx) => {
-                  const intensity = getStepIntensity(step, currentFtp);
+            )}
+            <div className="space-y-1">
+              {group.bullets.map((b, bIdx) => (
+                <div key={bIdx} className="flex items-center gap-2">
+                  <div
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      b.isRest
+                        ? 'bg-slate-500'
+                        : 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]'
+                    }`}
+                  />
+                  <span
+                    className={`text-[13px] sm:text-[14px] leading-snug tracking-tight ${
+                      b.isRest
+                        ? 'text-slate-400 font-medium text-[12px]'
+                        : 'text-white font-bold'
+                    }`}
+                  >
+                    {b.text}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {prescription.footnote && (
+          <p className="text-[10.5px] text-slate-400/80 font-medium pt-0.5 leading-normal">
+            {prescription.footnote}
+          </p>
+        )}
+      </div>
+
+      {/* Subtle collapsible detailed breakdown */}
+      {steps && steps.length > 1 && (
+        <div className="pt-1.5 border-t border-white/5">
+          <button
+            type="button"
+            onClick={() => setShowBreakdown(!showBreakdown)}
+            className="text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 transition-colors flex items-center gap-1.5 cursor-pointer select-none py-0.5"
+          >
+            <span>{showBreakdown ? 'Hide full step breakdown' : 'Show full step breakdown'}</span>
+            <ChevronDown 
+              size={12} 
+              className={`transform transition-transform duration-200 ${showBreakdown ? 'rotate-180 text-emerald-400' : ''}`} 
+            />
+          </button>
+
+          {showBreakdown && (
+            <div className="mt-2 pl-2.5 border-l border-white/10 space-y-1.5 py-1">
+              {grouped.map((item, idx) => {
+                if (item.isCompoundGroup && item.steps) {
                   return (
-                    <div key={sIdx} className="flex items-center justify-between gap-2.5 text-xs py-0.5">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <div className={`w-1.5 h-1.5 rounded-full ${intensity.dot} shrink-0`} />
-                        <div className="min-w-0 flex-1 text-left text-slate-200 text-[11.5px]">
-                          <StepLabel 
-                            label={step.label}
-                            target_pct={step.target_pct}
-                            target_watts={step.target_watts}
-                            currentFtp={currentFtp}
-                            originalFtp={originalFtp}
-                          />
-                        </div>
+                    <div key={idx} className="py-1">
+                      <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-1">
+                        {item.multiplier}× Sets of {item.innerMultiplier}× Rounds:
+                      </div>
+                      <div className="pl-2 border-l border-emerald-500/20 space-y-1">
+                        {item.steps.map((step, sIdx) => {
+                          const intensity = getStepIntensity(step, currentFtp);
+                          return (
+                            <div key={sIdx} className="flex items-center gap-2 text-xs text-slate-300">
+                              <div className={`w-1.5 h-1.5 rounded-full ${intensity.dot} shrink-0`} />
+                              <StepLabel 
+                                label={step.label}
+                                target_pct={step.target_pct}
+                                target_watts={step.target_watts}
+                                currentFtp={currentFtp}
+                                originalFtp={originalFtp}
+                              />
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   );
-                })}
-              </div>
+                } else if (item.isGroup && item.steps) {
+                  return (
+                    <div key={idx} className="py-1">
+                      <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-1">
+                        {item.multiplier}× Rounds:
+                      </div>
+                      <div className="pl-2 border-l border-emerald-500/20 space-y-1">
+                        {item.steps.map((step, sIdx) => {
+                          const intensity = getStepIntensity(step, currentFtp);
+                          return (
+                            <div key={sIdx} className="flex items-center gap-2 text-xs text-slate-300">
+                              <div className={`w-1.5 h-1.5 rounded-full ${intensity.dot} shrink-0`} />
+                              <StepLabel 
+                                label={step.label}
+                                target_pct={step.target_pct}
+                                target_watts={step.target_watts}
+                                currentFtp={currentFtp}
+                                originalFtp={originalFtp}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                } else {
+                  const step = item.singleStep;
+                  if (!step) return null;
+                  const intensity = getStepIntensity(step, currentFtp);
+                  return (
+                    <div key={idx} className="flex items-center gap-2 text-xs text-slate-300 py-0.5">
+                      <div className={`w-1.5 h-1.5 rounded-full ${intensity.dot} shrink-0`} />
+                      <StepLabel 
+                        label={step.label}
+                        target_pct={step.target_pct}
+                        target_watts={step.target_watts}
+                        currentFtp={currentFtp}
+                        originalFtp={originalFtp}
+                      />
+                    </div>
+                  );
+                }
+              })}
             </div>
-          );
-        } else {
-          // Single Step
-          const step = item.singleStep;
-          if (!step) return null;
-          const intensity = getStepIntensity(step, currentFtp);
-
-          return (
-            <div key={idx} className="flex items-center justify-between gap-2.5 text-xs py-0.5">
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                <div className={`w-1.5 h-1.5 rounded-full ${intensity.dot} shrink-0`} />
-                <div className="min-w-0 flex-1 text-left text-slate-200 text-[11.5px]">
-                  <StepLabel 
-                    label={step.label}
-                    target_pct={step.target_pct}
-                    target_watts={step.target_watts}
-                    currentFtp={currentFtp}
-                    originalFtp={originalFtp}
-                  />
-                </div>
-              </div>
-            </div>
-          );
-        }
-      })}
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -477,4 +878,101 @@ export const VisualProfileChart: React.FC<VisualProfileChartProps> = ({ steps, c
       </div>
     </div>
   );
+};
+
+export const calculateWorkoutAverageWatts = (
+  steps: any[] | undefined,
+  currentFtp: number = 250,
+  originalFtp?: number,
+  fallbackTarget?: { duration?: number; focus?: string; intensity?: string; tss?: number; load_target?: number }
+): number | null => {
+  const effFtp = currentFtp || 250;
+  const baseFtp = originalFtp || effFtp;
+
+  if (steps && steps.length > 0) {
+    let totalWattDuration = 0;
+    let totalDuration = 0;
+
+    for (const step of steps) {
+      const dur = step.duration || 0;
+      if (dur <= 0) continue;
+
+      let stepWatts = 0;
+      if (typeof step.target_pct === 'number' && step.target_pct > 0) {
+        stepWatts = step.target_pct * effFtp;
+      } else if (typeof step.target_watts === 'number' && step.target_watts > 0) {
+        stepWatts = step.target_watts * (effFtp / baseFtp);
+      } else {
+        const label = (step.label || '').toLowerCase();
+        const wattsMatch = label.match(/(\d+)\s*w\b/);
+        const pctMatch = label.match(/(\d+)%\s*(?:ftp)?/);
+
+        if (wattsMatch) {
+          stepWatts = parseInt(wattsMatch[1], 10) * (effFtp / baseFtp);
+        } else if (pctMatch) {
+          stepWatts = (parseInt(pctMatch[1], 10) / 100) * effFtp;
+        } else if (label.includes('warm') || label.includes('cool') || label.includes('recovery') || label.includes('rest') || label.includes('spin')) {
+          stepWatts = 0.50 * effFtp;
+        } else if (label.includes('endurance') || label.includes('zone 2') || label.includes('z2')) {
+          stepWatts = 0.67 * effFtp;
+        } else if (label.includes('tempo')) {
+          stepWatts = 0.82 * effFtp;
+        } else if (label.includes('threshold') || label.includes('under') || label.includes('over')) {
+          stepWatts = 0.98 * effFtp;
+        } else if (label.includes('vo2')) {
+          stepWatts = 1.15 * effFtp;
+        } else {
+          stepWatts = 0.65 * effFtp;
+        }
+      }
+
+      totalWattDuration += dur * stepWatts;
+      totalDuration += dur;
+    }
+
+    if (totalDuration > 0) {
+      return Math.round(totalWattDuration / totalDuration);
+    }
+  }
+
+  if (fallbackTarget) {
+    const f = (fallbackTarget.focus || '').toLowerCase();
+    const i = (fallbackTarget.intensity || '').toLowerCase();
+    if (f.includes('rest') || i === 'rest') return null;
+
+    const tss = fallbackTarget.tss || fallbackTarget.load_target;
+    const durMins = fallbackTarget.duration;
+
+    if (tss && tss > 0 && durMins && durMins > 0) {
+      const hours = durMins / 60;
+      const IF = Math.sqrt(tss / (hours * 100));
+      const avgFactor = f.includes('endurance') || f.includes('recovery') ? 0.98 : 0.93;
+      return Math.round(IF * effFtp * avgFactor);
+    }
+
+    if (f.includes('endurance') || f.includes('base') || f.includes('aerobic') || f.includes('zone 2') || f.includes('z2')) {
+      return Math.round(effFtp * 0.67);
+    }
+    if (f.includes('recovery') || f.includes('recup') || f.includes('spin') || f.includes('flush')) {
+      return Math.round(effFtp * 0.52);
+    }
+    if (f.includes('tempo')) {
+      return Math.round(effFtp * 0.80);
+    }
+    if (f.includes('sweet spot') || f.includes('sst')) {
+      return Math.round(effFtp * 0.88);
+    }
+    if (f.includes('threshold') || f.includes('ftp')) {
+      return Math.round(effFtp * 0.95);
+    }
+    if (f.includes('vo2')) {
+      return Math.round(effFtp * 0.90);
+    }
+    if (f.includes('anaerobic') || f.includes('sprint')) {
+      return Math.round(effFtp * 0.82);
+    }
+    return Math.round(effFtp * 0.68);
+  }
+
+  return null;
 };

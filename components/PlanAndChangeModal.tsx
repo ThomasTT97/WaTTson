@@ -24,7 +24,7 @@ export interface DayDurationItem {
 interface PlanAndChangeModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onApplyPlan: (directiveText: string) => void;
+  onApplyPlan: (directiveText: string, updatedDays?: DayDurationItem[]) => void;
   weeklyBriefing?: WeeklyBriefing | null;
   activities?: Activity[] | null;
   suggestion?: DailySuggestion | null;
@@ -267,7 +267,7 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
       return `${d.dayShort}: ${formatted}`;
     });
     const directiveText = `Adjusted weekly schedule: ${parts.join(', ')} (Total: ${totalHours}h)`;
-    onApplyPlan(directiveText);
+    onApplyPlan(directiveText, days);
     onClose();
   };
 

@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, Wellness, WeeklyBriefing, IntervalsCredentials, DailySuggestion, AnnualPowerCurve } from '../types';
 import { uploadWorkout } from '../services/intervalsService';
-import { scaleLabelWatts, GroupedWorkoutStepsList, isEnduranceWorkout, VisualProfileChart } from './StepLabel';
+import { scaleLabelWatts, GroupedWorkoutStepsList, isEnduranceWorkout, VisualProfileChart, calculateWorkoutAverageWatts } from './StepLabel';
 import { SuggestedWorkoutCard } from './SuggestedWorkoutCard';
 import { 
   X, Sparkles, Trophy, Clock, Zap, Info, 
   Calendar as CalendarIcon, Check, Loader2, RefreshCw,
-  Sliders, CheckCircle
+  Sliders, CheckCircle, Activity as ActivityIcon
 } from 'lucide-react';
 
 interface WeeklyBriefingModalProps {
@@ -474,8 +474,20 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
               {/* Compact Metrics Strip */}
               {(() => {
                 const isRestDay = selectedDay.intensity === 'Rest' || (selectedDay.focus || '').toLowerCase().includes('rest') || selectedDay.load_target === 0;
+                const avgWatts = calculateWorkoutAverageWatts(
+                  selectedDay.workout_steps,
+                  ftp || 250,
+                  weeklyBriefing?.ftp,
+                  {
+                    duration: selectedDay.duration_target,
+                    focus: selectedDay.focus,
+                    intensity: selectedDay.intensity,
+                    load_target: selectedDay.load_target
+                  }
+                );
+
                 return (
-                  <div className="grid grid-cols-2 gap-2 p-3 bg-white/[0.03] border border-white/5 rounded-2xl">
+                  <div className="grid grid-cols-3 gap-2 p-3 bg-white/[0.03] border border-white/5 rounded-2xl">
                     <div className="flex flex-col items-center justify-center text-center">
                       <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                         <Clock size={11} className="text-blue-400" /> Duration
@@ -490,12 +502,20 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                               : `${selectedDay.duration_target} MIN`)}
                       </span>
                     </div>
-                    <div className="flex flex-col items-center justify-center text-center border-l border-white/5">
+                    <div className="flex flex-col items-center justify-center text-center border-x border-white/5">
                       <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                         <Zap size={11} fill="currentColor" className="text-amber-400" /> Load
                       </span>
                       <span className="text-xs sm:text-sm font-black text-amber-400 mt-0.5">
                         {isRestDay || selectedDay.load_target <= 0 ? '—' : `${selectedDay.load_target} TSS`}
+                      </span>
+                    </div>
+                    <div className="flex flex-col items-center justify-center text-center">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                        <ActivityIcon size={11} className="text-emerald-400" /> Target
+                      </span>
+                      <span className="text-xs sm:text-sm font-black text-emerald-400 mt-0.5 uppercase">
+                        {isRestDay ? '—' : (avgWatts ? `${avgWatts}W` : '—')}
                       </span>
                     </div>
                   </div>
@@ -519,7 +539,7 @@ export const WeeklyBriefingModal: React.FC<WeeklyBriefingModalProps> = ({
                   />
                   <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3.5 space-y-2">
                     <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1.5">
-                      Workout Structure
+                      Intervals
                     </span>
                     <GroupedWorkoutStepsList 
                       steps={selectedDay.workout_steps}

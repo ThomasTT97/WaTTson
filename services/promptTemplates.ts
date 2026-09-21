@@ -45,6 +45,7 @@ interface WeeklyBriefingParams {
   hrStatsText?: string;
   trainingMode: TrainingMode;
   methodology?: TrainingMethodology;
+  existingPlanSummary?: string;
 }
 
 interface ChatMessageParams {
@@ -222,6 +223,13 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
     ${directiveContext}
     ${methodologyText}
     ${p.pcCtx}
+    ${p.existingPlanSummary ? `
+    EXISTING TRAINING PLAN CONTINUITY & ADAPTATION:
+    The athlete already has an active training plan:
+    ${p.existingPlanSummary}
+    MANDATORY RULE FOR WORKOUT CONTINUITY:
+    Do NOT discard their plan and generate completely random new workouts! Retain their planned workout focuses and themes (e.g. Threshold Over-Unders, Sweet Spot intervals, VO2max sessions, Endurance) while adapting them to match the new duration constraints or rest days specified in CUSTOM DIRECTIVES.
+    ` : ''}
     
     CRITICAL PERFORMANCE RULES FOR HIGH-SPEED GENERATION AND REALISTIC COACHING (MAXIMIZE SPEED):
     1. Plan exactly ${totalDays} days: ${p.dayNames.join(', ')}.
@@ -229,12 +237,17 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
     3. "outlook_summary" MUST be less than 15 words. Describe the week focus in 1 ultra-concise sentence. 
     4. "phase" and "focus" fields should be 1-3 words maximum.
     5. Suggest "workout_steps" for ALL workouts EXCEPT Rest days.
-    6. Keep all workout step "label" text under 4-5 words (e.g., "5m Warm-up 130w", "3m VO2 300w"). Do not write long sentences in labels.
+    6. ULTRA-SHORT WORKOUT STEP LABELS: Keep all workout step "label" text as short as possible (2-3 words, e.g. "10m Warmup", "3m Under", "1m Over", "5m Recovery", "10m Cooldown"). NEVER write verbose descriptions like "Aerobic warmup with openers", "Under block", "Over surge", "rest spin", or "Spinning cooldown". Just duration, interval type, and target.
     7. REALISTIC WORKOUT DURATION & PERIODIZATION RULES:
+       - MANDATORY OVERRIDE FOR CUSTOM AVAILABILITIES: If CUSTOM DIRECTIVES specifies an adjusted weekly schedule or daily duration/rest limits (e.g., "Adjusted weekly schedule: MON: 1h, TUE: 1h, WED: 2h, THU: Rest..."):
+         THE USER'S AVAILABILITY OVERRIDES ALL DEFAULT DURATION AND SCHEDULE RULES!
+         You MUST strictly set each specified day to EXACTLY the requested duration and Rest status:
+         * If a day is set to "Rest", it MUST be a Rest Day with duration_target: 0 and intensity: "Rest". DO NOT schedule a workout on that day!
+         * If a day is set to a duration (e.g. 1h = 60m, 2h = 120m, 3h = 180m, 45m), duration_target MUST match that duration in minutes.
        - "duration_target" MUST be specified in MINUTES (e.g., 45, 60, 75, 90, 120).
-       - Weekday workouts (Monday through Friday) MUST be 45 to 90 minutes (standard: 45m, 60m, 75m, max 90m; max 120m for an exceptional mid-week long ride).
-       - Long endurance rides (>120 minutes / 2h - 3.5h, max 240m) are reserved EXCLUSIVELY for ONE weekend day (Saturday or Sunday), and NEVER scheduled on weekdays or on consecutive days!
-       - NEVER schedule 4-hour (240 min) or >2.5-hour rides for the upcoming 2 days on regular weekdays.
+       - When no custom availability is specified: Weekday workouts (Monday through Friday) MUST be 45 to 90 minutes (standard: 45m, 60m, 75m, max 90m; max 120m for an exceptional mid-week long ride).
+       - When no custom availability is specified: Long endurance rides (>120 minutes / 2h - 3.5h, max 240m) are reserved EXCLUSIVELY for ONE weekend day (Saturday or Sunday), and NEVER scheduled on weekdays or on consecutive days!
+       - NEVER schedule 4-hour (240 min) or >2.5-hour rides for the upcoming 2 days on regular weekdays unless explicitly requested by the user.
        - NEVER schedule back-to-back 4-hour (240m) rides on consecutive days.
     8. NO CONSECUTIVE RECOVERY RIDES: Never schedule 2 recovery rides or active recovery sessions in a row on consecutive days. Having 2 recovery rides after each other makes no training sense. If an athlete needs recovery, pair a single active recovery day with an easy Zone 2 Endurance Ride or a full Rest Day on the following day.
     9. REALISTIC INTERVALS RULE / NO PHYSICALLY IMPOSSIBLE HIGH INTENSITY BLOCKS: High intensity (>85% FTP, or HR Zone 4/5) must NEVER be recommended as a single long continuous block/step. You must structure them as intervals/sets with recovery steps in between.

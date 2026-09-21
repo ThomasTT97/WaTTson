@@ -81,7 +81,63 @@ const MONTHS: Record<string, number> = {
   dec: 11, december: 11
 };
 
+/**
+ * Parses daily duration and rest constraints from a weekly schedule directive string,
+ * e.g. "Adjusted weekly schedule: MON: 1h, TUE: 1h, WED: 2h, THU: Rest, FRI: 1h, SAT: Rest, SUN: 1h (Total: 5h)"
+ */
+export function parseScheduleDurationsFromDirective(directiveText: string): Record<string, { durationMins: number; isRest: boolean }> | null {
+  if (!directiveText || (!directiveText.toLowerCase().includes('weekly schedule') && !directiveText.includes(':'))) {
+    return null;
+  }
+
+  const daysMap: Record<string, { durationMins: number; isRest: boolean }> = {};
+  const dayTokens = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+  dayTokens.forEach(day => {
+    const regex = new RegExp(`\\b${day}:?\\s*([0-9.]+\\s*(?:h|m|hours|mins)?|rest)\\b`, 'i');
+    const match = directiveText.match(regex);
+    if (match) {
+      const val = match[1].trim().toLowerCase();
+      if (val === 'rest' || val === '0' || val === '0h' || val === '0m') {
+        daysMap[day] = { durationMins: 0, isRest: true };
+      } else if (val.endsWith('h') || val.endsWith('hours')) {
+        const num = parseFloat(val);
+        daysMap[day] = { durationMins: Math.round(num * 60), isRest: false };
+      } else if (val.endsWith('m') || val.endsWith('mins')) {
+        const num = parseFloat(val);
+        daysMap[day] = { durationMins: Math.round(num), isRest: false };
+      } else {
+        const num = parseFloat(val);
+        if (!isNaN(num)) {
+          const mins = num <= 6 ? Math.round(num * 60) : Math.round(num);
+          daysMap[day] = { durationMins: mins, isRest: mins === 0 };
+        }
+      }
+    }
+  });
+
+  return Object.keys(daysMap).length > 0 ? daysMap : null;
+}
+
 function getTargetOffsetForWeekday(reqDateStr: string, textLower: string): number | null {
+  // If this directive represents a multi-day weekly schedule, it's not a single-day offset!
+  if (textLower.includes('weekly schedule') || textLower.includes('adjusted weekly schedule')) {
+    return null;
+  }
+
+  let matchCount = 0;
+  for (let i = 0; i < 7; i++) {
+    const full = WEEKDAYS[i];
+    const short = WEEKDAYS_SHORT[i];
+    const regex = new RegExp(`\\b(${full}|${short})\\b`, 'i');
+    if (regex.test(textLower)) {
+      matchCount++;
+    }
+  }
+  if (matchCount > 1) {
+    return null;
+  }
+
   const [y, m, d] = reqDateStr.split('-').map(Number);
   const reqDate = new Date(Date.UTC(y, m - 1, d));
   const reqDayOfWeek = reqDate.getUTCDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
@@ -155,11 +211,16 @@ export function isDirectiveExpired(directive: PlanDirective, todayDateStr: strin
   const textLower = directive.text.toLowerCase();
 
   // 0. Recurring directives (e.g., "every Tuesday", "weekly on Friday", "always commute on Monday") never expire
-  if (/\b(every|always|each|weekly|recurring)\b/i.test(textLower)) {
+  if (/\b(every|always|each|recurring)\b/i.test(textLower)) {
     return false;
   }
 
   const deltaDays = diffInCalendarDays(directive.requestedAt, todayDateStr);
+
+  // 0b. Weekly schedule directives (e.g. "Adjusted weekly schedule: MON: 1h...") apply for the entire 7-day week
+  if (textLower.includes('weekly schedule') || textLower.includes('adjusted weekly schedule')) {
+    return deltaDays > 7;
+  }
 
   // If requested in the future relative to today, it is not expired
   if (deltaDays < 0) return false;
@@ -268,7 +329,9 @@ export function formatDirectivesForPrompt(
     const textLower = dir.text.toLowerCase();
 
     let note = '';
-    if (/\b(every|always|each|weekly|recurring)\b/i.test(textLower)) {
+    if (textLower.includes('adjusted weekly schedule') || textLower.includes('weekly schedule')) {
+      note = ` [MANDATORY WEEKLY AVAILABILITY CONSTRAINTS: You MUST strictly set every single day to the exact duration and Rest status requested!]`;
+    } else if (/\b(every|always|each|weekly|recurring)\b/i.test(textLower)) {
       note = ` [Recurring rule -> applies consistently across all relevant days]`;
     } else if (/\b(tomorrow|tomorrow's|tomorrows|next day)\b/.test(textLower)) {
       if (deltaDays === 0) {
