@@ -8,7 +8,8 @@ import {
   User 
 } from 'firebase/auth';
 import { 
-  getFirestore, 
+  getFirestore,
+  initializeFirestore, 
   doc, 
   getDoc, 
   setDoc, 
@@ -19,7 +20,10 @@ import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Using initializeFirestore with experimentalForceLongPolling avoids WebChannel streaming issues in sandboxed iframes and proxy environments
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+}, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
@@ -74,13 +78,17 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 export async function testFirestoreConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn("Please check your Firebase configuration (client is offline).");
+  } catch (error: any) {
+    if (error instanceof Error && (error.message.includes('offline') || error.message.includes('unavailable') || (error as any)?.code === 'unavailable')) {
+      console.warn("Firestore operating in offline/delayed sync mode.");
     }
   }
 }
-testFirestoreConnection();
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    testFirestoreConnection();
+  }, 1000);
+}
 
 export interface UserCloudProfile {
   id: string;

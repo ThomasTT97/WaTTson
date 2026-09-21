@@ -30,9 +30,14 @@ import { AerobicEfficiencyDecouplingChart } from './components/AerobicEfficiency
 import { SuggestedWorkoutCard, formatPlannedRideTitle } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
-import { MonthlyReportModal } from './components/MonthlyReportModal';
 import { WorkoutLibrary } from './components/WorkoutLibrary';
-import { PlanAndChangeModal, DayDurationItem } from './components/PlanAndChangeModal';
+import { 
+  PlanAndChangeModal, 
+  DayDurationItem, 
+  formatDurationDisplay, 
+  parseScheduleDirective, 
+  AVAILABILITY_STORAGE_KEY 
+} from './components/PlanAndChangeModal';
 import { LibraryWorkout } from './services/workoutLibrary';
 import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts, isEnduranceWorkout, VisualProfileChart, calculateWorkoutAverageWatts } from './components/StepLabel';
 import { User as FirebaseUser } from 'firebase/auth';
@@ -252,9 +257,7 @@ const App: React.FC = () => {
   const [trainingMethodology, setTrainingMethodology] = useState<TrainingMethodology>(() => {
     return (localStorage.getItem('wattson_training_methodology') as TrainingMethodology) || 'polarized';
   });
-  const [threeMonthReview, setThreeMonthReview] = useState<ThreeMonthReview | null>(null);
-  const [isLoadingThreeMonthReview, setIsLoadingThreeMonthReview] = useState(false);
-  const [methodologyTab, setMethodologyTab] = useState<'selection' | 'review'>('selection');
+  const [insightsPeriod, setInsightsPeriod] = useState<'week' | 'month' | '6months' | 'year'>('month');
   
   const [suggestion, setSuggestion] = useState<DailySuggestion | null>(() => {
     try {
@@ -271,6 +274,7 @@ const App: React.FC = () => {
 
   const [isOtherFutureExpanded, setIsOtherFutureExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'rides' | 'chat' | 'settings'>('dashboard');
+  const [showInsights, setShowInsights] = useState(false);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'rider_profile' | 'training_method' | 'ftp' | 'workout_library'>('main');
@@ -297,18 +301,6 @@ const App: React.FC = () => {
     return words.slice(0, maxWords).join(' ') + '...';
   };
 
-  const handleFetchThreeMonthReview = async (force: boolean = false) => {
-    if (!activities) return;
-    setIsLoadingThreeMonthReview(true);
-    try {
-      const review = await analyzeThreeMonthReview(activities, userGoal, ftp || undefined, trainingMethodology, force);
-      setThreeMonthReview(review);
-    } catch (err) {
-      console.error("Failed to fetch 3-month review:", err);
-    } finally {
-      setIsLoadingThreeMonthReview(false);
-    }
-  };
   const [showWorkoutDetail, setShowWorkoutDetail] = useState(false);
   const [syncingWorkout, setSyncingWorkout] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState(false);
@@ -573,6 +565,39 @@ const App: React.FC = () => {
       if (currentUserRef.current) {
         syncToCloud({ weeklyBriefingJson: JSON.stringify(adapted) });
       }
+
+      // Persist last saved availability so when the screen is opened again, previous settings are remembered
+      try {
+        const totalMinutes = updatedDays.reduce((acc, d) => acc + d.durationMins, 0);
+        const totalHours = (totalMinutes / 60).toFixed(1).replace('.0', '');
+        const trainingDaysCount = updatedDays.filter(d => d.durationMins > 0).length;
+        const restDaysCount = updatedDays.length - trainingDaysCount;
+        const now = new Date();
+        const record = {
+          savedAt: now.toISOString(),
+          formattedTime: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+          totalMinutes,
+          totalHours,
+          trainingDaysCount,
+          restDaysCount,
+          directiveText: newTweakDirective.trim(),
+          days: updatedDays.map(d => ({
+            dayShort: d.dayShort,
+            dayName: d.dayName,
+            dateStr: d.dateStr,
+            durationMins: d.durationMins,
+            formattedDuration: formatDurationDisplay(d.durationMins)
+          }))
+        };
+        safeSetItem(AVAILABILITY_STORAGE_KEY, JSON.stringify(record));
+      } catch (err) {
+        console.warn('Failed to save availability record in App.tsx', err);
+      }
+    } else if (newTweakDirective.toLowerCase().includes('weekly schedule')) {
+      const parsedRecord = parseScheduleDirective(newTweakDirective, today);
+      if (parsedRecord) {
+        safeSetItem(AVAILABILITY_STORAGE_KEY, JSON.stringify(parsedRecord));
+      }
     }
 
     // 2. Recalibrate in background while preserving weeklyBriefing continuity
@@ -638,7 +663,6 @@ const App: React.FC = () => {
   const [userGoal, setUserGoal] = useState<string>(() => localStorage.getItem('wattson_goal') || 'Improve cycling performance');
   const [showGoalEditor, setShowGoalEditor] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
-  const [showMonthlyReport, setShowMonthlyReport] = useState(false);
   const [formKey, setFormKey] = useState(creds?.apiKey || '');
   const [formId, setFormId] = useState(creds?.athleteId || '');
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
@@ -2205,7 +2229,7 @@ const App: React.FC = () => {
                   Target Goal
                 </span>
                 <button
-                  onClick={() => setShowGoalEditor(true)}
+                  onClick={() => { setActiveTab('settings'); setSettingsView('goal'); }}
                   className="text-[9.5px] font-semibold text-emerald-400 hover:text-emerald-300 transition-colors uppercase tracking-wider flex items-center gap-1"
                 >
                   <Edit size={10} />
@@ -2214,11 +2238,11 @@ const App: React.FC = () => {
               </div>
               
               <div 
-                onClick={() => setShowGoalEditor(true)}
-                className="px-3.5 py-2.5 rounded-2xl border border-white/[0.05] flex items-center justify-between gap-3 bg-[#0b0e14]/80 hover:border-emerald-500/30 hover:bg-[#0e121b] cursor-pointer transition-all active:scale-[0.99]"
+                onClick={() => { setActiveTab('settings'); setSettingsView('goal'); }}
+                className="px-3.5 py-2.5 rounded-2xl border border-white/[0.06] flex items-center justify-between gap-3 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.05] cursor-pointer transition-all active:scale-[0.99]"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                  <div className="w-6 h-6 rounded-lg bg-white/[0.03] border border-white/[0.08] flex items-center justify-center text-slate-300 shrink-0">
                     <Target size={12} />
                   </div>
                   <h2 className="text-xs font-medium text-slate-200 tracking-tight truncate">
@@ -2316,8 +2340,8 @@ const App: React.FC = () => {
               </div>
 
               {/* Unified 5-Metric Strip */}
-              <div className="p-3 rounded-2xl border border-white/[0.05] bg-[#0b0e14]/80">
-                <div className="grid grid-cols-5 gap-1 divide-x divide-white/[0.05]">
+              <div className="p-3 rounded-2xl border border-white/[0.06] bg-white/[0.02]">
+                <div className="grid grid-cols-5 gap-1 divide-x divide-white/[0.06]">
                   <div className="flex flex-col items-center justify-center text-center px-1">
                     <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">Fitness</span>
                     <span className="text-sm font-semibold text-cyan-400 font-mono mt-0.5">{stats.ctl}</span>
@@ -2344,21 +2368,21 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Section: Monthly Report */}
+            {/* Section: Insights */}
             <div className="space-y-1.5 pt-0.5">
               <div 
-                onClick={() => setShowMonthlyReport(true)}
-                className="px-3.5 py-2.5 rounded-2xl border border-blue-500/15 flex items-center justify-between gap-3 bg-[#0b101b]/80 hover:border-blue-500/30 hover:bg-[#0f1525] cursor-pointer transition-all active:scale-[0.99]"
+                onClick={() => setShowInsights(true)}
+                className="px-3.5 py-2.5 rounded-2xl border border-white/[0.06] flex items-center justify-between gap-3 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.05] cursor-pointer transition-all active:scale-[0.99]"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-6 h-6 rounded-lg bg-blue-500/15 border border-blue-500/25 flex items-center justify-center text-blue-400 shrink-0">
+                  <div className="w-6 h-6 rounded-lg bg-white/[0.03] border border-white/[0.08] flex items-center justify-center text-slate-300 shrink-0">
                     <TrendingUp size={12} />
                   </div>
                   <div>
                     <h2 className="text-xs font-semibold text-slate-200 tracking-tight">
-                      Monthly Report
+                      Insights
                     </h2>
-                    <p className="text-[9.5px] text-slate-400 font-normal">Review your last 30 days of training</p>
+                    <p className="text-[9.5px] text-slate-400 font-normal">Key performance figures & analytics</p>
                   </div>
                 </div>
                 <ChevronRight size={13} className="text-slate-600 shrink-0" />
@@ -2605,26 +2629,20 @@ const App: React.FC = () => {
                     return (
                       <div 
                         key={idx} 
-                        className={`flex gap-2.5 items-end ${isUser ? 'justify-end' : 'justify-start'} animate-in fade-in duration-200`}
+                        className={`flex ${isUser ? 'justify-end' : 'justify-start'} animate-in fade-in duration-150`}
                       >
-                        {/* waTTson Avatar */}
-                        {!isUser && (
-                          <div className="w-7 h-7 rounded-lg bg-[#0b0e14] border border-white/[0.08] flex flex-shrink-0 items-center justify-center relative overflow-hidden self-start mt-0.5">
-                            <Bot size={13} className="text-emerald-400" />
-                          </div>
-                        )}
                         
-                        <div className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl ${
+                        <div className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl ${
                           isUser 
-                          ? 'bg-emerald-500 text-slate-950 font-medium rounded-tr-sm text-[13px]' 
-                          : 'bg-[#0b0e14]/90 text-slate-200 rounded-tl-sm border border-white/[0.06] text-[13px]'
+                          ? 'bg-white/[0.08] text-white text-[12.5px] rounded-tr-xs' 
+                          : 'bg-white/[0.02] text-slate-200 rounded-tl-sm border border-white/[0.06] text-[12.5px]'
                         }`}>
                           <div className="leading-relaxed whitespace-pre-line">
                             {isEmptyModel ? (
                               <div className="flex gap-1 items-center py-1">
-                                <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce [animation-delay:0ms]"></div>
-                                <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce [animation-delay:150ms]"></div>
-                                <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce [animation-delay:300ms]"></div>
+                                <div className="w-1.5 h-1.5 bg-slate-400/60 rounded-full animate-bounce [animation-delay:0ms]"></div>
+                                <div className="w-1.5 h-1.5 bg-slate-400/60 rounded-full animate-bounce [animation-delay:150ms]"></div>
+                                <div className="w-1.5 h-1.5 bg-slate-400/60 rounded-full animate-bounce [animation-delay:300ms]"></div>
                               </div>
                             ) : (
                               mainText
@@ -2632,34 +2650,24 @@ const App: React.FC = () => {
                           </div>
                           
                           {systemText && (
-                            <div className="mt-2.5 pt-2 border-t border-emerald-500/10 flex items-start gap-1.5 text-[10px] text-emerald-400 font-mono tracking-wide leading-relaxed bg-emerald-500/5 p-2 rounded-lg border border-emerald-500/10">
-                              <Check size={10} className="text-emerald-400 mt-0.5 shrink-0" />
+                            <div className="mt-2 pt-1.5 border-t border-white/10 flex items-start gap-1.5 text-[10px] text-slate-300 font-mono tracking-wide leading-relaxed bg-white/[0.02] p-2 rounded-lg border border-white/5">
+                              <Check size={10} className="text-slate-400 mt-0.5 shrink-0" />
                               <div>
-                                <span className="font-semibold uppercase text-[8px] tracking-wider text-emerald-400 block mb-0.5">DIRECTIVE SYNCED</span>
+                                <span className="font-semibold uppercase text-[8px] tracking-wider text-slate-400 block mb-0.5">DIRECTIVE SYNCED</span>
                                 {systemText}
                               </div>
                             </div>
                           )}
                         </div>
-
-                        {/* User Avatar */}
-                        {isUser && (
-                          <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex flex-shrink-0 items-center justify-center self-start mt-0.5">
-                            <User size={12} className="text-emerald-400" />
-                          </div>
-                        )}
                       </div>
                     );
                   })}
                   {isChatLoading && messages.length > 0 && messages[messages.length - 1].role === 'user' && (
-                    <div className="flex justify-start gap-2.5 items-end animate-in fade-in duration-200">
-                        <div className="w-7 h-7 rounded-lg bg-[#0b0e14] border border-white/[0.08] flex flex-shrink-0 items-center justify-center">
-                          <Bot size={13} className="text-emerald-400 animate-pulse" />
-                        </div>
-                        <div className="bg-[#0b0e14]/90 border border-white/[0.06] px-3.5 py-2.5 rounded-2xl rounded-tl-sm flex gap-1.5 items-center">
-                          <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce"></div>
-                          <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce [animation-delay:0.2s]"></div>
-                          <div className="w-1.5 h-1.5 bg-emerald-400/60 rounded-full animate-bounce [animation-delay:0.4s]"></div>
+                    <div className="flex justify-start animate-in fade-in duration-150">
+                        <div className="bg-white/[0.02] border border-white/[0.06] px-3.5 py-2.5 rounded-2xl rounded-tl-sm flex gap-1.5 items-center">
+                          <div className="w-1.5 h-1.5 bg-slate-400/60 rounded-full animate-bounce"></div>
+                          <div className="w-1.5 h-1.5 bg-slate-400/60 rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                          <div className="w-1.5 h-1.5 bg-slate-400/60 rounded-full animate-bounce [animation-delay:0.4s]"></div>
                         </div>
                     </div>
                   )}
@@ -2724,7 +2732,7 @@ const App: React.FC = () => {
                    }}
                    placeholder="Ask waTTson anything..."
                    rows={1}
-                   className="flex-1 bg-[#0a0d14] border border-white/[0.08] focus:border-emerald-500/40 rounded-xl px-3.5 py-2 text-[12px] text-white placeholder-slate-500 focus:outline-none font-normal resize-none max-h-24 transition-all"
+                   className="flex-1 bg-white/[0.03] border border-white/[0.08] focus:border-white/30 rounded-xl px-3.5 py-2 text-[12px] text-white placeholder-slate-500 focus:outline-none font-normal resize-none max-h-24 transition-all"
                  />
                  <button 
                    onClick={() => {
@@ -2734,7 +2742,7 @@ const App: React.FC = () => {
                      }
                    }}
                    disabled={!chatInput.trim() || isChatLoading}
-                   className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-30 text-slate-950 px-3.5 py-2 rounded-xl font-semibold text-[10px] uppercase tracking-wider transition-all shrink-0 active:scale-95 flex items-center justify-center gap-1 h-[36px]"
+                   className="bg-white/10 hover:bg-white/20 disabled:opacity-30 text-white px-3.5 py-2 rounded-xl font-semibold text-[10px] uppercase tracking-wider transition-all shrink-0 active:scale-95 flex items-center justify-center gap-1 h-[36px]"
                  >
                    <span>Send</span>
                    <Send size={11} className="stroke-[2.5]" />
@@ -2748,14 +2756,15 @@ const App: React.FC = () => {
           className={`flex-1 hide-scrollbar scroll-smooth overflow-y-auto px-4 pt-4 pb-28 ${activeTab === 'settings' ? 'flex flex-col' : 'hidden'}`}
         >
               {settingsView === "main" ? null : (
-                <div className="flex items-center gap-3 pb-4 px-1 pt-1 mb-4 border-b border-white/5">
+                <div className="flex items-center gap-2.5 pb-3 px-1 border-b border-white/[0.06] mb-3">
                   <button 
                     onClick={() => setSettingsView("main")}
-                    className="w-9 h-9 rounded-xl glass-card flex items-center justify-center text-slate-400 border border-white/10 active:scale-95 transition-all"
+                    className="w-8 h-8 rounded-lg bg-white/[0.03] hover:bg-white/[0.06] flex items-center justify-center text-slate-300 border border-white/[0.08] active:scale-95 transition-all cursor-pointer"
+                    aria-label="Back to settings"
                   >
-                    <ChevronLeft size={18} />
+                    <ChevronLeft size={16} />
                   </button>
-                  <h2 className="text-[14px] font-black text-white italic uppercase tracking-tight">
+                  <h2 className="text-xs font-bold text-white uppercase tracking-wider">
                     {settingsView === "rider_profile" ? "Rider Assessment" : 
                      settingsView === "ftp" ? "Engine Benchmark" : 
                      settingsView === "goal" ? "Goal & Ambition" : 
@@ -2765,166 +2774,163 @@ const App: React.FC = () => {
                 </div>
               )}
 
-              <div className="flex flex-col pb-2 px-1">
+              <div className="flex flex-col pb-1 px-1">
                 {settingsView === "main" && (
-                  <div className="flex flex-col gap-2.5">
+                  <div className="flex flex-col gap-2">
                     {/* Firebase Cloud Sync & User Profile */}
                     <FirebaseAuthCard 
                       currentUser={currentUser} 
                       cloudSyncStatus={cloudSyncStatus} 
-                      lastSyncedAt={lastSyncedAt} 
+                      lastSyncedAt={lastSyncedAt}
+                      compact={true}
                     />
+
+                    <div className="pt-1 px-1">
+                      <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-widest">Configuration</span>
+                    </div>
 
                     <button 
                       onClick={() => setSettingsView("rider_profile")}
-                      className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-amber-500/10 shadow-sm"
+                      className="glass-card px-3 py-2.5 rounded-xl flex items-center justify-between group active:scale-[0.98] transition-all border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400"><User size={20} /></div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-slate-300"><User size={16} /></div>
                         <div className="text-left">
-                          <p className="text-[11px] font-black text-white uppercase tracking-widest">Your Rider Profile</p>
-                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Assessment</p>
+                          <p className="text-[11px] font-bold text-white uppercase tracking-wider">Your Rider Profile</p>
+                          <p className="text-[9.5px] text-slate-400 font-medium tracking-wide">Comprehensive Assessment</p>
                         </div>
                       </div>
-                      <ChevronRight size={16} className="text-slate-600 group-hover:text-amber-400 transition-colors" />
+                      <ChevronRight size={14} className="text-slate-500 group-hover:text-white transition-colors" />
                     </button>
 
                     <button 
                       onClick={() => setSettingsView("goal")}
-                      className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-emerald-500/10 shadow-sm"
+                      className="glass-card px-3 py-2.5 rounded-xl flex items-center justify-between group active:scale-[0.98] transition-all border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400"><Target size={20} /></div>
-                        <div className="text-left">
-                          <p className="text-[11px] font-black text-white uppercase tracking-widest">Your Goal</p>
-                          <p className="text-[10px] text-slate-500 font-bold italic truncate max-w-[180px]">\"{userGoal}\"</p>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-slate-300 shrink-0"><Target size={16} /></div>
+                        <div className="text-left min-w-0">
+                          <p className="text-[11px] font-bold text-white uppercase tracking-wider">Your Goal</p>
+                          <p className="text-[9.5px] text-slate-400 font-medium italic truncate max-w-[190px]">\"{userGoal}\"</p>
                         </div>
                       </div>
-                      <ChevronRight size={16} className="text-slate-600 group-hover:text-emerald-400 transition-colors" />
+                      <ChevronRight size={14} className="text-slate-500 group-hover:text-white transition-colors shrink-0 ml-2" />
                     </button>
 
                     <button 
                       onClick={() => setSettingsView("ftp")}
-                      className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-orange-500/10 shadow-sm"
+                      className="glass-card px-3 py-2.5 rounded-xl flex items-center justify-between group active:scale-[0.98] transition-all border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-400"><Zap size={20} /></div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-slate-300"><Zap size={16} /></div>
                         <div className="text-left">
-                          <p className="text-[11px] font-black text-white uppercase tracking-widest">Engine Benchmark</p>
-                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{ftp ? `${ftp}W FTP` : "Click to set"}</p>
+                          <p className="text-[11px] font-bold text-white uppercase tracking-wider">Engine Benchmark</p>
+                          <p className="text-[9.5px] text-slate-400 font-mono font-medium">{ftp ? `${ftp}W FTP` : "Click to set"}</p>
                         </div>
                       </div>
-                      <ChevronRight size={16} className="text-slate-600 group-hover:text-orange-400 transition-colors" />
+                      <ChevronRight size={14} className="text-slate-500 group-hover:text-white transition-colors" />
                     </button>
 
                     <button 
                       onClick={() => setSettingsView("training_method")}
-                      className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-cyan-500/10 shadow-sm"
+                      className="glass-card px-3 py-2.5 rounded-xl flex items-center justify-between group active:scale-[0.98] transition-all border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center text-cyan-400"><Settings size={20} /></div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-slate-300"><Settings size={16} /></div>
                         <div className="text-left">
-                          <p className="text-[11px] font-black text-white uppercase tracking-widest">Training Setup</p>
-                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{trainingMethodology.replace("_", " ")} • {trainingMode}</p>
+                          <p className="text-[11px] font-bold text-white uppercase tracking-wider">Training Setup</p>
+                          <p className="text-[9.5px] text-slate-400 font-medium">{trainingMethodology.replace("_", " ")} • {trainingMode}</p>
                         </div>
                       </div>
-                      <ChevronRight size={16} className="text-slate-600 group-hover:text-cyan-400 transition-colors" />
+                      <ChevronRight size={14} className="text-slate-500 group-hover:text-white transition-colors" />
                     </button>
 
                     <button 
                       onClick={() => setSettingsView("workout_library")}
-                      className="glass-card p-4 rounded-[1.3rem] flex items-center justify-between group active:scale-[0.98] transition-all border border-blue-500/10 shadow-sm"
+                      className="glass-card px-3 py-2.5 rounded-xl flex items-center justify-between group active:scale-[0.98] transition-all border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400"><BookOpen size={20} /></div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-slate-300"><BookOpen size={16} /></div>
                         <div className="text-left">
-                          <p className="text-[11px] font-black text-white uppercase tracking-widest">Workout Library</p>
-                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Curated Training Catalog</p>
+                          <p className="text-[11px] font-bold text-white uppercase tracking-wider">Workout Library</p>
+                          <p className="text-[9.5px] text-slate-400 font-medium">Curated Training Catalog</p>
                         </div>
                       </div>
-                      <ChevronRight size={16} className="text-slate-600 group-hover:text-blue-400 transition-colors" />
+                      <ChevronRight size={14} className="text-slate-500 group-hover:text-white transition-colors" />
                     </button>
                     
-                    <div className="mt-8 pt-4 border-t border-white/5">
+                    <div className="pt-2 border-t border-white/5 flex items-center justify-between">
                       <button 
                         onClick={handleLogout}
-                        className="w-full glass-card p-4 rounded-2xl flex items-center justify-center gap-3 text-rose-500 hover:bg-rose-500/10 transition-all active:scale-[0.98] border border-rose-500/10 group"
+                        className="text-[10px] font-bold text-rose-400 hover:text-rose-300 transition-colors flex items-center gap-1.5 px-2 py-1 cursor-pointer"
                       >
-                        <LogOut size={16} className="group-hover:translate-x-1 transition-transform" />
-                        <span className="text-[10px] font-black uppercase tracking-widest">Disconnect Account</span>
+                        <LogOut size={13} />
+                        <span>Disconnect Account</span>
                       </button>
+                      <span className="text-[9px] text-slate-500 font-mono">v1.0.0</span>
                     </div>
                   </div>
                 )}
 
                 {settingsView === "goal" && (
-                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    <div className="space-y-4">
-                      <p className="text-[11px] text-slate-400 leading-relaxed font-medium px-1">
-                        waTTson adapts his coaching intensity, interval style, and recovery focus based on your current ambition.
-                      </p>
-                      <div className="space-y-3">
-                        <label className="text-[9px] font-bold text-slate-600 uppercase tracking-[0.2em] ml-1">Current Ambition</label>
-                        <textarea 
-                          value={userGoal} 
-                          onChange={(e) => setUserGoal(e.target.value)} 
-                          className="w-full bg-slate-950/50 border border-white/10 rounded-[1.8rem] p-6 text-lg font-bold text-white outline-none focus:border-emerald-500/30 italic min-h-[140px] resize-none"
-                          placeholder="Ex: Improve hill climb efficiency..."
-                        />
-                        <button 
-                          onClick={() => { 
-                            safeSetItem("wattson_goal", userGoal); 
-                            if (currentUser) syncToCloud({ userGoal });
-                            setSuggestion(null); 
-                            setGeneratedWeeks([]);
-                            setWeeklyBriefing(null);
-                            fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
-                            setSettingsView("main");
-                          }}
-                          className="w-full py-5 bg-emerald-500 text-slate-950 font-black text-[10px] uppercase tracking-[0.2em] rounded-[1.5rem] shadow-xl active:scale-95 transition-all"
-                        >
-                          Update Engine Target
-                        </button>
-                      </div>
+                  <div className="space-y-4 animate-in fade-in duration-200">
+                    <div className="space-y-2">
+                      <label className="text-[9.5px] font-semibold text-slate-400 uppercase tracking-wider px-1">Primary Ambition</label>
+                      <textarea 
+                        value={userGoal} 
+                        onChange={(e) => setUserGoal(e.target.value)} 
+                        className="w-full bg-white/[0.02] border border-white/[0.08] rounded-xl p-3.5 text-xs text-slate-100 outline-none focus:border-white/20 min-h-[90px] resize-none font-medium placeholder:text-slate-600 transition-colors"
+                        placeholder="Ex: Improve hill climb efficiency..."
+                      />
                     </div>
+                    <button 
+                      onClick={() => { 
+                        safeSetItem("wattson_goal", userGoal); 
+                        if (currentUser) syncToCloud({ userGoal });
+                        setSuggestion(null); 
+                        setGeneratedWeeks([]);
+                        setWeeklyBriefing(null);
+                        fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
+                        setSettingsView("main");
+                      }}
+                      className="w-full py-2.5 bg-white hover:bg-slate-200 text-slate-950 font-semibold text-xs uppercase tracking-wider rounded-xl transition-all active:scale-[0.99] cursor-pointer"
+                    >
+                      Save Ambition
+                    </button>
                   </div>
                 )}
 
                 {settingsView === "ftp" && (
-                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    <div className="space-y-4">
-                      <p className="text-[11px] text-slate-400 leading-relaxed font-medium px-1">
-                        Your FTP (Functional Threshold Power) is the engine's core benchmark. While we sync this from Intervals.icu, you can override it here.
-                      </p>
-                      
-                      <div className="bg-slate-950/50 p-8 rounded-[2rem] border border-white/5 flex flex-col items-center">
-                        <span className="text-[8px] font-bold text-slate-600 uppercase tracking-[0.2em] mb-4">Engine Value</span>
-                        <div className="flex items-center gap-6">
-                          <button 
-                            onClick={() => {
-                              const newVal = Math.max(0, (ftp || 200) - 5);
-                              setFtp(newVal);
-                              safeSetItem("wattson_ftp", newVal.toString());
-                            }}
-                            className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-slate-400 active:scale-90 transition-all hover:bg-white/10 border border-white/5"
-                          >
-                            <ChevronLeft size={24} />
-                          </button>
-                          <div className="flex flex-col items-center min-w-[100px]">
-                            <span className="text-5xl font-black italic text-white tracking-tighter">{ftp || "---"}</span>
-                            <span className="text-[10px] font-bold text-orange-400 uppercase tracking-widest mt-1">Watts</span>
-                          </div>
-                          <button 
-                            onClick={() => {
-                              const newVal = (ftp || 200) + 5;
-                              setFtp(newVal);
-                              safeSetItem("wattson_ftp", newVal.toString());
-                            }}
-                            className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center text-slate-400 active:scale-90 transition-all hover:bg-white/10 border border-white/5"
-                          >
-                            <ChevronRight size={24} />
-                          </button>
+                  <div className="space-y-4 animate-in fade-in duration-200">
+                    <div className="bg-white/[0.02] p-6 rounded-2xl border border-white/[0.06] flex flex-col items-center">
+                      <span className="text-[9.5px] font-semibold text-slate-400 uppercase tracking-wider mb-4">Functional Threshold Power</span>
+                      <div className="flex items-center gap-5">
+                        <button 
+                          onClick={() => {
+                            const newVal = Math.max(0, (ftp || 200) - 5);
+                            setFtp(newVal);
+                            safeSetItem("wattson_ftp", newVal.toString());
+                          }}
+                          className="w-10 h-10 rounded-xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-center text-slate-300 active:scale-95 transition-all hover:bg-white/[0.06] cursor-pointer"
+                          aria-label="Decrease FTP"
+                        >
+                          <ChevronLeft size={18} />
+                        </button>
+                        <div className="flex flex-col items-center min-w-[90px]">
+                          <span className="text-4xl font-bold text-white tracking-tight font-mono">{ftp || "---"}</span>
+                          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mt-1">Watts</span>
                         </div>
+                        <button 
+                          onClick={() => {
+                            const newVal = (ftp || 200) + 5;
+                            setFtp(newVal);
+                            safeSetItem("wattson_ftp", newVal.toString());
+                          }}
+                          className="w-10 h-10 rounded-xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-center text-slate-300 active:scale-95 transition-all hover:bg-white/[0.06] cursor-pointer"
+                          aria-label="Increase FTP"
+                        >
+                          <ChevronRight size={18} />
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -2941,66 +2947,66 @@ const App: React.FC = () => {
                     ) : userProfile ? (
                       <div className="space-y-4">
                         {/* Navigation Tabs: DNA / Power Curve / Aerobic Decoupling */}
-                        <div className="flex bg-slate-950/60 p-1 rounded-xl border border-white/5 gap-1">
+                        <div className="flex bg-white/[0.02] p-1 rounded-xl border border-white/[0.06] gap-1">
                           <button
                             onClick={() => setRiderProfileTab("dna")}
-                            className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                            className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
                               riderProfileTab === "dna"
-                                ? "bg-emerald-500 text-slate-950 shadow-md"
-                                : "text-slate-400 hover:text-white"
+                                ? "bg-white/10 text-white shadow-sm"
+                                : "text-slate-400 hover:text-slate-200"
                             }`}
                           >
                             DNA Profile
                           </button>
                           <button
                             onClick={() => setRiderProfileTab("power")}
-                            className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                            className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
                               riderProfileTab === "power"
-                                ? "bg-emerald-500 text-slate-950 shadow-md"
-                                : "text-slate-400 hover:text-white"
+                                ? "bg-white/10 text-white shadow-sm"
+                                : "text-slate-400 hover:text-slate-200"
                             }`}
                           >
                             Power Curve
                           </button>
                           <button
                             onClick={() => setRiderProfileTab("aerobic")}
-                            className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                            className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
                               riderProfileTab === "aerobic"
-                                ? "bg-emerald-500 text-slate-950 shadow-md"
-                                : "text-slate-400 hover:text-white"
+                                ? "bg-white/10 text-white shadow-sm"
+                                : "text-slate-400 hover:text-slate-200"
                             }`}
                           >
-                            Aerobic (EF/Pw:HR)
+                            Aerobic
                           </button>
                         </div>
 
                         {/* Tab 1: DNA Profile */}
                         {riderProfileTab === "dna" && (
-                          <div className="space-y-3.5 animate-in fade-in duration-200">
+                          <div className="space-y-2.5 animate-in fade-in duration-200">
                             {/* Archetype Hero Card */}
-                            <div className="bg-gradient-to-r from-emerald-500/10 via-slate-950/60 to-slate-950/80 p-4 rounded-2xl border border-emerald-500/20 relative overflow-hidden">
-                              <span className="text-[8px] font-black text-emerald-400 uppercase tracking-[0.2em] block mb-1">
-                                CYCLIST ARCHETYPE
+                            <div className="bg-white/[0.02] p-3.5 rounded-xl border border-white/[0.06] space-y-1">
+                              <span className="text-[8.5px] font-bold text-slate-400 uppercase tracking-wider block">
+                                Cyclist Archetype
                               </span>
-                              <h3 className="text-base font-black text-white italic uppercase tracking-tight">
+                              <h3 className="text-sm font-bold text-white uppercase tracking-tight">
                                 {userProfile.athlete_type}
                               </h3>
-                              <p className="text-[11px] text-slate-300 leading-relaxed font-medium mt-1.5">
+                              <p className="text-xs text-slate-300 leading-relaxed font-normal">
                                 {condenseText(userProfile.rider_story, 2) ||
                                   `You possess a strong physiological footprint with high aerobic endurance potential.`}
                               </p>
                             </div>
 
                             {/* Strengths & Limiters in compact pills */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               {/* Strengths */}
-                              <div className="p-3.5 rounded-2xl bg-emerald-950/15 border border-emerald-500/15 space-y-2">
-                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                                  ✓ Core Strengths
+                              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-1.5">
+                                <span className="text-[9px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                  Core Strengths
                                 </span>
-                                <div className="space-y-1.5">
+                                <div className="space-y-1">
                                   {(userProfile.strengths || ["High aerobic volume capacity", "Steady sub-threshold endurance", "Consistent weekly training"]).slice(0, 3).map((s, idx) => (
-                                    <div key={idx} className="flex items-center gap-2 text-[10.5px] text-slate-200 font-medium bg-emerald-500/5 px-2.5 py-1.5 rounded-lg border border-emerald-500/10">
+                                    <div key={idx} className="flex items-center gap-2 text-[10.5px] text-slate-300">
                                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
                                       <span className="truncate">{condenseBullet(s, 8)}</span>
                                     </div>
@@ -3009,13 +3015,13 @@ const App: React.FC = () => {
                               </div>
 
                               {/* Limiters */}
-                              <div className="p-3.5 rounded-2xl bg-rose-950/15 border border-rose-500/15 space-y-2">
-                                <span className="text-[9px] font-black text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
-                                  ⚠ Focus Areas
+                              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-1.5">
+                                <span className="text-[9px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                  Focus Areas
                                 </span>
-                                <div className="space-y-1.5">
+                                <div className="space-y-1">
                                   {(userProfile.areas_for_improvement || ["VO2 max peak power", "Anaerobic repeatability", "High-intensity bursts"]).slice(0, 3).map((a, idx) => (
-                                    <div key={idx} className="flex items-center gap-2 text-[10.5px] text-slate-200 font-medium bg-rose-500/5 px-2.5 py-1.5 rounded-lg border border-rose-500/10">
+                                    <div key={idx} className="flex items-center gap-2 text-[10.5px] text-slate-300">
                                       <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
                                       <span className="truncate">{condenseBullet(a, 8)}</span>
                                     </div>
@@ -3026,11 +3032,11 @@ const App: React.FC = () => {
 
                             {/* Recommended Training Focus */}
                             {userProfile.recommended_focus && (
-                              <div className="p-3.5 rounded-2xl bg-slate-900/40 border border-white/5 space-y-1">
-                                <span className="text-[9px] font-black text-cyan-400 uppercase tracking-wider block">
-                                  🎯 Recommended Training Focus
+                              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-1">
+                                <span className="text-[8.5px] font-bold text-slate-400 uppercase tracking-wider block">
+                                  Training Focus
                                 </span>
-                                <p className="text-[11px] text-slate-200 font-semibold leading-relaxed">
+                                <p className="text-xs text-slate-200 font-medium leading-relaxed">
                                   {condenseText(userProfile.recommended_focus, 1)}
                                 </p>
                               </div>
@@ -3038,16 +3044,16 @@ const App: React.FC = () => {
 
                             {/* Effective Stimuli & Avoid */}
                             {(userProfile.effective_methods || userProfile.ineffective_methods) && (
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-0.5">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                 {userProfile.effective_methods && userProfile.effective_methods.length > 0 && (
-                                  <div className="p-3 rounded-xl bg-slate-950/40 border border-white/5 space-y-1.5">
-                                    <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider block">
+                                  <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-1">
+                                    <span className="text-[8.5px] font-bold text-slate-400 uppercase tracking-wider block">
                                       What Works
                                     </span>
-                                    <ul className="space-y-1 text-[10px] text-slate-300 font-medium">
+                                    <ul className="space-y-1 text-[10px] text-slate-300">
                                       {userProfile.effective_methods.slice(0, 2).map((m, i) => (
                                         <li key={i} className="flex items-start gap-1.5">
-                                          <span className="text-emerald-400 shrink-0">✓</span>
+                                          <span className="text-emerald-400 shrink-0">•</span>
                                           <span>{condenseBullet(m, 10)}</span>
                                         </li>
                                       ))}
@@ -3055,14 +3061,14 @@ const App: React.FC = () => {
                                   </div>
                                 )}
                                 {userProfile.ineffective_methods && userProfile.ineffective_methods.length > 0 && (
-                                  <div className="p-3 rounded-xl bg-slate-950/40 border border-white/5 space-y-1.5">
-                                    <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider block">
+                                  <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-1">
+                                    <span className="text-[8.5px] font-bold text-slate-400 uppercase tracking-wider block">
                                       To Avoid
                                     </span>
-                                    <ul className="space-y-1 text-[10px] text-slate-300 font-medium">
+                                    <ul className="space-y-1 text-[10px] text-slate-300">
                                       {userProfile.ineffective_methods.slice(0, 2).map((m, i) => (
                                         <li key={i} className="flex items-start gap-1.5">
-                                          <span className="text-rose-400 shrink-0">✕</span>
+                                          <span className="text-rose-400 shrink-0">•</span>
                                           <span>{condenseBullet(m, 10)}</span>
                                         </li>
                                       ))}
@@ -3104,238 +3110,71 @@ const App: React.FC = () => {
                 )}
 
                 {settingsView === "training_method" && (
-                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 px-1">
-                    <div className="flex bg-slate-950/60 p-1.5 rounded-2xl border border-white/5">
-                      <button
-                        onClick={() => setMethodologyTab("selection")}
-                        className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                          methodologyTab === "selection" 
-                            ? "bg-cyan-500 text-slate-950 shadow-md" 
-                            : "text-slate-400 hover:text-white"
-                        }`}
-                      >
-                        Setup
-                      </button>
-                      <button
-                        onClick={() => {
-                          setMethodologyTab("review");
-                          if (!threeMonthReview && !isLoadingThreeMonthReview && activities) {
-                            handleFetchThreeMonthReview();
-                          }
-                        }}
-                        className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                          methodologyTab === "review" 
-                            ? "bg-cyan-500 text-slate-950 shadow-md" 
-                            : "text-slate-400 hover:text-white"
-                        }`}
-                      >
-                        Review
-                      </button>
+                  <div className="space-y-4 animate-in fade-in duration-200 px-1">
+                    <div className="space-y-3">
+                      <div className="bg-white/[0.02] p-4 rounded-xl border border-white/[0.06] space-y-2.5">
+                        <div className="flex items-center justify-between px-0.5">
+                          <span className="text-[10px] font-bold text-white uppercase tracking-wider">Discipline Mode</span>
+                          <span className="text-[9px] text-slate-400 font-medium">Activity focus</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(["cycling", "triathlon", "running"]).map((mode) => {
+                            const isSelected = trainingMode === mode;
+                            return (
+                              <button
+                                key={mode}
+                                onClick={() => {
+                                  setTrainingMode(mode as TrainingMode);
+                                  localStorage.setItem("wattson_training_mode", mode);
+                                  setGeneratedWeeks([]);
+                                  setWeeklyBriefing(null);
+                                  fetchWeeklyBriefingData(undefined, true, undefined, mode as TrainingMode, 1);
+                                }}
+                                className={`flex flex-col items-center justify-center py-2.5 px-2 rounded-xl border transition-all active:scale-95 cursor-pointer ${
+                                  isSelected
+                                    ? "bg-white/10 border-white/20 text-white font-bold"
+                                    : "bg-white/[0.01] border-white/5 text-slate-400 hover:text-slate-200"
+                                }`}
+                              >
+                                <span className="text-[10px] uppercase tracking-wider">{mode === "triathlon" ? "Triathlon" : mode === "running" ? "Running" : "Cycling"}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="bg-white/[0.02] p-4 rounded-xl border border-white/[0.06] space-y-2.5">
+                        <div className="flex items-center justify-between px-0.5">
+                          <span className="text-[10px] font-bold text-white uppercase tracking-wider">Methodology</span>
+                          <span className="text-[9px] text-slate-400 font-medium">Distribution model</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {["polarized", "pyramidal", "norwegian"].map((m) => {
+                            const isSelected = trainingMethodology === m;
+                            return (
+                              <button
+                                key={m}
+                                onClick={() => {
+                                  setTrainingMethodology(m as TrainingMethodology);
+                                  localStorage.setItem("wattson_training_methodology", m);
+                                  setGeneratedWeeks([]);
+                                  setWeeklyBriefing(null);
+                                  fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
+                                }}
+                                className={`w-full py-2.5 px-3.5 rounded-xl border text-left transition-all active:scale-[0.99] flex items-center justify-between cursor-pointer ${
+                                  isSelected
+                                    ? "bg-white/10 border-white/20 text-white font-semibold"
+                                    : "bg-white/[0.01] border-white/5 text-slate-400 hover:text-slate-200"
+                                }`}
+                              >
+                                <span className="text-[11px] uppercase tracking-wider">{m.replace("_", " ")}</span>
+                                {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
-
-                    {methodologyTab === "selection" && (
-                      <div className="space-y-6">
-                        <div className="bg-slate-950/40 p-5 rounded-[1.8rem] border border-white/5 space-y-4">
-                          <div className="flex flex-col gap-1 px-1">
-                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Training Mode</span>
-                            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Session distribution target</span>
-                          </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            {(["cycling", "triathlon", "running"]).map((mode) => {
-                              const isSelected = trainingMode === mode;
-                              return (
-                                <button
-                                  key={mode}
-                                  onClick={() => {
-                                    setTrainingMode(mode as TrainingMode);
-                                    localStorage.setItem("wattson_training_mode", mode);
-                                    setGeneratedWeeks([]);
-                                    setWeeklyBriefing(null);
-                                    fetchWeeklyBriefingData(undefined, true, undefined, mode as TrainingMode, 1);
-                                  }}
-                                  className={`flex flex-col items-center justify-center p-3 rounded-2xl border transition-all active:scale-95 ${
-                                    isSelected
-                                      ? "bg-cyan-500/10 border-cyan-500/40 text-cyan-400"
-                                      : "bg-white/[0.02] border-white/5 text-slate-500 hover:text-slate-300"
-                                  }`}
-                                >
-                                  <span className="text-[10px] font-black uppercase tracking-widest">{mode === "triathlon" ? "TRI" : mode === "running" ? "RUN" : "CYC"}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-
-                        <div className="bg-slate-950/40 p-5 rounded-[1.8rem] border border-white/5 space-y-4">
-                          <div className="flex flex-col gap-1 px-1">
-                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Methodology</span>
-                            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Interval style preference</span>
-                          </div>
-                          <div className="space-y-2">
-                            {["polarized", "pyramidal", "norwegian"].map((m) => {
-                              const isSelected = trainingMethodology === m;
-                              return (
-                                <button
-                                  key={m}
-                                  onClick={() => {
-                                    setTrainingMethodology(m as TrainingMethodology);
-                                    localStorage.setItem("wattson_training_methodology", m);
-                                    setGeneratedWeeks([]);
-                                    setWeeklyBriefing(null);
-                                    fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
-                                  }}
-                                  className={`w-full p-4 rounded-2xl border text-left transition-all active:scale-[0.98] flex items-center justify-between ${
-                                    isSelected
-                                      ? "bg-cyan-500/10 border-cyan-500/40 text-cyan-400"
-                                      : "bg-white/[0.02] border-white/5 text-slate-500 hover:text-slate-300"
-                                  }`}
-                                >
-                                  <span className="text-[11px] font-black uppercase tracking-widest">{m.replace("_", " ")}</span>
-                                  {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]"></div>}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {methodologyTab === "review" && (
-                      <div className="space-y-3.5 animate-in fade-in duration-200">
-                        {isLoadingThreeMonthReview ? (
-                          <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
-                            <Loader2 size={28} className="text-cyan-400 animate-spin" />
-                            <p className="text-[11px] font-black text-slate-300 uppercase tracking-widest">Analyzing 90-Day Training Data...</p>
-                            <p className="text-[9px] text-slate-500 font-medium">Evaluating TSS, volume trends, and goal progression</p>
-                          </div>
-                        ) : threeMonthReview ? (
-                          <div className="space-y-3.5">
-                            <div className="p-4 sm:p-5 rounded-3xl bg-slate-950/60 border border-white/5 space-y-4">
-                              {/* Header & Status */}
-                              <div className="flex items-center justify-between border-b border-white/5 pb-3">
-                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">90-Day Progress</span>
-                                <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ${
-                                  threeMonthReview.status === "on_track" 
-                                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" 
-                                    : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
-                                }`}>
-                                  {threeMonthReview.status === "on_track" ? "On Track" : "Needs Adjustment"}
-                                </span>
-                              </div>
-
-                              {/* Headline */}
-                              {threeMonthReview.headline && (
-                                <p className="text-[11.5px] text-slate-200 font-bold italic">
-                                  "{condenseText(threeMonthReview.headline, 1)}"
-                                </p>
-                              )}
-
-                              {/* Period Stats Row */}
-                              {threeMonthReview.period_stats && (
-                                <div className="grid grid-cols-3 gap-2 bg-slate-900/40 p-2.5 rounded-2xl border border-white/5 text-center">
-                                  <div className="flex flex-col">
-                                    <span className="text-[8.5px] font-extrabold text-slate-500 uppercase tracking-wider">Volume</span>
-                                    <span className="text-[12px] font-black text-white italic font-mono">{threeMonthReview.period_stats.total_hours}h</span>
-                                  </div>
-                                  <div className="flex flex-col border-x border-white/5">
-                                    <span className="text-[8.5px] font-extrabold text-slate-500 uppercase tracking-wider">Total TSS</span>
-                                    <span className="text-[12px] font-black text-white italic font-mono">{threeMonthReview.period_stats.total_tss}</span>
-                                  </div>
-                                  <div className="flex flex-col">
-                                    <span className="text-[8.5px] font-extrabold text-slate-500 uppercase tracking-wider">Avg/Wk</span>
-                                    <span className="text-[12px] font-black text-white italic font-mono">{threeMonthReview.period_stats.avg_tss_per_week}</span>
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* What's Going Well */}
-                              <div className="space-y-2 bg-emerald-950/15 border border-emerald-500/15 rounded-2xl p-3.5">
-                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-wider block">
-                                  ✓ What's Working
-                                </span>
-                                {threeMonthReview.good_things_achieved && threeMonthReview.good_things_achieved.length > 0 ? (
-                                  <div className="space-y-1.5">
-                                    {threeMonthReview.good_things_achieved.slice(0, 3).map((good, idx) => (
-                                      <div key={idx} className="flex items-start gap-2 text-[10.5px] text-slate-200 font-medium">
-                                        <span className="text-emerald-400 shrink-0 select-none">•</span>
-                                        <span>{condenseBullet(good, 12)}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <p className="text-[10.5px] text-slate-300 font-medium">
-                                    Solid training volume and consistent weekly ride habits established.
-                                  </p>
-                                )}
-                              </div>
-
-                              {/* Goal Compatibility & Intensity Balance (Compact Grid) */}
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                                {threeMonthReview.contributing_to_goal && (
-                                  <div className="p-3 rounded-2xl bg-slate-900/40 border border-white/5 space-y-1">
-                                    <span className="text-[8.5px] font-black text-cyan-400 uppercase tracking-wider block">
-                                      🎯 Goal Alignment
-                                    </span>
-                                    <p className="text-[10.5px] text-slate-300 leading-relaxed font-medium">
-                                      {condenseText(threeMonthReview.contributing_to_goal, 2)}
-                                    </p>
-                                  </div>
-                                )}
-
-                                {threeMonthReview.intensity_distribution_summary && (
-                                  <div className="p-3 rounded-2xl bg-slate-900/40 border border-white/5 space-y-1">
-                                    <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider block">
-                                      📊 Intensity Split
-                                    </span>
-                                    <p className="text-[10.5px] text-slate-300 leading-relaxed font-medium">
-                                      {condenseText(threeMonthReview.intensity_distribution_summary, 1)}
-                                    </p>
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Recommended Adjustments */}
-                              {threeMonthReview.needed_changes && threeMonthReview.needed_changes.length > 0 && (
-                                <div className="space-y-2 pt-1 border-t border-white/5">
-                                  <span className="text-[9px] font-black text-amber-400 uppercase tracking-wider block">
-                                    🛠️ Recommended Adjustments
-                                  </span>
-                                  <div className="space-y-1.5">
-                                    {threeMonthReview.needed_changes.slice(0, 3).map((change, idx) => (
-                                      <div key={idx} className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/10">
-                                        <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 font-black text-[9px] flex items-center justify-center shrink-0 mt-0.5">
-                                          {idx + 1}
-                                        </span>
-                                        <span className="text-[10.5px] text-slate-200 font-medium leading-tight">
-                                          {condenseBullet(change, 14)}
-                                        </span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                            
-                            <button
-                              onClick={() => handleFetchThreeMonthReview(true)}
-                              className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 border border-white/5 active:scale-95"
-                            >
-                              <RefreshCw size={12} /> Refresh Review
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="text-center py-8 space-y-3">
-                            <p className="text-[11px] text-slate-400 font-medium">No 3-month review generated yet.</p>
-                            <button
-                              onClick={() => handleFetchThreeMonthReview(true)}
-                              className="px-4 py-2 bg-cyan-500 text-slate-950 font-black rounded-xl text-[10px] uppercase tracking-widest shadow-md hover:bg-cyan-400 transition-all active:scale-95"
-                            >
-                              Run Analysis
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
                 )}
 
@@ -3353,34 +3192,60 @@ const App: React.FC = () => {
       </div>
 
     {showGoalEditor && (
-        <div className="fixed inset-0 z-[210] bg-slate-950/98 backdrop-blur-3xl flex flex-col p-8 animate-in slide-in-from-bottom-4 duration-400" style={{ paddingBottom: 'max(32px, env(safe-area-inset-bottom))' }}>
-          <div className="flex items-center justify-between mb-8 mt-2">
-            <h2 className="text-2xl text-header italic uppercase leading-none">DNA Focus</h2>
-            <button onClick={() => setShowGoalEditor(false)} className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-slate-500"><Settings size={20} /></button>
+      <div 
+        className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" 
+        onClick={() => setShowGoalEditor(false)}
+      >
+        <div 
+          className="bg-[#0c0e15] border-t sm:border border-white/10 w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl flex flex-col gap-3.5" 
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between border-b border-white/[0.06] pb-2.5">
+            <h2 className="text-xs font-bold text-white uppercase tracking-wider">Target Goal</h2>
+            <button 
+              onClick={() => setShowGoalEditor(false)} 
+              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+              aria-label="Close"
+            >
+              <X size={16} />
+            </button>
           </div>
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Define your primary ambition for the coaching engine.</p>
-          <textarea 
-            value={userGoal} 
-            onChange={(e) => setUserGoal(e.target.value)} 
-            className="w-full bg-slate-900/50 border border-white/10 rounded-[2rem] p-6 text-lg font-bold text-white outline-none focus:border-emerald-500/30 flex-1 mb-8 italic"
-            placeholder="Ex: Improve hill climb efficiency..."
-          />
-          <button 
-            onClick={() => { 
-              safeSetItem('wattson_goal', userGoal); 
-              if (currentUser) syncToCloud({ userGoal });
-              setSuggestion(null); 
-              setShowGoalEditor(false); 
-              setGeneratedWeeks([]);
-              setWeeklyBriefing(null);
-              fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
-            }}
-            className="w-full py-5 bg-emerald-500 text-slate-950 font-bold text-[10px] uppercase tracking-[0.2em] rounded-[1.8rem] shadow-2xl active:scale-95 transition-all"
-          >
-            Update Engine Target
-          </button>
+          
+          <div className="space-y-1.5">
+            <label className="text-[9.5px] font-semibold text-slate-400 uppercase tracking-wider">Primary Ambition</label>
+            <textarea 
+              value={userGoal} 
+              onChange={(e) => setUserGoal(e.target.value)} 
+              className="w-full bg-white/[0.02] border border-white/[0.08] rounded-xl p-3 text-xs text-slate-100 outline-none focus:border-white/20 min-h-[90px] resize-none font-medium placeholder:text-slate-600 transition-colors"
+              placeholder="Ex: Improve hill climb efficiency..."
+            />
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              onClick={() => setShowGoalEditor(false)}
+              className="flex-1 py-2.5 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.08] text-slate-300 hover:text-white font-semibold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center"
+            >
+              Cancel
+            </button>
+            <button 
+              onClick={() => { 
+                safeSetItem('wattson_goal', userGoal); 
+                if (currentUser) syncToCloud({ userGoal });
+                setSuggestion(null); 
+                setShowGoalEditor(false); 
+                setGeneratedWeeks([]);
+                setWeeklyBriefing(null);
+                fetchWeeklyBriefingData(undefined, true, undefined, undefined, 1);
+              }}
+              className="flex-1 py-2.5 bg-white hover:bg-slate-200 text-slate-950 font-semibold text-xs uppercase tracking-wider rounded-xl transition-all active:scale-[0.98] cursor-pointer text-center"
+            >
+              Save Goal
+            </button>
+          </div>
         </div>
-      )}
+      </div>
+    )}
       {showWorkoutDetail && currentWorkout && (
         <div className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => setShowWorkoutDetail(false)}>
           <div className="bg-[#0c0e15] border-t sm:border border-white/10 w-full sm:max-w-md h-[100dvh] sm:h-auto sm:max-h-[88dvh] rounded-none sm:rounded-[2.2rem] p-5 sm:p-6 shadow-[0_-10px_40px_rgba(0,0,0,0.8)] sm:shadow-2xl flex flex-col overflow-hidden relative" onClick={e => e.stopPropagation()}>
@@ -3743,13 +3608,21 @@ const App: React.FC = () => {
       />
 
       {reasoningPopup && (
-        <div className="absolute inset-0 z-[220] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setReasoningPopup(null)}>
-          <div className="glass-card w-full max-w-[340px] rounded-[2rem] p-7 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-            <h3 className="text-[11px] font-black text-emerald-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-              <Sparkles size={14} /> {reasoningPopup.title}
-            </h3>
-            <p className="text-slate-300 text-[12px] leading-relaxed mb-6">"{reasoningPopup.content}"</p>
-            <button onClick={() => setReasoningPopup(null)} className="w-full py-4 bg-white/5 border border-white/10 rounded-[1.4rem] text-[10px] font-black uppercase tracking-[0.15em] hover:bg-white/10 hover:text-white text-slate-300 transition-colors active:scale-[0.98]">
+        <div className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setReasoningPopup(null)}>
+          <div className="bg-[#0c0e15] border border-white/10 w-full max-w-sm rounded-2xl p-5 shadow-2xl animate-in zoom-in-95 duration-200 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-white/[0.06] pb-2">
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                <Sparkles size={13} className="text-emerald-400" /> {reasoningPopup.title}
+              </h3>
+              <button onClick={() => setReasoningPopup(null)} className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-colors cursor-pointer">
+                <X size={14} />
+              </button>
+            </div>
+            <p className="text-slate-300 text-xs leading-relaxed font-normal">"{reasoningPopup.content}"</p>
+            <button 
+              onClick={() => setReasoningPopup(null)} 
+              className="w-full py-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] rounded-xl text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:text-white transition-colors cursor-pointer"
+            >
               Dismiss
             </button>
           </div>
@@ -3757,26 +3630,35 @@ const App: React.FC = () => {
       )}
 
       {showReleaseNotes && (
-        <div className="absolute inset-0 z-[220] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowReleaseNotes(false)}>
-          <div className="glass-card w-full max-w-[340px] rounded-[2rem] p-7 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-black text-white italic tracking-tight mb-2">
-              wa<span className="text-emerald-400">TT</span>son Update
-            </h3>
-            <p className="text-[10px] text-emerald-500/80 font-bold uppercase tracking-widest mb-5">Version {APP_VERSION}</p>
-            
-            <div className="space-y-4 mb-6">
-              <div>
-                <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Athlete Profile Engine</h4>
-                <p className="text-slate-400 text-[11px] leading-relaxed">waTTson now analyzes your full history of training to build a custom athlete shape based on your history. Access this in Settings &gt; Athlete Profile.</p>
+        <div className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setShowReleaseNotes(false)}>
+          <div className="bg-[#0c0e15] border border-white/10 w-full max-w-sm rounded-2xl p-5 shadow-2xl animate-in zoom-in-95 duration-200 space-y-3.5" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-white/[0.06] pb-2">
+              <div className="flex items-baseline gap-2">
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                  waTTson <span className="text-emerald-400 font-normal text-xs">v{APP_VERSION}</span>
+                </h3>
               </div>
-              <div>
-                <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Weekly Planning</h4>
-                <p className="text-slate-400 text-[11px] leading-relaxed">Access your full data-driven training schedule through the Weekly Plan button. Dive into workout details and sync them directly to your calendar.</p>
+              <button onClick={() => setShowReleaseNotes(false)} className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-colors cursor-pointer">
+                <X size={14} />
+              </button>
+            </div>
+            
+            <div className="space-y-3">
+              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/[0.06]">
+                <h4 className="text-[10px] font-bold text-white uppercase tracking-wider mb-1">Athlete Profile Engine</h4>
+                <p className="text-slate-400 text-xs leading-relaxed">waTTson analyzes your complete training history to build your individual rider DNA. Access via Profile tab.</p>
+              </div>
+              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/[0.06]">
+                <h4 className="text-[10px] font-bold text-white uppercase tracking-wider mb-1">Weekly Planning</h4>
+                <p className="text-slate-400 text-xs leading-relaxed">Explore your adaptive training schedule, dive into target interval steps, and sync sessions directly to your calendar.</p>
               </div>
             </div>
 
-            <button onClick={() => setShowReleaseNotes(false)} className="w-full py-4 bg-emerald-500 text-slate-950 rounded-[1.4rem] text-[10px] font-black uppercase tracking-[0.15em] hover:bg-emerald-400 transition-colors active:scale-[0.98]">
-              Got it
+            <button 
+              onClick={() => setShowReleaseNotes(false)} 
+              className="w-full py-2.5 bg-white hover:bg-slate-200 text-slate-950 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer"
+            >
+              Close
             </button>
           </div>
         </div>
@@ -3784,63 +3666,181 @@ const App: React.FC = () => {
 
       {/* Suggestion Detail Modal */}
       {showSuggestionDetail && suggestion && (
-        <div className="fixed inset-0 z-[110] bg-[#05070a]/90 backdrop-blur-md flex items-center justify-center p-4 animate-in slide-in-from-bottom-4 duration-300" onClick={() => setShowSuggestionDetail(false)}>
-          <div className="glass-card w-full max-w-sm rounded-[3rem] p-6 pb-8 relative border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
-            <button onClick={() => setShowSuggestionDetail(false)} className="absolute top-6 right-6 text-slate-600 hover:text-white transition-colors p-2 z-20">
-              <X size={20} />
+        <div className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => setShowSuggestionDetail(false)}>
+          <div className="bg-[#0c0e15] border-t sm:border border-white/10 w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl overflow-y-auto max-h-[90vh] space-y-3.5" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-white/[0.06] pb-2.5">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-white/10 text-slate-300 border border-white/10">
+                  {hasRideToday ? "Tomorrow" : "Today"}
+                </span>
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider truncate">
+                  {currentWorkout?.title}
+                </h3>
+              </div>
+              <button onClick={() => setShowSuggestionDetail(false)} className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-colors cursor-pointer">
+                <X size={16} />
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2 bg-white/[0.02] p-2.5 rounded-xl border border-white/[0.06] text-center">
+              <div className="flex items-center justify-center gap-1.5 text-xs text-slate-200 font-mono">
+                <Clock size={13} className="text-slate-400" />
+                <span>{currentWorkout?.duration_minutes} min</span>
+              </div>
+              <div className="flex items-center justify-center gap-1.5 text-xs text-slate-200 font-mono border-l border-white/[0.06]">
+                <Zap size={13} className="text-amber-400" />
+                <span>{currentWorkout?.tss || 45} TSS</span>
+              </div>
+            </div>
+
+            <div className="bg-white/[0.02] p-3 rounded-xl border border-white/[0.06] space-y-2">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Session Structure</span>
+              <div className="max-h-[220px] overflow-y-auto custom-scrollbar">
+                {currentWorkout?.workout_steps && currentWorkout.workout_steps.length > 0 ? (
+                  isEnduranceWorkout(currentWorkout) ? (
+                    <VisualProfileChart 
+                      steps={currentWorkout.workout_steps} 
+                      currentFtp={ftp || undefined}
+                      originalFtp={weeklyBriefing?.ftp}
+                    />
+                  ) : (
+                    <GroupedWorkoutStepsList 
+                      steps={currentWorkout.workout_steps}
+                      currentFtp={ftp || undefined}
+                      originalFtp={weeklyBriefing?.ftp}
+                      fontSize="sm"
+                    />
+                  )
+                ) : (
+                  <p className="text-xs text-slate-300 leading-relaxed font-medium">
+                    {suggestion.reasoning}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <button 
+              onClick={() => setShowSuggestionDetail(false)}
+              className="w-full py-2.5 bg-white hover:bg-slate-200 text-slate-950 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer"
+            >
+              Close
             </button>
-            <div className="flex flex-col items-center">
-              <div className="w-20 h-20 rounded-full bg-emerald-500/10 flex items-center justify-center mb-6 border border-emerald-500/20 shadow-[0_0_40px_rgba(16,185,129,0.1)] relative flex-shrink-0">
-                <div className="absolute inset-1.5 border border-emerald-500/30 rounded-full" />
-                <Trophy size={32} className="text-emerald-400" />
-              </div>
-              
-              <h3 className="text-2xl font-black text-white italic tracking-tighter mb-8 uppercase text-center leading-tight">
-                {hasRideToday ? "(TOMORROW'S) " : "(TODAY'S) "} {currentWorkout?.title.toUpperCase()}
-              </h3>
-              
-              <div className="bg-[#0a0c10] p-6 rounded-[2.5rem] border border-white/5 w-full text-left space-y-5 shadow-inner relative overflow-hidden">
-                 <div className="flex items-center justify-between border-b border-white/5 pb-4 mx-1">
-                    <div className="flex items-center gap-2 text-[14px] font-black text-white tracking-tighter">
-                       <Clock size={16} className="text-blue-400" /> {currentWorkout?.duration_minutes} MIN
-                    </div>
-                    <div className="flex items-center gap-2 text-[14px] font-black text-amber-400 italic">
-                       <Zap size={16} fill="currentColor" className="text-amber-400" /> {currentWorkout?.tss || 45} TSS
-                    </div>
-                 </div>
+          </div>
+        </div>
+      )}
 
-                 <div className="space-y-4 py-1 max-h-[180px] overflow-y-auto custom-scrollbar px-1">
-                   {currentWorkout?.workout_steps && currentWorkout.workout_steps.length > 0 ? (
-                     isEnduranceWorkout(currentWorkout) ? (
-                       <VisualProfileChart 
-                         steps={currentWorkout.workout_steps} 
-                         currentFtp={ftp || undefined}
-                         originalFtp={weeklyBriefing?.ftp}
-                       />
-                     ) : (
-                       <GroupedWorkoutStepsList 
-                         steps={currentWorkout.workout_steps}
-                         currentFtp={ftp || undefined}
-                         originalFtp={weeklyBriefing?.ftp}
-                         fontSize="sm"
-                       />
-                     )
-                   ) : (
-                      <p className="text-[13px] text-slate-400 leading-relaxed italic text-center px-4 font-medium opacity-80">
-                        {suggestion.reasoning}
-                      </p>
-                   )}
-                 </div>
-              </div>
+      {showInsights && (
+        <div className="fixed inset-0 z-[220] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => setShowInsights(false)}>
+          <div 
+            className="bg-[#0a0c14] border-t sm:border border-white/[0.08] w-full sm:max-w-md h-[90dvh] sm:h-auto sm:max-h-[85dvh] rounded-none sm:rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col overflow-hidden relative" 
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Mobile drag handle */}
+            <div className="w-10 h-1 bg-white/10 rounded-full mx-auto mb-4 shrink-0 sm:hidden" />
 
-              <div className="mt-8 flex flex-col gap-3 w-full">
-                <button 
-                  onClick={() => setShowSuggestionDetail(false)}
-                  className="w-full py-4.5 bg-[#40e0a0] rounded-full text-[12px] font-black text-slate-950 uppercase tracking-[0.2em] active:scale-95 shadow-xl shadow-emerald-400/10"
+            {/* Header */}
+            <div className="flex items-center justify-between shrink-0 mb-4 pb-3 border-b border-white/[0.06]">
+              <h2 className="text-base font-bold text-white tracking-tight">Training Insights</h2>
+              <button 
+                onClick={() => setShowInsights(false)} 
+                className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/[0.04] transition-colors shrink-0 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Period Selector */}
+            <div className="flex p-0.5 bg-white/[0.02] border border-white/[0.06] rounded-xl mb-4 shrink-0">
+              {(['week', 'month', '6months', 'year'] as const).map((period) => (
+                <button
+                  key={period}
+                  onClick={() => setInsightsPeriod(period)}
+                  className={`flex-1 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                    insightsPeriod === period
+                      ? 'bg-white/10 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
                 >
-                  OKAY, COACH
+                  {period === 'week' ? 'Last Week' : period === 'month' ? 'Month' : period === '6months' ? '6 Months' : 'Year'}
                 </button>
-              </div>
+              ))}
+            </div>
+
+            {/* Computed Insights Metrics */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-0.5">
+              {(() => {
+                const now = new Date();
+                const daysMap = { week: 7, month: 30, '6months': 180, year: 365 };
+                const days = daysMap[insightsPeriod];
+                const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+
+                const filtered = (activities || []).filter(a => new Date(a.start_date_local) >= cutoff);
+                const formatThousand = (val: number | string, decimals: number = 0) => {
+                  const num = typeof val === 'number' ? val : parseFloat(val as string);
+                  if (isNaN(num)) return val;
+                  const fixed = num.toFixed(decimals);
+                  const parts = fixed.split('.');
+                  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+                  return parts.join(',');
+                };
+
+                const totalHoursNum = filtered.reduce((acc, a) => acc + (a.moving_time || 0), 0) / 3600;
+                const totalHours = formatThousand(totalHoursNum, 1);
+                const totalTss = formatThousand(Math.round(filtered.reduce((acc, a) => acc + (a.icu_training_load || a.icu_tss || 0), 0)));
+                const avgTssPerWeek = formatThousand(Math.round(filtered.reduce((acc, a) => acc + (a.icu_training_load || a.icu_tss || 0), 0) / Math.max(1, days / 7)));
+                const totalRides = formatThousand(filtered.length);
+                const avgWattsVal = Math.round(filtered.reduce((acc, a) => acc + (a.average_watts || a.icu_average_watts || 0), 0) / Math.max(1, filtered.filter(a => a.average_watts || a.icu_average_watts).length));
+                const avgWatts = avgWattsVal ? `${formatThousand(avgWattsVal)}W` : '—';
+                const totalDistKmNum = filtered.reduce((acc, a) => acc + (a.distance || 0), 0) / 1000;
+                const totalDistKm = formatThousand(totalDistKmNum, 0);
+
+                return (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="p-3.5 bg-white/[0.02] border border-white/[0.06] rounded-2xl space-y-1">
+                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Total Volume</span>
+                        <p className="text-lg font-bold text-white font-mono">{totalHours}h</p>
+                        <span className="text-[9px] text-slate-500">{filtered.length} activities logged</span>
+                      </div>
+                      <div className="p-3.5 bg-white/[0.02] border border-white/[0.06] rounded-2xl space-y-1">
+                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Training Load</span>
+                        <p className="text-lg font-bold text-amber-400 font-mono">{totalTss} TSS</p>
+                        <span className="text-[9px] text-slate-500">{avgTssPerWeek} TSS / week avg</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="p-3.5 bg-white/[0.02] border border-white/[0.06] rounded-2xl space-y-1">
+                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Distance</span>
+                        <p className="text-lg font-bold text-cyan-400 font-mono">{totalDistKm} km</p>
+                        <span className="text-[9px] text-slate-500">Total distance covered</span>
+                      </div>
+                      <div className="p-3.5 bg-white/[0.02] border border-white/[0.06] rounded-2xl space-y-1">
+                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Avg Power</span>
+                        <p className="text-lg font-bold text-emerald-400 font-mono">{avgWatts}</p>
+                        <span className="text-[9px] text-slate-500">Average normalized power</span>
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-white/[0.02] border border-white/[0.06] rounded-2xl space-y-2">
+                      <h3 className="text-[10px] font-bold text-white uppercase tracking-wider border-b border-white/[0.06] pb-2">Period Summary</h3>
+                      <p className="text-xs text-slate-300 leading-relaxed">
+                        Over the selected {insightsPeriod === 'week' ? 'past 7 days' : insightsPeriod === 'month' ? 'past 30 days' : insightsPeriod === '6months' ? 'past 6 months' : 'past year'}, you have successfully completed {filtered.length} sessions accumulating {totalHours} hours of training with a total training load of {totalTss} TSS ({avgTssPerWeek} TSS/wk).
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Footer */}
+            <div className="pt-3 shrink-0 border-t border-white/[0.06] mt-auto">
+              <button 
+                onClick={() => setShowInsights(false)}
+                className="w-full py-2.5 bg-white/[0.04] hover:bg-white/[0.08] active:scale-[0.99] text-slate-300 hover:text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
@@ -3852,13 +3852,6 @@ const App: React.FC = () => {
         version={APP_VERSION}
         changes={APP_CHANGELOG}
       />
-      <MonthlyReportModal
-        isOpen={showMonthlyReport}
-        onClose={() => setShowMonthlyReport(false)}
-        activities={activities || []}
-        ftp={ftp}
-      />
-
       {/* Floating Modern Navigation Dock */}
       {!isKeyboardOpen && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-[340px] bg-[#080b11]/90 backdrop-blur-xl border border-white/[0.08] rounded-2xl p-1 shadow-[0_8px_30px_rgba(0,0,0,0.6)] flex items-center justify-between gap-1">

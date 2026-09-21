@@ -103,8 +103,8 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
         onClick={() => onClick(day)}
         className={`p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border ${
           isToday 
-            ? 'border-indigo-500/25 bg-[#0f1422]/90 hover:border-indigo-500/40' 
-            : 'border-white/[0.05] bg-[#0b0e14]/80 hover:border-white/10 hover:bg-[#0e121b]'
+            ? 'border-white/[0.12] bg-white/[0.04] hover:border-white/20' 
+            : 'border-white/[0.06] bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.05]'
         }`}
       >
         {/* Date block */}
@@ -155,8 +155,8 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
       onClick={() => onClick(day)}
       className={`p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border ${
         isToday 
-          ? 'border-blue-500/25 bg-[#0a1120]/90 hover:border-blue-500/40' 
-          : 'border-white/[0.05] bg-[#0b0e14]/80 hover:border-white/10 hover:bg-[#0e121b]'
+          ? 'border-white/[0.12] bg-white/[0.04] hover:border-white/20' 
+          : 'border-white/[0.06] bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.05]'
       }`}
     >
       <div className={`w-9 h-9 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-colors ${
