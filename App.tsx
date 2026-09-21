@@ -742,7 +742,7 @@ const App: React.FC = () => {
 
     // 2. Training Methodology
     const storedMethodology = localStorage.getItem('wattson_training_methodology');
-    if (storedMethodology && ['polarized', 'pyramidal', 'threshold'].includes(storedMethodology)) {
+    if (storedMethodology && ['polarized', 'pyramidal', 'norwegian'].includes(storedMethodology)) {
       updates.trainingMethodology = storedMethodology as TrainingMethodology;
     } else if (trainingMethodologyRef.current && trainingMethodologyRef.current !== 'polarized') {
       updates.trainingMethodology = trainingMethodologyRef.current;
@@ -2229,13 +2229,6 @@ const App: React.FC = () => {
                 <span className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">
                   Target Goal
                 </span>
-                <button
-                  onClick={() => { setActiveTab('settings'); setSettingsView('goal'); }}
-                  className="text-[9.5px] font-semibold text-emerald-400 hover:text-emerald-300 transition-colors uppercase tracking-wider flex items-center gap-1"
-                >
-                  <Edit size={10} />
-                  <span>Edit</span>
-                </button>
               </div>
               
               <div 
@@ -2259,9 +2252,6 @@ const App: React.FC = () => {
               <div className="flex items-center justify-between px-1">
                 <span className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">
                   Next Workout
-                </span>
-                <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider">
-                  Auto-Calibrated
                 </span>
               </div>
 
@@ -2335,9 +2325,6 @@ const App: React.FC = () => {
                 <span className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">
                   Performance Metrics
                 </span>
-                <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider">
-                  Intervals.icu
-                </span>
               </div>
 
               {/* Unified 5-Metric Strip */}
@@ -2383,7 +2370,6 @@ const App: React.FC = () => {
                     <h2 className="text-xs font-semibold text-slate-200 tracking-tight">
                       Insights
                     </h2>
-                    <p className="text-[9.5px] text-slate-400 font-normal">Key performance figures & analytics</p>
                   </div>
                 </div>
                 <ChevronRight size={13} className="text-slate-600 shrink-0" />
@@ -2396,9 +2382,6 @@ const App: React.FC = () => {
                 <div className="flex items-center justify-between px-1">
                   <span className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">
                     Latest Activity
-                  </span>
-                  <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider">
-                    {new Date(lastActivity.start_date_local).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                   </span>
                 </div>
 

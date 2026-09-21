@@ -119,7 +119,7 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
 
         {/* Focus description & REST badge */}
         <div className="flex-1 min-w-0 flex flex-col justify-center">
-          <div className="flex items-center gap-2 mb-0.5">
+          <div className="flex items-center gap-2">
             <h3 className="font-semibold text-xs truncate leading-tight tracking-tight text-slate-300 group-hover:text-white transition-colors">
               {day.focus || 'Rest Day'}
             </h3>
@@ -127,10 +127,6 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
               <Coffee size={9} /> Rest
             </span>
           </div>
-          
-          <p className="text-[10.5px] text-slate-400 font-normal tracking-tight truncate">
-            {day.why || 'Time to recover, adapt, and rebuild muscles.'}
-          </p>
         </div>
 
         {/* Cozy rest icon */}
