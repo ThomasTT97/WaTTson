@@ -24,6 +24,7 @@ import {
 } from "./promptTemplates";
 import { detectIntervalsFromLaps } from "./intervalsService";
 import { matchWorkoutToLibrary } from "./workoutLibrary";
+import { generateDataDrivenRestRationale } from "./restRationaleService";
 import {
   parsePlanDirectives,
   pruneExpiredDirectives,
@@ -617,13 +618,18 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
 
     if (customRule) {
       if (customRule.isRest) {
+        const rationale = generateDataDrivenRestRationale({
+          dayName: day.day,
+          dayIndex: idx,
+          allDays: briefing.days
+        });
         return {
           ...day,
           focus: 'Rest Day',
           intensity: 'Rest' as const,
           duration_target: 0,
           load_target: 0,
-          why: 'Scheduled rest day for physiological recovery.',
+          why: rationale.summaryQuote,
           workout_steps: []
         };
       } else {

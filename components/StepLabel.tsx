@@ -528,27 +528,23 @@ export const getMinimalistPrescription = (
       const s = mainWorkSteps[0];
       const dur = s.duration || 1;
       const w = getWatts(s);
-      let labelClean = sanitizeStepLabel(s.label);
-      labelClean = labelClean.replace(/^\d+m\s*/i, '').replace(/@.*$/, '').trim();
-      const tag = labelClean ? ` (${labelClean})` : '';
-      bullets.push({ text: `${dur}m @ ${w > 0 ? `${w}W` : 'Target'}${tag}` });
-      intervalLines.push(`${dur}m @ ${w > 0 ? `${w}W` : 'Target'}${tag}`);
+      const text = w > 0 ? `${dur}m @ ${w}W` : `${dur}m`;
+      bullets.push({ text });
+      intervalLines.push(text);
     } else if (mainWorkSteps.length > 1) {
       const nonRecovery = mainWorkSteps.filter(s => !isRecovery(s));
       if (nonRecovery.length > 0) {
         nonRecovery.forEach(s => {
           const dur = s.duration || 1;
           const w = getWatts(s);
-          let labelClean = sanitizeStepLabel(s.label);
-          labelClean = labelClean.replace(/^\d+m\s*/i, '').replace(/@.*$/, '').trim();
-          const tag = labelClean ? ` (${labelClean})` : '';
-          bullets.push({ text: `${dur}m @ ${w > 0 ? `${w}W` : 'Target'}${tag}` });
-          intervalLines.push(`${dur}m @ ${w > 0 ? `${w}W` : 'Target'}${tag}`);
+          const text = w > 0 ? `${dur}m @ ${w}W` : `${dur}m`;
+          bullets.push({ text });
+          intervalLines.push(text);
         });
       } else {
         const totalDur = mainWorkSteps.reduce((acc, s) => acc + (s.duration || 0), 0);
-        bullets.push({ text: `${totalDur}m Easy Recovery Ride` });
-        intervalLines.push(`${totalDur}m Easy Recovery Ride`);
+        bullets.push({ text: `${totalDur}m Recovery` });
+        intervalLines.push(`${totalDur}m Recovery`);
       }
     } else {
       const totalDur = steps.reduce((acc, s) => acc + (s.duration || 0), 0);

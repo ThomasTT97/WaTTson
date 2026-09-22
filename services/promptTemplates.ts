@@ -233,7 +233,7 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
     
     CRITICAL PERFORMANCE RULES FOR HIGH-SPEED GENERATION AND REALISTIC COACHING (MAXIMIZE SPEED):
     1. Plan exactly ${totalDays} days: ${p.dayNames.join(', ')}.
-    2. "why" MUST be extremely concise, less than 5 words (e.g., "Active recovery spin"). Keep it as short as possible to minimize generation tokens and reduce latency!
+    2. "why" MUST be concise (under 15 words). For workouts, explain the primary adaptation (e.g. "VO2max expansion & high-end aerobic power"). For Rest days, you MUST provide a data-driven reason citing the athlete's fatigue, Form (TSB), preceding training load, or upcoming workout preparation (e.g. "Sheds 185 TSS acute fatigue to restore TSB before weekend endurance"). Keep tokens low!
     3. "outlook_summary" MUST be less than 15 words. Describe the week focus in 1 ultra-concise sentence. 
     4. "phase" and "focus" fields should be 1-3 words maximum.
     5. Suggest "workout_steps" for ALL workouts EXCEPT Rest days.

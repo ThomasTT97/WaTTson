@@ -39,6 +39,7 @@ import {
   AVAILABILITY_STORAGE_KEY 
 } from './components/PlanAndChangeModal';
 import { LibraryWorkout } from './services/workoutLibrary';
+import { generateDataDrivenRestRationale } from './services/restRationaleService';
 import { StepLabel, getStepPhaseLabel, GroupedWorkoutStepsList, scaleLabelWatts, isEnduranceWorkout, VisualProfileChart, calculateWorkoutAverageWatts } from './components/StepLabel';
 import { User as FirebaseUser } from 'firebase/auth';
 import { 
@@ -405,7 +406,10 @@ const App: React.FC = () => {
   const adaptBriefingWithSchedule = (
     currentBriefing: WeeklyBriefing | null | undefined,
     updatedDays: DayDurationItem[],
-    userFtp: number = 250
+    userFtp: number = 250,
+    currentStats?: any,
+    recentActs?: Activity[] | null,
+    wellnessList?: Wellness[] | null
   ): WeeklyBriefing => {
     const base: WeeklyBriefing = currentBriefing ? { ...currentBriefing } : {
       phase: 'Build / Aerobic Base',
@@ -447,13 +451,28 @@ const App: React.FC = () => {
       const dayName = existingDay?.day || `${dayItem.dayShort} (${dayItem.dateStr})`;
 
       if (isRest) {
+        const restRationale = generateDataDrivenRestRationale({
+          dayName,
+          dayIndex: i,
+          stats: currentStats,
+          allDays: updatedDays.map(u => ({
+            day: u.dayName || u.dayShort,
+            focus: u.durationMins <= 0 ? 'Rest Day' : 'Workout',
+            duration_target: u.durationMins,
+            load_target: Math.round(u.durationMins * 0.7),
+            intensity: u.durationMins <= 0 ? 'Rest' : 'Medium'
+          })),
+          recentActivities: recentActs,
+          wellness: wellnessList
+        });
+
         adaptedDays.push({
           day: dayName,
           focus: 'Rest Day',
           intensity: 'Rest',
           duration_target: 0,
           load_target: 0,
-          why: 'Scheduled rest day for physiological recovery and adaptation.',
+          why: restRationale.summaryQuote,
           workout_steps: []
         });
       } else {
@@ -560,7 +579,7 @@ const App: React.FC = () => {
 
     // 1. Immediately adapt existing weeklyBriefing to reflect user's requested durations and rest days!
     if (updatedDays && updatedDays.length > 0) {
-      const adapted = adaptBriefingWithSchedule(weeklyBriefing, updatedDays, ftp || 250);
+      const adapted = adaptBriefingWithSchedule(weeklyBriefing, updatedDays, ftp || 250, stats, activities, wellnessData);
       setWeeklyBriefing(adapted);
       safeSetItem('wattson_saved_weekly_briefing', JSON.stringify(adapted));
       if (currentUserRef.current) {
@@ -3400,15 +3419,23 @@ const App: React.FC = () => {
             return Math.round(dur * 0.75);
           })();
 
+          const restRationale = isRest ? generateDataDrivenRestRationale({
+            dayName: selectedSuggestedDay.day,
+            stats,
+            allDays: weeklyBriefing?.days,
+            recentActivities: activities,
+            wellness: wellnessData
+          }) : null;
+
           return (
             <div className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => setSelectedSuggestedDay(null)}>
-              <div className="bg-[#0c0e15] border-t sm:border border-white/10 w-full sm:max-w-md h-[100dvh] sm:h-auto sm:max-h-[88dvh] rounded-none sm:rounded-[2.2rem] p-5 sm:p-6 shadow-[0_-10px_40px_rgba(0,0,0,0.8)] sm:shadow-2xl flex flex-col overflow-hidden relative" onClick={e => e.stopPropagation()}>
+              <div className="bg-[#0c0e15] border-t sm:border border-white/10 w-full sm:max-w-md h-auto max-h-[92dvh] sm:max-h-[88dvh] rounded-t-[2rem] sm:rounded-[2.2rem] p-4 sm:p-5 shadow-[0_-10px_40px_rgba(0,0,0,0.8)] sm:shadow-2xl flex flex-col overflow-hidden relative" onClick={e => e.stopPropagation()}>
                 
                 {/* Mobile drag handle */}
-                <div className="w-10 h-1 bg-white/20 rounded-full mx-auto mb-3 shrink-0 sm:hidden" />
+                <div className="w-10 h-1 bg-white/20 rounded-full mx-auto mb-2.5 shrink-0 sm:hidden" />
 
                 {/* Header */}
-                <div className="flex items-center justify-between shrink-0 mb-3 pb-3 border-b border-white/5">
+                <div className="flex items-center justify-between shrink-0 mb-2.5 pb-2.5 border-b border-white/5">
                   <div className="flex items-center gap-2.5 min-w-0 pr-2">
                     <div className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-extrabold text-[10px] tracking-wider uppercase shrink-0">
                       {weekday} {dayNum}
@@ -3417,13 +3444,13 @@ const App: React.FC = () => {
                       {formatPlannedRideTitle(selectedSuggestedDay.focus)}
                     </h3>
                   </div>
-                  <button onClick={() => setSelectedSuggestedDay(null)} className="text-slate-400 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors shrink-0">
+                  <button onClick={() => setSelectedSuggestedDay(null)} className="text-slate-400 hover:text-white p-1 rounded-full hover:bg-white/10 transition-colors shrink-0">
                     <X size={18} />
                   </button>
                 </div>
 
                 {/* Scrollable body content */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 min-h-0 space-y-3.5">
+                <div className="flex-1 overflow-y-auto custom-scrollbar pr-0.5 min-h-0 space-y-2.5">
                   {isReworking ? (
                     <div className="w-full py-8 flex flex-col items-center justify-center bg-white/[0.02] rounded-2xl border border-white/5 text-center px-4">
                       <Loader2 size={22} className="animate-spin text-emerald-400 mb-2.5" />
@@ -3432,79 +3459,101 @@ const App: React.FC = () => {
                     </div>
                   ) : (
                     <>
-                      {/* Compact Metrics Strip */}
-                      <div className="grid grid-cols-3 gap-2 p-3 bg-white/[0.03] border border-white/5 rounded-2xl">
-                        <div className="flex flex-col items-center justify-center text-center">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                            <Clock size={11} className="text-blue-400" /> Duration
-                          </span>
-                          <span className="text-xs sm:text-sm font-black text-white mt-0.5">
-                            {isRest || selectedSuggestedDay.duration_target <= 0 
-                              ? '—' 
-                              : ((selectedSuggestedDay.focus || '').toLowerCase().includes('endurance')
-                                  ? (selectedSuggestedDay.duration_target % 60 === 0 
-                                      ? `${selectedSuggestedDay.duration_target / 60}H` 
-                                      : `${Math.floor(selectedSuggestedDay.duration_target / 60)}H${selectedSuggestedDay.duration_target % 60 > 0 ? (selectedSuggestedDay.duration_target % 60 < 10 ? `0${selectedSuggestedDay.duration_target % 60}` : selectedSuggestedDay.duration_target % 60) : ''}`)
-                                  : `${selectedSuggestedDay.duration_target} MIN`)}
-                          </span>
+                      {/* Compact Metrics Strip (For Active Workouts) */}
+                      {!isRest && (
+                        <div className="grid grid-cols-3 gap-2 p-2.5 bg-white/[0.03] border border-white/5 rounded-2xl">
+                          <div className="flex flex-col items-center justify-center text-center">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                              <Clock size={11} className="text-blue-400" /> Duration
+                            </span>
+                            <span className="text-xs sm:text-sm font-black text-white mt-0.5">
+                              {selectedSuggestedDay.duration_target <= 0 
+                                ? '—' 
+                                : ((selectedSuggestedDay.focus || '').toLowerCase().includes('endurance')
+                                    ? (selectedSuggestedDay.duration_target % 60 === 0 
+                                        ? `${selectedSuggestedDay.duration_target / 60}H` 
+                                        : `${Math.floor(selectedSuggestedDay.duration_target / 60)}H${selectedSuggestedDay.duration_target % 60 > 0 ? (selectedSuggestedDay.duration_target % 60 < 10 ? `0${selectedSuggestedDay.duration_target % 60}` : selectedSuggestedDay.duration_target % 60) : ''}`)
+                                    : `${selectedSuggestedDay.duration_target} MIN`)}
+                            </span>
+                          </div>
+                          <div className="flex flex-col items-center justify-center text-center border-x border-white/5">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                              <Zap size={11} fill="currentColor" className="text-amber-400" /> Load
+                            </span>
+                            <span className="text-xs sm:text-sm font-black text-amber-400 mt-0.5">
+                              {displayLoadTarget <= 0 ? '—' : `${displayLoadTarget} TSS`}
+                            </span>
+                          </div>
+                          <div className="flex flex-col items-center justify-center text-center">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                              <ActivityIcon size={11} className="text-emerald-400" /> Target
+                            </span>
+                            <span className="text-xs sm:text-sm font-black text-emerald-400 mt-0.5 uppercase">
+                              {targetWattsDisplay}
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex flex-col items-center justify-center text-center border-x border-white/5">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                            <Zap size={11} fill="currentColor" className="text-amber-400" /> Load
-                          </span>
-                          <span className="text-xs sm:text-sm font-black text-amber-400 mt-0.5">
-                            {isRest || displayLoadTarget <= 0 ? '—' : `${displayLoadTarget} TSS`}
-                          </span>
-                        </div>
-                        <div className="flex flex-col items-center justify-center text-center">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                            <ActivityIcon size={11} className="text-emerald-400" /> Target
-                          </span>
-                          <span className="text-xs sm:text-sm font-black text-emerald-400 mt-0.5 uppercase">
-                            {targetWattsDisplay}
-                          </span>
-                        </div>
-                      </div>
+                      )}
 
                       {isRest ? (
-                        <div className="space-y-3">
-                          <div className="bg-emerald-500/5 border border-emerald-500/20 p-4 rounded-2xl flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20 shrink-0">
-                              <Coffee size={20} className="animate-pulse text-emerald-400" />
+                        <div className="space-y-2.5">
+                          {/* 3 Metric Badges */}
+                          {restRationale && (
+                            <div className="grid grid-cols-3 gap-1.5">
+                              {restRationale.metrics.map((m, mIdx) => {
+                                const toneClass = m.tone === 'rose' ? 'text-rose-400' :
+                                                  m.tone === 'amber' ? 'text-amber-400' :
+                                                  m.tone === 'blue' ? 'text-blue-400' :
+                                                  'text-emerald-400';
+                                return (
+                                  <div key={mIdx} className="bg-white/[0.03] border border-white/5 rounded-xl p-2 flex flex-col items-center text-center">
+                                    <span className="text-[7.5px] font-bold text-slate-400 uppercase tracking-wider truncate max-w-full">{m.label}</span>
+                                    <span className={`text-xs font-black font-mono mt-0.5 ${toneClass}`}>{m.value}</span>
+                                    <span className="text-[7.5px] text-slate-400 truncate max-w-full mt-0.5 font-medium">{m.subtext}</span>
+                                  </div>
+                                );
+                              })}
                             </div>
-                            <div className="flex flex-col min-w-0">
-                              <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Recovery Day</span>
-                              <p className="text-[11px] text-slate-300 font-medium leading-tight mt-0.5">
-                                No power targets today. Allow muscle fibers to adapt and rebuild.
+                          )}
+
+                          {/* Data-Driven Physiological Rationale */}
+                          {restRationale && (
+                            <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3 space-y-1.5">
+                              <div className="flex items-center justify-between border-b border-white/5 pb-1">
+                                <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                                  <ActivityIcon size={11} className="text-emerald-400" /> Why Rest Today (Data-Driven)
+                                </span>
+                                <span className="text-[7.5px] font-mono text-slate-400 font-semibold uppercase tracking-wider">
+                                  waTTson Biometrics
+                                </span>
+                              </div>
+
+                              <p className="text-[11px] text-slate-200 leading-relaxed font-normal">
+                                {restRationale.explanation}
                               </p>
                             </div>
-                          </div>
+                          )}
 
-                          <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3.5 space-y-2">
-                            <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1.5">Recovery Focus</span>
-                            <div className="grid grid-cols-1 gap-2 text-left">
-                              <div className="flex items-start gap-2">
-                                <span className="text-emerald-400 text-xs mt-0.5">🧘</span>
-                                <div className="flex flex-col">
-                                   <span className="text-[11px] font-bold text-slate-200">Muscle Repair</span>
-                                  <span className="text-[10px] text-slate-400 font-normal">Elevate legs, practice dynamic stretching or light foam rolling.</span>
+                          {/* Dynamic Physiological Recovery Focus */}
+                          <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3 space-y-1.5">
+                            <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1">
+                              Recovery Focus
+                            </span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
+                              {(restRationale?.physiologicalFocus?.slice(0, 2) || [
+                                { icon: '⚡', title: 'Glycogen Resynthesis', description: 'Consume complex carbohydrates and clean hydration.' },
+                                { icon: '🧬', title: 'Cellular Remodeling', description: 'Rest allows satellite cell activation and tissue repair.' }
+                              ]).map((item, fIdx) => (
+                                <div key={fIdx} className="flex items-start gap-1.5 bg-black/20 rounded-xl p-2 border border-white/[0.03]">
+                                  <span className="text-xs shrink-0 mt-0.5">{item.icon}</span>
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="text-[10px] font-bold text-slate-200 truncate">{item.title}</span>
+                                    <span className="text-[9.5px] text-slate-400 leading-snug line-clamp-2">{item.description}</span>
+                                  </div>
                                 </div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <span className="text-emerald-400 text-xs mt-0.5">💧</span>
-                                <div className="flex flex-col">
-                                  <span className="text-[11px] font-bold text-slate-200">Nutrition & Hydration</span>
-                                  <span className="text-[10px] text-slate-400 font-normal">Prioritize clean protein and electrolytes to rebuild glycogen stores.</span>
-                                </div>
-                              </div>
+                              ))}
                             </div>
                           </div>
-
-                          {selectedSuggestedDay.why && (
-                            <p className="text-xs text-slate-300 leading-relaxed italic text-center px-2 font-medium opacity-90">
-                              "{selectedSuggestedDay.why}"
-                            </p>
-                          )}
                         </div>
                       ) : (
                         <div className="space-y-3">

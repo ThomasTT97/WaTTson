@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { 
   X, 
   Plus, 
-  Minus 
+  Minus,
+  Coffee
 } from 'lucide-react';
 import { Activity, DailySuggestion, WeeklyBriefing } from '../types';
 import { parsePlanDirectives } from '../services/directiveService';
@@ -412,6 +413,11 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
                       Today
                     </span>
                   )}
+                  {isRest && (
+                    <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400/90 border border-emerald-500/20 text-[8px] font-bold rounded uppercase tracking-wider flex items-center gap-1">
+                      <Coffee size={9} /> Rest
+                    </span>
+                  )}
                 </div>
 
                 {/* Hours available stepper */}
@@ -446,6 +452,17 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
             );
           })}
         </div>
+
+        {restDaysCount > 0 && (
+          <div className="px-3 py-2 rounded-xl bg-emerald-500/[0.04] border border-emerald-500/15 flex items-center justify-between text-[10.5px]">
+            <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
+              <Coffee size={12} /> {restDaysCount} Rest Day{restDaysCount > 1 ? 's' : ''} Selected
+            </span>
+            <span className="text-slate-400 text-[10px]">
+              Halts acute fatigue & restores muscle glycogen
+            </span>
+          </div>
+        )}
 
         {/* Minimalist Actions */}
         <div className="flex items-center gap-2 pt-1 border-t border-white/5">
