@@ -1740,6 +1740,7 @@ const App: React.FC = () => {
       activityData?: Activity;
       absoluteIndex?: number;
       sessionIdx?: number;
+      isRestDay?: boolean;
     }[] = [];
 
     const todaySuggestedList: typeof items = [];
@@ -1833,6 +1834,42 @@ const App: React.FC = () => {
         });
       }
     });
+
+    // Populate Rest Days in past training history (for the last 90 days)
+    const activityDatesSet = new Set<string>();
+    filtered.forEach(a => {
+      if (a.start_date_local) {
+        const dStr = a.start_date_local.split('T')[0];
+        if (dStr) activityDatesSet.add(dStr);
+      }
+    });
+
+    // Scan backwards from yesterday for 90 days to identify days without registered workouts
+    for (let i = 1; i <= 90; i++) {
+      const pastDate = new Date(today);
+      pastDate.setDate(today.getDate() - i);
+      pastDate.setHours(12, 0, 0, 0);
+      const pastDateStr = toLocalDateStr(pastDate);
+
+      if (!activityDatesSet.has(pastDateStr)) {
+        pastList.push({
+          type: 'past',
+          key: `rest-day-${pastDateStr}`,
+          date: pastDate,
+          label: 'Rest Day',
+          isRestDay: true,
+          dayData: {
+            day: pastDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+            focus: 'Rest Day',
+            load_target: 0,
+            duration_target: 0,
+            intensity: 'Rest',
+            why: 'Dedicated rest day for muscular recovery, glycogen replenishment, and cardiovascular adaptation.',
+            workout_steps: []
+          }
+        });
+      }
+    }
 
     // Match actual activities today against suggested workouts today so completed rides replace corresponding suggested sessions (e.g. morning commute)
     let remainingTodaySuggested = [...todaySuggestedList];
@@ -2546,7 +2583,7 @@ const App: React.FC = () => {
                       Training History
                     </span>
                     <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider">
-                      {ridesSections.sortedPastItems.length} Sessions
+                      {ridesSections.sortedPastItems.filter(i => !i.isRestDay).length} Sessions
                     </span>
                   </div>
 
@@ -2554,15 +2591,11 @@ const App: React.FC = () => {
                     const prevItem = idx > 0 ? arr[idx - 1] : null;
                     let showMonthHeader = false;
                     let monthLabel = '';
-                    if (item.activityData) {
-                      const itemMonth = new Date(item.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' });
-                      const prevMonth = prevItem && prevItem.activityData 
-                        ? new Date(prevItem.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' })
-                        : '';
-                      if (itemMonth !== prevMonth && idx > 0) { 
-                        showMonthHeader = true;
-                        monthLabel = itemMonth.toUpperCase();
-                      }
+                    const itemMonth = item.date.toLocaleString('default', { month: 'long', year: 'numeric' });
+                    const prevMonth = prevItem ? prevItem.date.toLocaleString('default', { month: 'long', year: 'numeric' }) : '';
+                    if (itemMonth !== prevMonth && idx > 0) { 
+                      showMonthHeader = true;
+                      monthLabel = itemMonth.toUpperCase();
                     }
                     
                     return (
@@ -2579,6 +2612,15 @@ const App: React.FC = () => {
                           <ActivityCard 
                             activity={item.activityData} 
                             onClick={setSelectedActivity} 
+                          />
+                        )}
+                        {item.isRestDay && item.dayData && (
+                          <SuggestedWorkoutCard 
+                            key={item.key}
+                            day={item.dayData}
+                            date={item.date}
+                            onClick={(day) => setSelectedSuggestedDay(day)}
+                            isToday={false}
                           />
                         )}
                       </React.Fragment>

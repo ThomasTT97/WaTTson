@@ -31,6 +31,7 @@ interface DailySuggestionParams {
   hasPowerOnMostRides?: boolean;
   hrStatsText?: string;
   methodology?: TrainingMethodology;
+  yesterdayRestContext?: string;
 }
 
 interface WeeklyBriefingParams {
@@ -46,6 +47,8 @@ interface WeeklyBriefingParams {
   trainingMode: TrainingMode;
   methodology?: TrainingMethodology;
   existingPlanSummary?: string;
+  recentTrainingSummary?: string;
+  yesterdayRestContext?: string;
 }
 
 interface ChatMessageParams {
@@ -63,6 +66,7 @@ interface ChatMessageParams {
   totalActivities: number;
   hasCompletedRideToday?: boolean;
   todayActivitiesSummary?: string;
+  yesterdayRestContext?: string;
 }
 
 interface UserProfileParams {
@@ -151,8 +155,9 @@ export const getDailySuggestionPrompt = (p: DailySuggestionParams): string => {
        For the 'label', use a descriptive format: for stable rides e.g. "5 min 180w", for intervals e.g. "3 times: 5 min 300w + 2 min 180w". Always use "min" for minutes consistently!`;
 
   return `You are waTTson, an elite cycling coach. Suggest a workout for ${p.targetStr}. 
-    History (7d): ${p.history}. 
+    History (14d log): ${p.history}. 
     Goal: "${p.userGoal}". 
+    ${p.yesterdayRestContext ? `Yesterday & Recovery Context: ${p.yesterdayRestContext}` : ''}
     ${methodologyText}
     
     CRITICAL REALISTIC TRAINING & STRUCTURE RULES:
@@ -163,7 +168,9 @@ export const getDailySuggestionPrompt = (p: DailySuggestionParams): string => {
        - Default daily workouts MUST be realistic training sessions between 45 and 75 minutes (e.g. 45m, 60m, 75m, max 90m).
        - NEVER suggest a 3-hour or 4-hour (240m) ride as a standard daily suggestion unless the user explicitly requested ultra-endurance volume in their goal or custom directives.
        - "duration_minutes" MUST be in MINUTES (e.g., 45, 60, 75, 90).
-    5. NO CONSECUTIVE RECOVERY RIDES: Never suggest 2 recovery rides or active recovery sessions in a row. If the athlete did a recovery spin yesterday or recently, do NOT suggest another recovery ride; suggest an Aerobic Zone 2 Endurance Ride or a Rest Day instead.
+    5. NO CONSECUTIVE RECOVERY RIDES OR CONSECUTIVE REST DAYS:
+       - Never suggest 2 recovery rides or active recovery sessions in a row.
+       - NO UNREQUESTED CONSECUTIVE REST DAYS: If yesterday was already a Rest Day (0 TSS / no activity logged), do NOT recommend another Rest Day today unless the athlete has explicitly requested it or Form (TSB) is in severe overreaching (< -30). If fatigue is still elevated from a prior weekend block, suggest a 30-45 min Zone 1 Active Recovery spin or an easy 45-60 min Zone 2 Aerobic Endurance ride to maintain neuromuscular tone, promote circulation, and prevent sluggish legs.
     6. NO MASSIVE HIGH INTENSITY BLOCKS / PHYSICALLY IMPOSSIBLE INTERVALS: High intensity (>85% FTP, or HR Zone 4/5) must NEVER be recommended as a single long continuous block/step. You must structure them as intervals/sets with recovery steps in between.
        - VO2Max (Zone 5, >105% FTP / Zone 5 HR): A single block/rep can NEVER exceed 8 minutes. Standard reps are 2-5 minutes. NEVER output a continuous step of e.g. "16 min VO2max" or "15 min VO2max" or "10 min VO2max" in 1 block. If the athlete is to do VO2 Max, they MUST do multiple separate reps of 2-5 mins with easy recovery steps (e.g. 2-4 mins at 100-150W or Zone 1 HR) in between (e.g. Step 1: Warmup, Step 2: 3m VO2Max, Step 3: 3m Recovery, Step 4: 3m VO2Max, Step 5: 3m Recovery, Step 6: 3m VO2Max, Step 7: Cooldown).
        - Threshold (Zone 4, 90-105% FTP / Zone 4 HR): A single block/rep can NEVER exceed 20 minutes (standard is 8-15 minutes, e.g., separate Threshold efforts with recovery steps in between).
@@ -220,6 +227,22 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
       : "";
 
   return `Plan ${totalDays} days training. Goal: ${p.userGoal || 'Endurance'}. Physiology: ${p.stats}. ${p.startContext || ''}. 
+    ${p.yesterdayRestContext ? `
+    ========================================================
+    YESTERDAY'S RECOVERY & REST STATUS:
+    ========================================================
+    ${p.yesterdayRestContext}
+    ` : ''}
+    ${p.recentTrainingSummary ? `
+    ========================================================
+    RECENT TRAINING & REST LOG (LAST 14 DAYS):
+    ========================================================
+    ${p.recentTrainingSummary}
+    
+    COACHING DIRECTIVE ON RECENT RECOVERY:
+    The athlete's recent log details both completed sessions and dedicated Rest Days.
+    If yesterday was already a rest day (or recent days were rest days), factor this in: the athlete is restored and ready for training. Avoid assigning redundant back-to-back rest days unless requested in custom availability directives or if acute fatigue demands it.
+    ` : ''}
     ${directiveContext}
     ${methodologyText}
     ${p.pcCtx}
@@ -249,7 +272,9 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
        - When no custom availability is specified: Long endurance rides (>120 minutes / 2h - 3.5h, max 240m) are reserved EXCLUSIVELY for ONE weekend day (Saturday or Sunday), and NEVER scheduled on weekdays or on consecutive days!
        - NEVER schedule 4-hour (240 min) or >2.5-hour rides for the upcoming 2 days on regular weekdays unless explicitly requested by the user.
        - NEVER schedule back-to-back 4-hour (240m) rides on consecutive days.
-    8. NO CONSECUTIVE RECOVERY RIDES: Never schedule 2 recovery rides or active recovery sessions in a row on consecutive days. Having 2 recovery rides after each other makes no training sense. If an athlete needs recovery, pair a single active recovery day with an easy Zone 2 Endurance Ride or a full Rest Day on the following day.
+    8. NO CONSECUTIVE RECOVERY RIDES OR CONSECUTIVE REST DAYS:
+       - Never schedule 2 recovery rides or active recovery sessions in a row on consecutive days. Having 2 recovery rides after each other makes no training sense. If an athlete needs recovery, pair a single active recovery day with an easy Zone 2 Endurance Ride or a full Rest Day on the following day.
+       - NO UNREQUESTED CONSECUTIVE REST DAYS: Never schedule two complete Rest Days in a row (0 TSS on consecutive days) unless explicitly requested by the user in custom availability or if Form (TSB) is in severe overreaching (< -30). If yesterday was already a Rest Day (0 TSS / no activity logged in history), Day 1 (Today) MUST NOT be a Rest Day! If the athlete still carries fatigue from a preceding block, schedule a short 30-45m Zone 1 Active Recovery spin or an easy 45-60m Zone 2 Aerobic Endurance ride to maintain neuromuscular tone, stimulate blood circulation, and prevent heavy/sluggish legs—never an unrequested second consecutive rest day.
     9. REALISTIC INTERVALS RULE / NO PHYSICALLY IMPOSSIBLE HIGH INTENSITY BLOCKS: High intensity (>85% FTP, or HR Zone 4/5) must NEVER be recommended as a single long continuous block/step. You must structure them as intervals/sets with recovery steps in between.
        - VO2Max (Zone 5, >105% FTP / Zone 5 HR): A single block/rep can NEVER exceed 8 minutes. Standard reps are 2-5 minutes. NEVER output a continuous step of e.g. "16 min VO2max" or "15 min VO2max" or "10 min VO2max" in 1 block. If the athlete is to do VO2 Max, they MUST do multiple separate reps of 2-5 mins with easy recovery steps (e.g. 2-4 mins at 100-150W or Zone 1 HR) in between (e.g. Step 1: Warmup, Step 2: 3m VO2Max, Step 3: 3m Recovery, Step 4: 3m VO2Max, Step 5: 3m Recovery, Step 6: 3m VO2Max, Step 7: Cooldown).
        - Threshold (Zone 4, 90-105% FTP / Zone 4 HR): A single block/rep can NEVER exceed 20 minutes (standard is 8-15 minutes, e.g., separate Threshold efforts with recovery steps in between).
@@ -305,6 +330,11 @@ export const getChatMessagePrompt = (p: ChatMessageParams): string => {
     ========================================================
     ${p.fullHistoryCompact}
     Total activities available: ${p.totalActivities}.
+
+    ========================================================
+    YESTERDAY'S RECOVERY STATUS & REST CONTEXT:
+    ========================================================
+    ${p.yesterdayRestContext || 'No special rest day logged yesterday.'}
 
     ========================================================
     TODAY'S ACTIVITY STATUS (CRITICAL CHECK FOR "WHAT TO DO TODAY"):

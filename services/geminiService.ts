@@ -454,11 +454,40 @@ export const getDailySuggestion = async (
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
-  const history = recentActivities
-    .sort((a, b) => b.start_date_local.localeCompare(a.start_date_local))
-    .slice(0, 14)
-    .map(a => `${a.start_date_local.split('T')[0]}: ${a.icu_training_load || a.icu_tss || 0} TSS (${a.type}), efTP: ${a.icu_eftp || 'N/A'}W`)
-    .join(', ');
+  const actsByDate = new Map<string, Activity[]>();
+  recentActivities.forEach(a => {
+    if (a.start_date_local) {
+      const dStr = a.start_date_local.split('T')[0];
+      if (dStr) {
+        if (!actsByDate.has(dStr)) actsByDate.set(dStr, []);
+        actsByDate.get(dStr)!.push(a);
+      }
+    }
+  });
+
+  const yesterdayDate = new Date();
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+  const yesterdayStr = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
+  const yesterdayActs = actsByDate.get(yesterdayStr) || [];
+  const yesterdayWasRest = yesterdayActs.length === 0;
+  const yesterdayRestContext = yesterdayWasRest
+    ? `Yesterday (${yesterdayStr}) was a dedicated REST DAY with 0 TSS. The athlete has already had recovery and is physically refreshed.`
+    : `Yesterday (${yesterdayStr}) had activity: ${yesterdayActs.map(a => `"${a.name}" (${Math.round(a.icu_training_load || a.icu_tss || 0)} TSS)`).join(', ')}.`;
+
+  const dailyHistoryLines: string[] = [];
+  for (let i = 1; i <= 14; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const dayActs = actsByDate.get(dStr);
+    const label = i === 1 ? `Yesterday (${dStr})` : dStr;
+    if (dayActs && dayActs.length > 0) {
+      dailyHistoryLines.push(`${label}: ${dayActs.map(a => `${a.icu_training_load || a.icu_tss || 0} TSS (${a.type}), efTP: ${a.icu_eftp || 'N/A'}W`).join(' + ')}`);
+    } else {
+      dailyHistoryLines.push(`${label}: REST DAY (0 TSS)`);
+    }
+  }
+  const history = dailyHistoryLines.join(', ');
 
   const prompt = getDailySuggestionPrompt({
     targetStr,
@@ -467,7 +496,8 @@ export const getDailySuggestion = async (
     ftp,
     hasPowerOnMostRides: true,
     hrStatsText: "",
-    methodology
+    methodology,
+    yesterdayRestContext
   });
 
   const response = await callGemini({
@@ -978,6 +1008,49 @@ export const getWeeklyBriefing = async (
     }).join('\n');
   }
 
+  // Build recent training and rest log (last 14 days)
+  const yesterdayDate = new Date(now);
+  yesterdayDate.setDate(now.getDate() - 1);
+  const yesterdayIso = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
+  
+  const actsByDate = new Map<string, Activity[]>();
+  recentActivities.forEach(a => {
+    if (a.start_date_local) {
+      const dStr = a.start_date_local.split('T')[0];
+      if (dStr) {
+        if (!actsByDate.has(dStr)) actsByDate.set(dStr, []);
+        actsByDate.get(dStr)!.push(a);
+      }
+    }
+  });
+
+  const yesterdayActs = actsByDate.get(yesterdayIso) || [];
+  const yesterdayWasRest = yesterdayActs.length === 0;
+  const yesterdayRestContext = yesterdayWasRest
+    ? `Yesterday (${yesterdayIso}) was a REST DAY (0 TSS, no workouts recorded). The athlete already banked recovery yesterday and is fresh unless fatigue from prior days demands additional rest.`
+    : `Yesterday (${yesterdayIso}) had ${yesterdayActs.length} session(s): ${yesterdayActs.map(a => `"${a.name}" (${a.type || 'Ride'}, ${Math.round(a.icu_training_load || a.icu_tss || 0)} TSS)`).join(', ')}.`;
+
+  const recentDaysSummary: string[] = [];
+  for (let i = 1; i <= 14; i++) {
+    const d = new Date(now);
+    d.setDate(now.getDate() - i);
+    const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const dayActs = actsByDate.get(dStr);
+    const label = i === 1 ? `Yesterday (${dStr})` : dStr;
+    if (dayActs && dayActs.length > 0) {
+      const details = dayActs.map(a => {
+        const dur = Math.round((a.moving_time || a.elapsed_time || 0) / 60);
+        const tss = Math.round(a.icu_training_load || a.icu_tss || 0);
+        const np = Math.round(a.weighted_average_watts || a.average_watts || 0);
+        return `"${a.name}" (${a.type || 'Ride'}, ${dur}m, ${tss} TSS, ${np}W)`;
+      }).join(' + ');
+      recentDaysSummary.push(`- ${label}: ${details}`);
+    } else {
+      recentDaysSummary.push(`- ${label}: REST DAY (0 TSS - Recovery & adaptation)`);
+    }
+  }
+  const recentTrainingSummary = recentDaysSummary.join('\n');
+
   const prompt = getWeeklyBriefingPrompt({
     userGoal: userGoal || 'Increase endurance',
     stats,
@@ -990,7 +1063,9 @@ export const getWeeklyBriefing = async (
     hrStatsText,
     trainingMode,
     methodology,
-    existingPlanSummary: existingPlanSummary || undefined
+    existingPlanSummary: existingPlanSummary || undefined,
+    recentTrainingSummary,
+    yesterdayRestContext
   });
 
   const response = await callGemini({
@@ -1348,6 +1423,15 @@ POWER MILESTONES & SPIKES:
     return `${pc.year} Annual Bests: ${bests}`;
   }).join('\n');
 
+  const yesterdayDate = new Date(now);
+  yesterdayDate.setDate(now.getDate() - 1);
+  const yesterdayIso = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
+  const yesterdayActivities = sortedActivities.filter(a => a.start_date_local && a.start_date_local.startsWith(yesterdayIso));
+  const yesterdayWasRest = yesterdayActivities.length === 0;
+  const yesterdayRestContext = yesterdayWasRest
+    ? `Yesterday (${yesterdayIso}) was a REST DAY (No activities recorded). The athlete already had a full recovery day yesterday.`
+    : `Yesterday (${yesterdayIso}) had ${yesterdayActivities.length} session(s): ${yesterdayActivities.map(a => `"${a.name}" (${a.type || 'Ride'}, ${Math.round(a.icu_training_load || a.icu_tss || 0)} TSS)`).join(', ')}.`;
+
   const systemInstruction = getChatMessagePrompt({
     currentDateStr,
     todayIso,
@@ -1362,7 +1446,8 @@ POWER MILESTONES & SPIKES:
     fullHistoryCompact,
     totalActivities: context.activities.length,
     hasCompletedRideToday,
-    todayActivitiesSummary
+    todayActivitiesSummary,
+    yesterdayRestContext
   });
 
   const contents = history.map(m => ({

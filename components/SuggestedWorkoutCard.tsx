@@ -4,9 +4,10 @@ import { WeeklyBriefing } from '../types';
 
 interface SuggestedWorkoutCardProps {
   day: WeeklyBriefing['days'][0];
-  absoluteIndex: number;
+  absoluteIndex?: number;
   onClick: (day: WeeklyBriefing['days'][0]) => void;
   isToday?: boolean;
+  date?: Date;
 }
 
 export const formatPlannedRideTitle = (focusStr?: string): string => {
@@ -34,7 +35,8 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
   day, 
   absoluteIndex, 
   onClick,
-  isToday = false
+  isToday = false,
+  date
 }) => {
   if (!day) return null;
   const getDayAbbr = (dayStr: string) => {
@@ -77,6 +79,7 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
   };
 
   const computedDate = (() => {
+    if (date) return date;
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     if (typeof absoluteIndex === 'number') {
@@ -85,11 +88,11 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
     return d;
   })();
 
-  const weekday = typeof absoluteIndex === 'number' 
+  const weekday = (date || typeof absoluteIndex === 'number') 
     ? computedDate.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()
     : getDayAbbr(day.day || '');
 
-  const dayNum = typeof absoluteIndex === 'number'
+  const dayNum = (date || typeof absoluteIndex === 'number')
     ? computedDate.getDate()
     : getDayNumber(day.day || '');
 
@@ -108,11 +111,7 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
         }`}
       >
         {/* Date block */}
-        <div className={`w-9 h-9 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-colors ${
-          isToday
-            ? 'bg-indigo-500/10 border-indigo-500/25 text-indigo-300'
-            : 'bg-white/[0.02] border-white/[0.06] text-slate-400 group-hover:border-white/10'
-        }`}>
+        <div className="w-9 h-9 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-colors bg-indigo-500/10 border-indigo-500/25 text-indigo-300">
           <span className="text-[7.5px] font-bold uppercase leading-none mb-0.5 tracking-wider">{weekday}</span>
           <span className="text-xs font-bold font-mono leading-none text-slate-200">{dayNum || '–'}</span>
         </div>
