@@ -9,7 +9,6 @@ import {
   WeeklyBriefing, 
   Wellness,
   AnnualPowerCurve,
-  RecoveryAdvice,
   TrainingMode,
   TrainingMethodology,
   ThreeMonthReview
@@ -1820,108 +1819,6 @@ export const analyzeUserProfile = async (
 };
 
 /**
- * Generates recovery advice for the athlete based on current daily metrics and upcoming plan.
- */
-export const getRecoveryAdvice = async (
-  activities: Activity[],
-  wellness: Wellness[],
-  userGoal: string,
-  upcomingBriefing?: WeeklyBriefing | null
-): Promise<RecoveryAdvice> => {
-  const cacheKey = `wattson_recovery_advice_${userGoal}`;
-  const cached = getCache(cacheKey);
-  if (cached) return cached;
-
-  const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
-  
-  const todayActivities = activities.filter(a => a.start_date_local && a.start_date_local.startsWith(todayStr));
-  const todayLoad = todayActivities.reduce((sum, a) => sum + (a.icu_training_load || a.icu_tss || 0), 0);
-  const todayDistance = todayActivities.reduce((sum, a) => sum + (a.distance || 0), 0);
-
-  const sortedWellness = [...wellness].sort((a,b) => b.date.localeCompare(a.date));
-  const recentWellness = sortedWellness[0];
-
-  let upcomingText = "Rest or endurance build";
-  if (upcomingBriefing && upcomingBriefing.days && upcomingBriefing.days.length > 0) {
-    const nextDay = upcomingBriefing.days[0];
-    upcomingText = `Focus: ${nextDay.focus}, load target: ${nextDay.load_target} TSS, intensity: ${nextDay.intensity}. Why: ${nextDay.why}`;
-  }
-
-  const prompt = `You are waTTson, an expert cycling coach AI. Provide hyper-personalized recovery advice for TODAY based on the athlete's current wellness metrics, today's training load, and the upcoming training target.
-
-ATHLETE OVERALL GOAL: "${userGoal}"
-
-TODAY'S ACTIVITY LOAD:
-- Completed ${todayActivities.length} rides today.
-- Today's training load: ${todayLoad} TSS.
-- Distance completed: ${Math.round(todayDistance / 1000)} km.
-
-ATHLETE RECENT WELLNESS METRICS:
-${recentWellness ? `- Date: ${recentWellness.date}
-- Resting Heart Rate: ${recentWellness.restHR || 'N/A'} bpm
-- Heart Rate Variability (HRV): ${recentWellness.hrv || 'N/A'} ms
-- Weight: ${recentWellness.weight || 'N/A'} kg
-- CTL (Fitness): ${recentWellness.ctl || 'N/A'}
-- ATL (Fatigue): ${recentWellness.atl || 'N/A'}
-- TSB (Form): ${recentWellness.tsb || 'N/A'}` : "No recent wellness logs available."}
-
-UPCOMING TRAINING TARGET (TOMORROW):
-- ${upcomingText}
-
-Please synthesize this information and output a highly actionable recovery guidance JSON object. Do not recommend anything unrealistic. Include concrete guidelines on:
-1. Food & Hydration (Specific macronutrient focuses like carb load / protein repair, hydration amount, and timing based on today's ride intensity/TSS and tomorrow's target).
-2. Sleep & Rest (Recommended hours, timing, and preparation advice based on current fatigue).
-3. Active/Passive Recovery Protocols (Foam rolling, stretching, recovery spin, cold plunges, compression, or complete rest).
-
-Return exactly the following JSON structure:
-{
-  "score": 85,
-  "summary": "Brief 1-2 sentence overview summarizing their current metabolic and muscular state.",
-  "sleep_advice": "Detailed, highly-actionable sleep and rest preparation guidance.",
-  "food_advice": "Detailed, highly-actionable hydration and nutrition plan (macronutrients, timing, specific recommendations).",
-  "activity_advice": "Detailed, highly-actionable recovery protocols (stretching, self-massage, recovery ride instructions).",
-  "key_metrics": [
-    { "label": "e.g. HRV Status", "value": "e.g. 64 ms (Optimal)", "status": "good" }
-  ]
-}`;
-
-  const response = await callGemini({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          score: { type: Type.NUMBER },
-          summary: { type: Type.STRING },
-          sleep_advice: { type: Type.STRING },
-          food_advice: { type: Type.STRING },
-          activity_advice: { type: Type.STRING },
-          key_metrics: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                label: { type: Type.STRING },
-                value: { type: Type.STRING },
-                status: { type: Type.STRING, enum: ['good', 'warning', 'neutral'] }
-              },
-              required: ['label', 'value', 'status']
-            }
-          }
-        },
-        required: ['score', 'summary', 'sleep_advice', 'food_advice', 'activity_advice', 'key_metrics']
-      }
-    }
-  });
-
-  const result = safeParseJSON(response.text);
-  setCache(cacheKey, result);
-  return result;
-};
-
-/**
  * Analyzes athlete's performance over the past 3 months (90 days).
  */
 export const analyzeThreeMonthReview = async (
@@ -2000,67 +1897,4 @@ export const analyzeThreeMonthReview = async (
 
   setCache(cacheKey, parsed);
   return parsed;
-};
-
-
-export interface MonthlyReportData {
-  summary: string;
-  improvements: string[];
-}
-
-export const generateMonthlyInsights = async (
-  activities: Activity[],
-  ftp?: number
-): Promise<MonthlyReportData> => {
-  const cacheKey = `wattson_monthly_report_${activities.length}_${ftp}`;
-  const cached = getCache(cacheKey);
-  if (cached) return cached;
-
-  // Last 30 days activities
-  const now = new Date();
-  const thirtyDaysAgo = new Date(now);
-  thirtyDaysAgo.setDate(now.getDate() - 30);
-  
-  const recentActivities = activities.filter(a => new Date(a.start_date_local) >= thirtyDaysAgo);
-  
-  if (recentActivities.length === 0) {
-    return {
-      summary: "You haven't logged any activities in the last 30 days.",
-      improvements: ["Log some activities to see your progress!"]
-    };
-  }
-
-  const prompt = `Analyze the athlete's last 30 days of training.
-Total activities: ${recentActivities.length}.
-Total hours: ${Math.round(recentActivities.reduce((acc, a) => acc + (a.moving_time || 0), 0) / 3600)}.
-Total load (TSS): ${Math.round(recentActivities.reduce((acc, a) => acc + (a.icu_training_load || a.icu_tss || 0), 0))}.
-Current FTP: ${ftp || 'unknown'}.
-
-Provide a brief, encouraging summary of their month and 2-3 specific improvements or achievements (e.g., consistency, volume, specific high-effort rides).
-Respond in JSON format:
-{
-  "summary": "String summarizing the month.",
-  "improvements": ["Improvement 1", "Improvement 2"]
-}
-`;
-
-  try {
-    const response = await callGemini({
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        temperature: 0.7,
-      }
-    });
-    
-    const result = safeParseJSON(response.text);
-    setCache(cacheKey, result);
-    return result;
-  } catch (err) {
-    console.error("Failed to generate monthly insights", err);
-    return {
-      summary: "You had a solid month of training. Keep up the good work!",
-      improvements: ["Maintained training consistency", "Logged solid weekly hours"]
-    };
-  }
 };
