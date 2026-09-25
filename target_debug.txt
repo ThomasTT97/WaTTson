@@ -1,0 +1,82 @@
+                 {sortedTimelineItems.map((item, idx) => {
+                    const prevItem = idx > 0 ? sortedTimelineItems[idx - 1] : null;
+                    
+                    const showFutureHeader = item.type === 'future_suggested' && (!prevItem || prevItem.type !== 'future_suggested');
+                    const showTodayHeader = (item.type === 'today_suggested' || item.type === 'today_actual') && 
+                                            (!prevItem || (prevItem.type !== 'today_suggested' && prevItem.type !== 'today_actual'));
+                    const showPastHeader = item.type === 'past' && (!prevItem || prevItem.type !== 'past');
+
+                    let showMonthHeader = false;
+                    let monthLabel = '';
+                    if (item.type === 'past' && item.activityData) {
+                      const itemMonth = new Date(item.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' });
+                      const prevMonth = prevItem && prevItem.activityData 
+                        ? new Date(prevItem.activityData.start_date_local).toLocaleString('default', { month: 'long', year: 'numeric' })
+                        : '';
+                      if (itemMonth !== prevMonth) {
+                        showMonthHeader = true;
+                        monthLabel = itemMonth.toUpperCase();
+                      }
+                    }
+
+                    return (
+                      <React.Fragment key={item.key}>
+                        {showFutureHeader && (
+                          <div ref={todayElementRef} className="flex items-center gap-3 px-1 pt-4 pb-2 scroll-mt-24">
+                            <span className="inline-block px-3 py-1 bg-blue-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.4)]">
+                              Plan
+                            </span>
+                            <div className="flex-1 h-px bg-gradient-to-r from-blue-500/40 to-transparent" />
+                          </div>
+                        )}
+
+                        {showTodayHeader && (
+                          <div 
+                            ref={!sortedTimelineItems.some(i => i.type === 'future_suggested') ? todayElementRef : null} 
+                            className="flex items-center gap-3 px-1 py-4 scroll-mt-24"
+                          >
+                            <span className="inline-block px-3 py-1 bg-emerald-500 text-slate-950 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse">
+                              Today
+                            </span>
+                            <div className="flex-1 h-px bg-gradient-to-r from-emerald-500/40 to-transparent" />
+                          </div>
+                        )}
+
+                        {showPastHeader && (
+                          <div className="flex items-center gap-3 px-1 pt-6 pb-2">
+                            <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
+                              Training History
+                            </span>
+                            <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
+                          </div>
+                        )}
+
+                        {showMonthHeader && !showPastHeader && (
+                          <div className="flex items-center gap-3 px-1 pt-6 pb-2">
+                            <span className="inline-block px-3 py-1 bg-[#12141c] border border-white/5 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em] rounded-lg">
+                              {monthLabel}
+                            </span>
+                            <div className="flex-1 h-px bg-gradient-to-r from-white/5 to-transparent" />
+                          </div>
+                        )}
+
+                        {item.type === 'past' || item.type === 'today_actual' ? (
+                          item.activityData && (
+                            <ActivityCard 
+                              activity={item.activityData} 
+                              onClick={setSelectedActivity} 
+                            />
+                          )
+                        ) : (
+                          item.dayData && (
+                            <SuggestedWorkoutCard 
+                              day={item.dayData}
+                              absoluteIndex={item.absoluteIndex ?? 0}
+                              onClick={(day) => setSelectedSuggestedDay(day)}
+                              isToday={item.type === 'today_suggested'}
+                            />
+                          )
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
