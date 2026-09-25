@@ -12,7 +12,8 @@ interface SuggestedWorkoutCardProps {
 
 export const formatPlannedRideTitle = (focusStr?: string): string => {
   if (!focusStr) return 'Ride';
-  const trimmed = focusStr.trim();
+  const cleanedFocus = focusStr.replace(/\s*\(\d+h\d*\)/i, '');
+  const trimmed = cleanedFocus.trim();
   const lower = trimmed.toLowerCase();
 
   if (

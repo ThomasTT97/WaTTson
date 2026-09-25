@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, Type, GenerateContentResponse, ThinkingLevel } from "@google/genai";
 import { 
   Activity, 
   ActivityInterval, 
@@ -9,7 +9,6 @@ import {
   WeeklyBriefing, 
   Wellness,
   AnnualPowerCurve,
-  RecoveryAdvice,
   TrainingMode,
   TrainingMethodology,
   ThreeMonthReview
@@ -217,22 +216,44 @@ export const sanitizeWorkoutSteps = (steps: any[] | undefined, ftp?: number): an
 };
 
 /**
- * General helper to call Gemini with a fallback chain.
+ * General helper to call Gemini with an optimized, ultra-fast model chain.
+ * Places gemini-3.1-flash-lite first to avoid high-demand 503 bottlenecks on flash models,
+ * with minimal thinking overhead and proper telemetry User-Agent headers.
  */
-const callGemini = async (params: any): Promise<GenerateContentResponse> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const callGemini = async (params: any, options?: { preferFlashLite?: boolean; thinkingLevel?: ThinkingLevel }): Promise<GenerateContentResponse> => {
+  const ai = new GoogleGenAI({ 
+    apiKey: process.env.GEMINI_API_KEY,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build'
+      }
+    }
+  });
   
-  // Model fallback chain: 
-  // 1. gemini-3.8-flash (Supported high-performance fast general text model)
-  // 2. gemini-3.1-flash-lite (Supported ultra-fast lightweight model)
-  const models = ['gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+  // Model priority:
+  // 1. gemini-3.1-flash-lite (Ultra-fast, lowest latency, minimal thinking overhead, immune to flash 503 spikes)
+  // 2. gemini-3.8-flash (High performance model with low thinking level)
+  // 3. gemini-flash-latest (General fast fallback)
+  const models = options?.preferFlashLite === false 
+    ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest']
+    : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
   
   let lastError: any = null;
   for (const model of models) {
     try {
+      const thinkingLevel = model === 'gemini-3.1-flash-lite' 
+        ? ThinkingLevel.MINIMAL 
+        : (options?.thinkingLevel || ThinkingLevel.LOW);
+
+      const mergedConfig = {
+        ...params.config,
+        thinkingConfig: params.config?.thinkingConfig || { thinkingLevel }
+      };
+
       return await ai.models.generateContent({
         ...params,
-        model
+        model,
+        config: mergedConfig
       });
     } catch (error: any) {
       console.warn(`Gemini model ${model} failed, trying fallback...`, error);
@@ -940,11 +961,14 @@ export const getWeeklyBriefing = async (
   const latestWellness = wellness[wellness.length - 1];
   const stats = `CTL: ${latestWellness?.ctl || 0}, TSB: ${latestWellness?.tsb || 0}, ATL: ${latestWellness?.atl || 0}`;
 
-  // Format power curve for latest year for context
+  // Format power curve for latest year for context (focused on key benchmark durations for speed)
   let pcCtx = '';
   if (powerCurves && powerCurves.length > 0) {
-    const pc = powerCurves[0]; // Assuming sorted by year desc
-    pcCtx = `Current Year Power Bests: ${pc.bests.map(b => `${b.duration}s:${b.watts}W`).join(', ')}`;
+    const pc = powerCurves[0];
+    const keyDurations = [5, 60, 300, 1200];
+    const bests = pc.bests.filter(b => keyDurations.includes(b.duration));
+    const items = bests.length > 0 ? bests : pc.bests.slice(0, 4);
+    pcCtx = `Current Year Power Bests: ${items.map(b => `${b.duration}s:${b.watts}W`).join(', ')}`;
   }
 
   // Generate the actual list of days, ensuring a full 7-day schedule for the week
@@ -964,7 +988,9 @@ export const getWeeklyBriefing = async (
     { start: week1Length + 14, end: week1Length + 21 }
   ];
 
-  const range = weekIndex ? weekRanges[weekIndex - 1] : { start: 0, end: week1Length + 21 };
+  // Default to 7 days (Week 1 = coming 7 days) if weekIndex is not specified or 1
+  const targetWeekIdx = weekIndex && weekIndex >= 1 && weekIndex <= 4 ? weekIndex : 1;
+  const range = weekRanges[targetWeekIdx - 1];
   
   // Shift tempDate to the start of the requested range
   tempDate.setDate(tempDate.getDate() + range.start);
@@ -1008,7 +1034,7 @@ export const getWeeklyBriefing = async (
     }).join('\n');
   }
 
-  // Build recent training and rest log (last 14 days)
+  // Build recent training and rest log (compact high-signal last 5 days for fast prompt processing)
   const yesterdayDate = new Date(now);
   yesterdayDate.setDate(now.getDate() - 1);
   const yesterdayIso = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
@@ -1031,7 +1057,7 @@ export const getWeeklyBriefing = async (
     : `Yesterday (${yesterdayIso}) had ${yesterdayActs.length} session(s): ${yesterdayActs.map(a => `"${a.name}" (${a.type || 'Ride'}, ${Math.round(a.icu_training_load || a.icu_tss || 0)} TSS)`).join(', ')}.`;
 
   const recentDaysSummary: string[] = [];
-  for (let i = 1; i <= 14; i++) {
+  for (let i = 1; i <= 5; i++) {
     const d = new Date(now);
     d.setDate(now.getDate() - i);
     const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1073,6 +1099,7 @@ export const getWeeklyBriefing = async (
     config: {
       responseMimeType: 'application/json',
       temperature: 0.1,
+      thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
       responseSchema: {
         type: Type.OBJECT,
         properties: {
@@ -1130,8 +1157,12 @@ export const sendChatMessage = async (
     recentLoad: number; 
     readiness: number;
     activities: Activity[];
-    wellness: Wellness[];
-    powerCurves: AnnualPowerCurve[];
+    wellness?: Wellness[];
+    powerCurves?: AnnualPowerCurve[];
+    weeklyBriefing?: WeeklyBriefing | null;
+    suggestion?: DailySuggestion | null;
+    planContext?: string | null;
+    ftp?: number;
   }
 ): Promise<string> => {
   const sortedActivities = [...context.activities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local));
@@ -1235,10 +1266,25 @@ POWER MILESTONES & SPIKES:
 
     const totalHours = periodActs.reduce((sum, a) => sum + (a.moving_time || a.elapsed_time || 0), 0) / 3600;
     const totalTss = periodActs.reduce((sum, a) => sum + (a.icu_training_load || a.icu_tss || 0), 0);
-    const daySpan = Math.max(7, Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+    const totalDistanceKm = Math.round(periodActs.reduce((sum, a) => sum + (a.distance || (a as any).icu_distance || 0), 0) / 1000);
+    const totalElevationM = Math.round(periodActs.reduce((sum, a) => sum + (a.total_elevation_gain || 0), 0));
+
+    // For active/current period vs historical:
+    const effectiveEnd = (endDate > now && startDate < now) ? now : endDate;
+    const daySpan = Math.max(7, Math.round((effectiveEnd.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
     const weeks = Math.max(1, daySpan / 7);
     const weeklyTss = Math.round(totalTss / weeks);
     const weeklyHours = (totalHours / weeks).toFixed(1);
+
+    // Peak power & eFTP in this period
+    const peakEftp = Math.round(Math.max(0, ...periodActs.map(a => a.icu_eftp || 0)));
+    const peakSprint = Math.round(Math.max(0, ...periodActs.map(a => a.max_watts || 0)));
+
+    // Average Normalized Power (NP)
+    const powerActs = periodActs.filter(a => (a.weighted_average_watts || a.icu_weighted_average_watts || a.average_watts || 0) > 0);
+    const avgNP = powerActs.length > 0
+      ? Math.round(powerActs.reduce((sum, a) => sum + (a.weighted_average_watts || a.icu_weighted_average_watts || a.average_watts || 0), 0) / powerActs.length)
+      : 0;
 
     // Intensity breakdown: Z1/Z2 (<0.75 IF), Z3 Sweet Spot/Tempo (0.75-0.88 IF), Z4 Threshold (0.88-1.05 IF), Z5 VO2 Max (>1.05 IF)
     let z1z2Count = 0;
@@ -1267,26 +1313,45 @@ POWER MILESTONES & SPIKES:
     const z5Pct = Math.round((z5Count / total) * 100);
 
     let method = "Mixed Distribution";
-    if (z1Pct >= 75 && (z4Pct + z5Pct) >= 15) method = "Polarized (High Z1/Z2 Endurance Base + Focused High Intensity)";
-    else if (z1Pct >= 60 && z3Pct >= 20) method = "Pyramidal (Broad Aerobic Base with Substantial Sweet Spot/Tempo)";
+    if (z1Pct >= 75 && (z4Pct + z5Pct) >= 15) method = "Polarized (High Z1/Z2 Base + High Intensity Focus)";
+    else if (z1Pct >= 60 && z3Pct >= 20) method = "Pyramidal (Aerobic Base + Sweet Spot/Tempo)";
     else if ((z3Pct + z4Pct) >= 40) method = "Sweet Spot & Threshold Intensive";
     else if (z1Pct >= 85) method = "High-Volume Aerobic Base";
 
-    return `- ${label}: ${periodActs.length} rides, ${Math.round(totalHours)} total hrs (${weeklyHours}h/wk, ~${weeklyTss} TSS/wk). Distribution: ${z1Pct}% Z1/Z2 Base, ${z3Pct}% Z3 Tempo/SS, ${z4Pct}% Z4 Threshold, ${z5Pct}% Z5+ High Intensity -> Method: ${method}`;
+    // Top ride
+    const topTssRide = [...periodActs].sort((a, b) => (b.icu_training_load || b.icu_tss || 0) - (a.icu_training_load || a.icu_tss || 0))[0];
+    const topRideStr = topTssRide ? ` | Peak Ride: "${topTssRide.name}" (${Math.round(topTssRide.icu_training_load || topTssRide.icu_tss || 0)} TSS, ${topTssRide.start_date_local.split('T')[0]})` : '';
+
+    return `- ${label}: ${periodActs.length} rides | ${Math.round(totalHours)} total hrs (~${weeklyHours}h/wk) | ${Math.round(totalTss)} total TSS (~${weeklyTss} TSS/wk) | ${totalDistanceKm.toLocaleString()} km | ${totalElevationM.toLocaleString()} m elevation | Avg NP: ${avgNP > 0 ? `${avgNP}W` : 'N/A'}${peakEftp > 0 ? ` | Peak eFTP: ${peakEftp}W` : ''}${peakSprint > 0 ? ` | Peak Sprint: ${peakSprint}W` : ''} | Distribution: ${z1Pct}% Z1/Z2, ${z3Pct}% Z3, ${z4Pct}% Z4, ${z5Pct}% Z5+ | Method: ${method}${topRideStr}`;
   };
 
   const d30 = new Date(now); d30.setDate(now.getDate() - 30);
   const d90 = new Date(now); d90.setDate(now.getDate() - 90);
   const d180 = new Date(now); d180.setDate(now.getDate() - 180);
-  const start2025 = new Date('2025-01-01'); const end2025 = new Date('2025-12-31');
-  const start2024 = new Date('2024-01-01'); const end2024 = new Date('2024-12-31');
+
+  // Dynamically analyze all years present in the athlete's training data (including 2023, 2024, 2025, 2026, etc.)
+  const availableYears = Array.from(new Set(
+    sortedActivities
+      .map(a => a.start_date_local ? new Date(a.start_date_local).getFullYear() : null)
+      .filter((y): y is number => y !== null && !isNaN(y))
+  )).sort((a, b) => b - a);
+
+  const annualPeriodSummaries = availableYears.map(yr => {
+    const yrStart = new Date(yr, 0, 1, 0, 0, 0, 0);
+    const yrEnd = (yr === now.getFullYear())
+      ? now
+      : new Date(yr, 11, 31, 23, 59, 59, 999);
+    const label = (yr === now.getFullYear()) ? `${yr} Season YTD` : `${yr} Full Season`;
+    return getPeriodStats(yrStart, yrEnd, label);
+  }).filter(Boolean);
+
+  const annualTrainingHistoryTable = annualPeriodSummaries.join('\n');
 
   const periodSummaries = [
     getPeriodStats(d30, now, "Last 30 Days (Current Phase)"),
     getPeriodStats(d90, d30, "1 to 3 Months Ago (Prior Build)"),
     getPeriodStats(d180, d90, "3 to 6 Months Ago (Base Phase)"),
-    getPeriodStats(start2025, end2025, "2025 Full Season"),
-    getPeriodStats(start2024, end2024, "2024 Full Season")
+    ...annualPeriodSummaries
   ].filter(Boolean).join('\n');
 
   const historicalTrainingMethods = periodSummaries || "Historical periodization data computed across available sessions.";
@@ -1311,8 +1376,12 @@ POWER MILESTONES & SPIKES:
   };
 
   const efLast90 = calculateAverageEF(sortedActivities.filter(a => new Date(a.start_date_local) >= d90));
-  const ef2025 = calculateAverageEF(sortedActivities.filter(a => new Date(a.start_date_local) >= start2025 && new Date(a.start_date_local) <= end2025));
-  const ef2024 = calculateAverageEF(sortedActivities.filter(a => new Date(a.start_date_local) >= start2024 && new Date(a.start_date_local) <= end2024));
+  const efYearlySummary = availableYears.slice(0, 5).map(yr => {
+    const yrStart = new Date(yr, 0, 1);
+    const yrEnd = new Date(yr, 11, 31, 23, 59, 59, 999);
+    const efVal = calculateAverageEF(sortedActivities.filter(a => new Date(a.start_date_local) >= yrStart && new Date(a.start_date_local) <= yrEnd));
+    return `${yr} avg = ${efVal}`;
+  }).join(', ');
 
   // CTL & Fitness peaks
   let peakCtl = 0;
@@ -1325,7 +1394,7 @@ POWER MILESTONES & SPIKES:
   });
 
   const trainingEffectivenessInsights = `PHYSIOLOGICAL ADAPTATION & EFFECTIVENESS SUMMARY:
-- Aerobic Efficiency Factor (EF = NP / HR): Last 90 Days avg EF = ${efLast90} (2025 avg = ${ef2025}, 2024 avg = ${ef2024}). ${efLast90 !== 'N/A' && ef2025 !== 'N/A' && parseFloat(efLast90) >= parseFloat(ef2025) ? 'Demonstrates positive aerobic cardiac efficiency improvement (producing higher watts per heart beat).' : 'Aerobic efficiency tracking stable.'}
+- Aerobic Efficiency Factor (EF = NP / HR): Last 90 Days avg EF = ${efLast90} (${efYearlySummary}).
 - All-Time Peak Fitness (CTL): ${peakCtl > 0 ? `${peakCtl} CTL (Reached on ${peakCtlDate})` : 'Tracked via recent training load'}
 - Training Volume & Adaptation Correlation: The athlete achieves their highest 5-min and 20-min power breakthroughs when weekly TSS sustains between 400-550 TSS/week with at least 70% aerobic Zone 2 foundation and 1-2 sharp interval sessions per week.
 - Recovery Dynamics: Rest days and easy active recovery rides (<50 TSS) immediately preceding key workouts consistently yield higher peak watts and superior power duration performance.`;
@@ -1380,17 +1449,46 @@ POWER MILESTONES & SPIKES:
       .map(([m, data]) => `${m}: ${data.count} rides, ${Math.round(data.hours)}h, TSS ${Math.round(data.tss)}`)
       .join(' | ');
 
-    fullHistoryCompact = `Recent Activities: ${recentStr}\n\nHistorical Monthly Archive: ${monthlyStr}`;
+    // Dedicated annual archive breakdown across all years
+    const yearlyArchive: Record<number, { count: number; hours: number; tss: number; km: number }> = {};
+    sortedActivities.forEach(a => {
+      const yr = new Date(a.start_date_local).getFullYear();
+      if (!isNaN(yr)) {
+        if (!yearlyArchive[yr]) yearlyArchive[yr] = { count: 0, hours: 0, tss: 0, km: 0 };
+        yearlyArchive[yr].count += 1;
+        yearlyArchive[yr].hours += (a.moving_time || a.elapsed_time || 0) / 3600;
+        yearlyArchive[yr].tss += (a.icu_training_load || a.icu_tss || 0);
+        yearlyArchive[yr].km += (a.distance || (a as any).icu_distance || 0) / 1000;
+      }
+    });
+
+    const yearlyStr = Object.entries(yearlyArchive)
+      .sort((a, b) => Number(b[0]) - Number(a[0]))
+      .map(([yr, d]) => `${yr}: ${d.count} rides, ${Math.round(d.hours)}h, ${Math.round(d.km).toLocaleString()}km, TSS ${Math.round(d.tss).toLocaleString()}`)
+      .join(' | ');
+
+    fullHistoryCompact = `Annual Career Totals: ${yearlyStr}\n\nRecent Activities: ${recentStr}\n\nHistorical Monthly Archive: ${monthlyStr}`;
   } else {
     fullHistoryCompact = sortedActivities.map(a => 
       `${a.start_date_local.split('T')[0]}|${a.type || 'Ride'}|TSS:${Math.round(a.icu_training_load || a.icu_tss || 0)}|NP:${Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0)}W|${Math.round((a.distance || 0)/1000)}km`
     ).join(', ');
   }
 
+  const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
   const currentDateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-  // Check today's completed activities
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  const tomorrowIso = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+  const tomorrowDateStr = tomorrow.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const yesterdayIso = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+  const yesterdayDateStr = yesterday.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+
+  // 1. Check today's completed activities
   const todayActivities = sortedActivities.filter(a => {
     if (!a.start_date_local || !a.start_date_local.startsWith(todayIso)) return false;
     const dur = a.moving_time || a.elapsed_time || (a as any).time || (a as any).duration || (a as any).icu_recording_time || 0;
@@ -1399,7 +1497,7 @@ POWER MILESTONES & SPIKES:
   });
 
   const hasCompletedRideToday = todayActivities.length > 0;
-  let todayActivitiesSummary = "No activities/rides recorded yet today.";
+  let todayActivitiesSummary = "0 activities recorded today. The athlete has not yet trained or logged any workout today.";
   if (hasCompletedRideToday) {
     const actLines = todayActivities.map(a => {
       const durM = Math.round((a.moving_time || a.elapsed_time || 0) / 60);
@@ -1407,15 +1505,201 @@ POWER MILESTONES & SPIKES:
       const tss = Math.round(a.icu_training_load || a.icu_tss || 0);
       const avgW = Math.round(a.average_watts || a.icu_average_watts || 0);
       const npW = Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0);
+      const maxW = a.max_watts ? Math.round(a.max_watts) : undefined;
+      const avgHr = a.average_heartrate ? Math.round(a.average_heartrate) : undefined;
+      const maxHr = a.max_heartrate ? Math.round(a.max_heartrate) : undefined;
+      const laps = (a as any).icu_laps || (a as any).icu_intervals || (a as any).icu_intervals_edited || (a as any).laps || (a as any).intervals;
+      const detected = detectIntervalsFromLaps(a, laps);
+      let desc = `"${a.name}" (${a.type || 'Ride'}) - Duration: ${durM}m, Distance: ${distKm}km, TSS: ${tss}, Avg: ${avgW}W, NP: ${npW}W`;
+      if (maxW && maxW > 0) desc += `, Max Power: ${maxW}W`;
+      if (avgHr) desc += `, Avg HR: ${avgHr}bpm`;
+      if (maxHr) desc += `, Max HR: ${maxHr}bpm`;
+      if (detected) desc += ` | Intervals/Structure: [${detected}]`;
+      return desc;
+    });
+    todayActivitiesSummary = `${todayActivities.length} session(s) COMPLETED TODAY (${dayOfWeek}, ${todayIso}):\n${actLines.map(l => `- ${l}`).join('\n')}`;
+  }
+
+  // 2. Training planned in the training plan for today and coming days
+  let todayPlannedSummary = "";
+  let upcomingPlanSummary = "";
+  const briefing = context.weeklyBriefing;
+  const dailySuggestion = context.suggestion;
+
+  if (briefing && briefing.days && briefing.days.length > 0) {
+    const dayOffsets: number[] = [];
+    let currentOffset = 0;
+    let prevDayStr = '';
+    briefing.days.forEach((day, idx) => {
+      if (idx > 0) {
+        const curDayNormalized = (day.day || '').trim().toLowerCase();
+        const prevDayNormalized = prevDayStr.trim().toLowerCase();
+        if (curDayNormalized !== prevDayNormalized) {
+          currentOffset += 1;
+        }
+      }
+      dayOffsets.push(currentOffset);
+      prevDayStr = day.day || '';
+    });
+
+    const todayPlannedDays: { day: typeof briefing.days[0]; idx: number }[] = [];
+    const tomorrowPlannedDays: { day: typeof briefing.days[0]; idx: number }[] = [];
+    const futurePlannedDays: { day: typeof briefing.days[0]; offset: number; dateStr: string; iso: string }[] = [];
+
+    briefing.days.forEach((day, idx) => {
+      const offset = dayOffsets[idx];
+      const planDate = new Date(now);
+      planDate.setDate(now.getDate() + offset);
+      const planIso = `${planDate.getFullYear()}-${String(planDate.getMonth() + 1).padStart(2, '0')}-${String(planDate.getDate()).padStart(2, '0')}`;
+      
+      if (offset === 0 || planIso === todayIso) {
+        todayPlannedDays.push({ day, idx });
+      } else if (offset === 1 || planIso === tomorrowIso) {
+        tomorrowPlannedDays.push({ day, idx });
+      } else if (offset > 1) {
+        const dateStr = planDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        futurePlannedDays.push({ day, offset, dateStr, iso: planIso });
+      }
+    });
+
+    if (todayPlannedDays.length > 0) {
+      const lines = todayPlannedDays.map(({ day }) => {
+        const isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || (day.duration_target || 0) <= 0;
+        if (isRest) {
+          return `- REST DAY: "${day.focus}" (0m, 0 TSS). Rationale: ${day.why || 'Dedicated rest for recovery'}`;
+        }
+        const stepsDesc = day.workout_steps && day.workout_steps.length > 0
+          ? ` Steps: [${day.workout_steps.map(s => s.label || `${s.duration}m`).join(' -> ')}]`
+          : '';
+        return `- "${day.focus}" (Target Duration: ${day.duration_target}m, Target TSS: ${day.load_target || 'N/A'}, Intensity: ${day.intensity}).${stepsDesc} Purpose: "${day.why}"`;
+      });
+
+      let statusNote = "";
+      if (hasCompletedRideToday) {
+        if (todayActivities.length >= todayPlannedDays.length) {
+          statusNote = " (Status: Athlete already rode today; planned training completed or accounted for)";
+        } else {
+          statusNote = ` (Status: ${todayActivities.length} session done, ${todayPlannedDays.length - todayActivities.length} remaining planned)`;
+        }
+      } else {
+        statusNote = " (Status: NOT YET COMPLETED. This session is on deck for today)";
+      }
+
+      todayPlannedSummary = `Training Plan for Today (${dayOfWeek}, ${todayIso})${statusNote}:\n${lines.join('\n')}`;
+    } else if (dailySuggestion && dailySuggestion.primary) {
+      todayPlannedSummary = `Daily Suggestion for Today (${dayOfWeek}, ${todayIso}):\n- "${dailySuggestion.primary.title}" (${dailySuggestion.primary.duration_minutes}m, ${dailySuggestion.primary.intensity}, ~${dailySuggestion.primary.tss || 'N/A'} TSS). Description: "${dailySuggestion.primary.description}". Status: ${hasCompletedRideToday ? 'Ridden today' : 'Pending / on deck'}.`;
+    } else {
+      todayPlannedSummary = `No specific session mapped for today in the weekly briefing.`;
+    }
+
+    const upcomingLines: string[] = [];
+    if (tomorrowPlannedDays.length > 0) {
+      upcomingLines.push(`TOMORROW (${tomorrowDateStr}, ${tomorrowIso}):`);
+      tomorrowPlannedDays.forEach(({ day }) => {
+        const isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || (day.duration_target || 0) <= 0;
+        if (isRest) {
+          upcomingLines.push(`  • REST DAY: "${day.focus}" (0m, 0 TSS). Focus: Complete recovery. Why: "${day.why || 'Muscular recovery'}"`);
+        } else {
+          const stepsDesc = day.workout_steps && day.workout_steps.length > 0
+            ? ` | Intervals: [${day.workout_steps.map(s => s.label || `${s.duration}m`).join(' -> ')}]`
+            : '';
+          upcomingLines.push(`  • "${day.focus}" - Duration: ${day.duration_target}m, Planned TSS: ${day.load_target || 'N/A'}, Intensity: ${day.intensity}${stepsDesc}. Purpose: "${day.why}"`);
+        }
+      });
+    } else {
+      upcomingLines.push(`TOMORROW (${tomorrowDateStr}, ${tomorrowIso}): No specific session scheduled; follow base recovery.`);
+    }
+
+    if (futurePlannedDays.length > 0) {
+      upcomingLines.push(`\nSUBSEQUENT COMING DAYS IN TRAINING PLAN:`);
+      futurePlannedDays.forEach(({ day, offset, dateStr, iso }) => {
+        const isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || (day.duration_target || 0) <= 0;
+        if (isRest) {
+          upcomingLines.push(`  • In ${offset} days (${dateStr}, ${iso}): REST DAY - "${day.focus}". Why: "${day.why || 'Recovery'}"`);
+        } else {
+          const stepsSummary = day.workout_steps && day.workout_steps.length > 0
+            ? ` | Steps: [${day.workout_steps.slice(0, 5).map(s => s.label || `${s.duration}m`).join(' -> ')}${day.workout_steps.length > 5 ? '...' : ''}]`
+            : '';
+          upcomingLines.push(`  • In ${offset} days (${dateStr}, ${iso}): "${day.focus}" (${day.duration_target}m, TSS: ${day.load_target || 'N/A'}, Intensity: ${day.intensity})${stepsSummary}. Purpose: "${day.why}"`);
+        }
+      });
+    }
+
+    upcomingPlanSummary = upcomingLines.join('\n');
+  } else if (dailySuggestion && dailySuggestion.primary) {
+    todayPlannedSummary = `Daily Suggestion for Today (${dayOfWeek}, ${todayIso}): "${dailySuggestion.primary.title}" (${dailySuggestion.primary.duration_minutes}m, ${dailySuggestion.primary.intensity}, ~${dailySuggestion.primary.tss || 'N/A'} TSS). Status: ${hasCompletedRideToday ? 'Rode today' : 'On deck'}.`;
+    upcomingPlanSummary = `Weekly training plan initializing. Focus on today's target workout: "${dailySuggestion.primary.title}".`;
+  } else {
+    todayPlannedSummary = `No scheduled session mapped for today.`;
+    upcomingPlanSummary = `No upcoming training plan available yet.`;
+  }
+
+  // 3. Yesterday's session and recovery status
+  const yesterdayActivities = sortedActivities.filter(a => a.start_date_local && a.start_date_local.startsWith(yesterdayIso));
+  let yesterdaySummary = "";
+  const yesterdayWasRest = yesterdayActivities.length === 0;
+  if (yesterdayWasRest) {
+    yesterdaySummary = `REST DAY (0 sessions, 0 TSS). Yesterday (${yesterdayDateStr}, ${yesterdayIso}) was a dedicated rest day with no rides logged. The athlete had a full day of rest and recovery.`;
+  } else {
+    const yLines = yesterdayActivities.map(a => {
+      const durM = Math.round((a.moving_time || a.elapsed_time || 0) / 60);
+      const distKm = Math.round((a.distance || 0) / 1000);
+      const tss = Math.round(a.icu_training_load || a.icu_tss || 0);
+      const avgW = Math.round(a.average_watts || a.icu_average_watts || 0);
+      const npW = Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || 0);
+      const maxW = a.max_watts ? Math.round(a.max_watts) : undefined;
       const avgHr = a.average_heartrate ? Math.round(a.average_heartrate) : undefined;
       const laps = (a as any).icu_laps || (a as any).icu_intervals || (a as any).icu_intervals_edited || (a as any).laps || (a as any).intervals;
       const detected = detectIntervalsFromLaps(a, laps);
-      let desc = `"${a.name}" (${a.type || 'Ride'}) - ${durM}m, ${distKm}km, TSS ${tss}, Avg ${avgW}W, NP ${npW}W`;
-      if (avgHr) desc += `, Avg HR ${avgHr}bpm`;
-      if (detected) desc += ` [${detected}]`;
+      let desc = `"${a.name}" (${a.type || 'Ride'}) - Duration: ${durM}m, Distance: ${distKm}km, TSS: ${tss}, Avg: ${avgW}W, NP: ${npW}W`;
+      if (maxW && maxW > 0) desc += `, Max: ${maxW}W`;
+      if (avgHr) desc += `, Avg HR: ${avgHr}bpm`;
+      if (detected) desc += ` | Intervals: [${detected}]`;
       return desc;
     });
-    todayActivitiesSummary = `${todayActivities.length} session(s) already recorded TODAY (${todayIso}):\n${actLines.map(l => `- ${l}`).join('\n')}`;
+    yesterdaySummary = `${yesterdayActivities.length} session(s) COMPLETED YESTERDAY (${yesterdayDateStr}, ${yesterdayIso}):\n${yLines.map(l => `- ${l}`).join('\n')}`;
+  }
+
+  const yesterdayRestContext = yesterdayWasRest
+    ? `Yesterday (${yesterdayIso}) was a REST DAY (No activities recorded). The athlete already had a full recovery day yesterday.`
+    : `Yesterday (${yesterdayIso}) had ${yesterdayActivities.length} session(s): ${yesterdayActivities.map(a => `"${a.name}" (${a.type || 'Ride'}, ${Math.round(a.icu_training_load || a.icu_tss || 0)} TSS)`).join(', ')}.`;
+
+  // 4. Chronological day-by-day past training log (Days before yesterday, up to 14 days ago)
+  const pastDaysLog: string[] = [];
+  for (let i = 2; i <= 14; i++) {
+    const pastDate = new Date(now);
+    pastDate.setDate(now.getDate() - i);
+    const pastIso = `${pastDate.getFullYear()}-${String(pastDate.getMonth() + 1).padStart(2, '0')}-${String(pastDate.getDate()).padStart(2, '0')}`;
+    const pastDateLabel = pastDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    
+    const dayActs = sortedActivities.filter(a => a.start_date_local && a.start_date_local.startsWith(pastIso));
+    if (dayActs.length === 0) {
+      pastDaysLog.push(`- ${pastDateLabel} (${i} days ago, ${pastIso}): [REST DAY - No workout logged]`);
+    } else {
+      const actsStr = dayActs.map(a => {
+        const durM = Math.round((a.moving_time || a.elapsed_time || 0) / 60);
+        const distKm = Math.round((a.distance || 0) / 1000);
+        const tss = Math.round(a.icu_training_load || a.icu_tss || 0);
+        const npW = Math.round(a.weighted_average_watts || a.icu_weighted_average_watts || a.average_watts || 0);
+        const avgHr = a.average_heartrate ? `, HR: ${Math.round(a.average_heartrate)}bpm` : '';
+        const laps = (a as any).icu_laps || (a as any).icu_intervals || (a as any).icu_intervals_edited || (a as any).laps || (a as any).intervals;
+        const detected = detectIntervalsFromLaps(a, laps);
+        const intervalNote = detected ? ` [${detected}]` : '';
+        return `"${a.name}" (${durM}m, ${distKm}km, TSS: ${tss}, NP: ${npW}W${avgHr}${intervalNote})`;
+      }).join(' + ');
+      pastDaysLog.push(`- ${pastDateLabel} (${i} days ago, ${pastIso}): ${actsStr}`);
+    }
+  }
+  const pastDaysDetailedTimeline = pastDaysLog.join('\n');
+
+  // 5. Active custom plan directives
+  let activePlanDirectivesSummary = "";
+  if (context.planContext) {
+    const parsedDirectives = parsePlanDirectives(context.planContext);
+    const { active } = pruneExpiredDirectives(parsedDirectives);
+    if (active.length > 0) {
+      activePlanDirectivesSummary = active.map(d => `- "${d.text}" (requested on ${d.requestedAt})`).join('\n');
+    }
   }
 
   const powerCurveStr = safePowerCurves.map(pc => {
@@ -1423,18 +1707,12 @@ POWER MILESTONES & SPIKES:
     return `${pc.year} Annual Bests: ${bests}`;
   }).join('\n');
 
-  const yesterdayDate = new Date(now);
-  yesterdayDate.setDate(now.getDate() - 1);
-  const yesterdayIso = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
-  const yesterdayActivities = sortedActivities.filter(a => a.start_date_local && a.start_date_local.startsWith(yesterdayIso));
-  const yesterdayWasRest = yesterdayActivities.length === 0;
-  const yesterdayRestContext = yesterdayWasRest
-    ? `Yesterday (${yesterdayIso}) was a REST DAY (No activities recorded). The athlete already had a full recovery day yesterday.`
-    : `Yesterday (${yesterdayIso}) had ${yesterdayActivities.length} session(s): ${yesterdayActivities.map(a => `"${a.name}" (${a.type || 'Ride'}, ${Math.round(a.icu_training_load || a.icu_tss || 0)} TSS)`).join(', ')}.`;
-
   const systemInstruction = getChatMessagePrompt({
     currentDateStr,
     todayIso,
+    dayOfWeek,
+    tomorrowDateStr,
+    yesterdayDateStr,
     goal: context.goal,
     recentLoad: context.recentLoad,
     readiness: context.readiness,
@@ -1447,7 +1725,14 @@ POWER MILESTONES & SPIKES:
     totalActivities: context.activities.length,
     hasCompletedRideToday,
     todayActivitiesSummary,
-    yesterdayRestContext
+    todayPlannedSummary,
+    upcomingPlanSummary,
+    activePlanDirectivesSummary,
+    yesterdaySummary,
+    pastDaysDetailedTimeline,
+    yesterdayRestContext,
+    annualTrainingHistoryTable,
+    ftp: context.ftp
   });
 
   const contents = history.map(m => ({
@@ -1534,108 +1819,6 @@ export const analyzeUserProfile = async (
 };
 
 /**
- * Generates recovery advice for the athlete based on current daily metrics and upcoming plan.
- */
-export const getRecoveryAdvice = async (
-  activities: Activity[],
-  wellness: Wellness[],
-  userGoal: string,
-  upcomingBriefing?: WeeklyBriefing | null
-): Promise<RecoveryAdvice> => {
-  const cacheKey = `wattson_recovery_advice_${userGoal}`;
-  const cached = getCache(cacheKey);
-  if (cached) return cached;
-
-  const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
-  
-  const todayActivities = activities.filter(a => a.start_date_local && a.start_date_local.startsWith(todayStr));
-  const todayLoad = todayActivities.reduce((sum, a) => sum + (a.icu_training_load || a.icu_tss || 0), 0);
-  const todayDistance = todayActivities.reduce((sum, a) => sum + (a.distance || 0), 0);
-
-  const sortedWellness = [...wellness].sort((a,b) => b.date.localeCompare(a.date));
-  const recentWellness = sortedWellness[0];
-
-  let upcomingText = "Rest or endurance build";
-  if (upcomingBriefing && upcomingBriefing.days && upcomingBriefing.days.length > 0) {
-    const nextDay = upcomingBriefing.days[0];
-    upcomingText = `Focus: ${nextDay.focus}, load target: ${nextDay.load_target} TSS, intensity: ${nextDay.intensity}. Why: ${nextDay.why}`;
-  }
-
-  const prompt = `You are waTTson, an expert cycling coach AI. Provide hyper-personalized recovery advice for TODAY based on the athlete's current wellness metrics, today's training load, and the upcoming training target.
-
-ATHLETE OVERALL GOAL: "${userGoal}"
-
-TODAY'S ACTIVITY LOAD:
-- Completed ${todayActivities.length} rides today.
-- Today's training load: ${todayLoad} TSS.
-- Distance completed: ${Math.round(todayDistance / 1000)} km.
-
-ATHLETE RECENT WELLNESS METRICS:
-${recentWellness ? `- Date: ${recentWellness.date}
-- Resting Heart Rate: ${recentWellness.restHR || 'N/A'} bpm
-- Heart Rate Variability (HRV): ${recentWellness.hrv || 'N/A'} ms
-- Weight: ${recentWellness.weight || 'N/A'} kg
-- CTL (Fitness): ${recentWellness.ctl || 'N/A'}
-- ATL (Fatigue): ${recentWellness.atl || 'N/A'}
-- TSB (Form): ${recentWellness.tsb || 'N/A'}` : "No recent wellness logs available."}
-
-UPCOMING TRAINING TARGET (TOMORROW):
-- ${upcomingText}
-
-Please synthesize this information and output a highly actionable recovery guidance JSON object. Do not recommend anything unrealistic. Include concrete guidelines on:
-1. Food & Hydration (Specific macronutrient focuses like carb load / protein repair, hydration amount, and timing based on today's ride intensity/TSS and tomorrow's target).
-2. Sleep & Rest (Recommended hours, timing, and preparation advice based on current fatigue).
-3. Active/Passive Recovery Protocols (Foam rolling, stretching, recovery spin, cold plunges, compression, or complete rest).
-
-Return exactly the following JSON structure:
-{
-  "score": 85,
-  "summary": "Brief 1-2 sentence overview summarizing their current metabolic and muscular state.",
-  "sleep_advice": "Detailed, highly-actionable sleep and rest preparation guidance.",
-  "food_advice": "Detailed, highly-actionable hydration and nutrition plan (macronutrients, timing, specific recommendations).",
-  "activity_advice": "Detailed, highly-actionable recovery protocols (stretching, self-massage, recovery ride instructions).",
-  "key_metrics": [
-    { "label": "e.g. HRV Status", "value": "e.g. 64 ms (Optimal)", "status": "good" }
-  ]
-}`;
-
-  const response = await callGemini({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          score: { type: Type.NUMBER },
-          summary: { type: Type.STRING },
-          sleep_advice: { type: Type.STRING },
-          food_advice: { type: Type.STRING },
-          activity_advice: { type: Type.STRING },
-          key_metrics: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                label: { type: Type.STRING },
-                value: { type: Type.STRING },
-                status: { type: Type.STRING, enum: ['good', 'warning', 'neutral'] }
-              },
-              required: ['label', 'value', 'status']
-            }
-          }
-        },
-        required: ['score', 'summary', 'sleep_advice', 'food_advice', 'activity_advice', 'key_metrics']
-      }
-    }
-  });
-
-  const result = safeParseJSON(response.text);
-  setCache(cacheKey, result);
-  return result;
-};
-
-/**
  * Analyzes athlete's performance over the past 3 months (90 days).
  */
 export const analyzeThreeMonthReview = async (
@@ -1714,67 +1897,4 @@ export const analyzeThreeMonthReview = async (
 
   setCache(cacheKey, parsed);
   return parsed;
-};
-
-
-export interface MonthlyReportData {
-  summary: string;
-  improvements: string[];
-}
-
-export const generateMonthlyInsights = async (
-  activities: Activity[],
-  ftp?: number
-): Promise<MonthlyReportData> => {
-  const cacheKey = `wattson_monthly_report_${activities.length}_${ftp}`;
-  const cached = getCache(cacheKey);
-  if (cached) return cached;
-
-  // Last 30 days activities
-  const now = new Date();
-  const thirtyDaysAgo = new Date(now);
-  thirtyDaysAgo.setDate(now.getDate() - 30);
-  
-  const recentActivities = activities.filter(a => new Date(a.start_date_local) >= thirtyDaysAgo);
-  
-  if (recentActivities.length === 0) {
-    return {
-      summary: "You haven't logged any activities in the last 30 days.",
-      improvements: ["Log some activities to see your progress!"]
-    };
-  }
-
-  const prompt = `Analyze the athlete's last 30 days of training.
-Total activities: ${recentActivities.length}.
-Total hours: ${Math.round(recentActivities.reduce((acc, a) => acc + (a.moving_time || 0), 0) / 3600)}.
-Total load (TSS): ${Math.round(recentActivities.reduce((acc, a) => acc + (a.icu_training_load || a.icu_tss || 0), 0))}.
-Current FTP: ${ftp || 'unknown'}.
-
-Provide a brief, encouraging summary of their month and 2-3 specific improvements or achievements (e.g., consistency, volume, specific high-effort rides).
-Respond in JSON format:
-{
-  "summary": "String summarizing the month.",
-  "improvements": ["Improvement 1", "Improvement 2"]
-}
-`;
-
-  try {
-    const response = await callGemini({
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        temperature: 0.7,
-      }
-    });
-    
-    const result = safeParseJSON(response.text);
-    setCache(cacheKey, result);
-    return result;
-  } catch (err) {
-    console.error("Failed to generate monthly insights", err);
-    return {
-      summary: "You had a solid month of training. Keep up the good work!",
-      improvements: ["Maintained training consistency", "Logged solid weekly hours"]
-    };
-  }
 };

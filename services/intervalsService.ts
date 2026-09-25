@@ -111,7 +111,7 @@ export const fetchAthleteId = async (apiKey: string): Promise<string> => {
   }
 };
 
-export const fetchActivities = async (creds: IntervalsCredentials, daysBack: number = 1095): Promise<Activity[]> => {
+export const fetchActivities = async (creds: IntervalsCredentials, daysBack: number = 3650): Promise<Activity[]> => {
   const { apiKey, athleteId } = creds;
   
   if (apiKey === 'demo') return getMockActivities();
@@ -125,110 +125,131 @@ export const fetchActivities = async (creds: IntervalsCredentials, daysBack: num
   };
 
   const now = new Date();
-  // Buffer by 2 days into the future to catch any "tomorrow" rides due to timezone differences
-  const futureDate = new Date(now);
-  futureDate.setDate(now.getDate() + 2); 
-  
-  const pastDate = new Date(now);
-  pastDate.setDate(now.getDate() - daysBack); 
-  
-  const fields = [
-    'id', 'name', 'type', 'start_date_local', 'moving_time', 'elapsed_time',
-    'distance', 'total_elevation_gain', 'average_watts', 'weighted_average_watts', 
-    'icu_average_watts', 'icu_weighted_average_watts', 'average_heartrate', 'max_heartrate',
-    'average_cadence', 'max_watts', 'icu_training_load', 'icu_intensity', 'source', 
-    'icu_tss', 'icu_joules', 'calories', 'icu_efficiency_factor', 'icu_variability_index',
-    'icu_hr_variability', 'icu_hrr', 'has_heartrate', 'has_power', 'average_temp',
-    'device_name', 'external_id', 'icu_pm_actual_load', 'icu_atl', 'icu_ctl', 'icu_tsb',
-    'analyzed', 'icu_power_hr_z2_ef', 'icu_power_hr_z2', 'icu_power_hr_z2_hr', 'icu_eftp',
-    'icu_intervals', 'icu_groups', 'icu_zone_times', 'icu_hr_zone_times'
-  ].join(',');
+  const currentYear = now.getFullYear();
+  const oldestAllowedYear = currentYear - Math.ceil(daysBack / 365);
 
-  const allActivities: Activity[] = [];
-  let currentNewest = new Date(now);
-  currentNewest.setDate(now.getDate() + 2);
+  const activitiesMap = new Map<string, Activity>();
 
-  const targetOldestDate = new Date(now);
-  targetOldestDate.setDate(now.getDate() - daysBack);
-
-  try {
-    let remaining = true;
+  // Helper to fetch a specific date range with automatic 500-limit sub-division
+  const fetchDateRange = async (oldestStr: string, newestStr: string, depth = 0): Promise<Activity[]> => {
     let rateLimitRetries = 0;
+    while (rateLimitRetries < 3) {
+      try {
+        const url = `/api/v1/athlete/${athleteId}/activities?oldest=${oldestStr}&newest=${newestStr}&limit=2000&_t=${Date.now()}`;
+        const response = await intervalsFetch(url, { method: 'GET', headers });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (!Array.isArray(data)) return [];
 
-    while (remaining) {
-      const chunkOldestDate = new Date(currentNewest);
-      chunkOldestDate.setDate(currentNewest.getDate() - 364); // 1 year chunks
+          // If Intervals.icu returned ~500 items (or exactly 500), it hit the platform default page limit!
+          // Subdivide the range into two halves to capture all missing rides without truncation
+          if (data.length >= 490 && depth < 2) {
+            const startD = new Date(oldestStr + 'T00:00:00');
+            const endD = new Date(newestStr + 'T23:59:59');
+            const midTime = startD.getTime() + (endD.getTime() - startD.getTime()) / 2;
+            const midDate = new Date(midTime);
+            
+            const midStr1 = toLocalDateString(midDate);
+            const midDate2 = new Date(midDate);
+            midDate2.setDate(midDate2.getDate() + 1);
+            const midStr2 = toLocalDateString(midDate2);
 
-      const actualOldestDate = chunkOldestDate < targetOldestDate ? targetOldestDate : chunkOldestDate;
-      const oldestStr = toLocalDateString(actualOldestDate);
-      const newestStr = toLocalDateString(currentNewest);
+            const [part1, part2] = await Promise.all([
+              fetchDateRange(oldestStr, midStr1, depth + 1),
+              fetchDateRange(midStr2, newestStr, depth + 1)
+            ]);
 
-      const activitiesUrl = `/api/v1/athlete/${athleteId}/activities?oldest=${oldestStr}&newest=${newestStr}&cols=${fields}&size=2000&_t=${Date.now()}`;
-      
-      const response = await intervalsFetch(activitiesUrl, {
-        method: 'GET',
-        headers
-      });
-      
-      if (response.ok) {
-        rateLimitRetries = 0;
-        const data = await response.json();
-        if (Array.isArray(data)) {
-          if (data.length === 0) {
-            // No more activities exist further back, stop querying older chunks
-            remaining = false;
-          } else {
-            data.forEach(item => {
-              if (!allActivities.find(existing => existing.id === item.id)) {
-                allActivities.push(item);
-              }
+            const combined = [...part1];
+            const seen = new Set(part1.map(p => p.id));
+            part2.forEach(p => {
+              if (!seen.has(p.id)) combined.push(p);
             });
+            return combined;
           }
+
+          return data;
         }
-      } else {
+
         if (response.status === 401) throw new Error("Authentication failed: Invalid API Key.");
         if (response.status === 404) throw new Error(`Athlete ID ${athleteId} not found.`);
         if (response.status === 429) {
-          console.warn("Intervals.icu rate limit hit. Throttling...");
-          if (rateLimitRetries < 3) {
-            rateLimitRetries++;
-            await new Promise(resolve => setTimeout(resolve, 2000 * rateLimitRetries));
-            continue; // retry current chunk
-          } else {
-            remaining = false; // stop gracefully
-          }
-        } else {
-          remaining = false;
+          rateLimitRetries++;
+          await new Promise(resolve => setTimeout(resolve, 1500 * rateLimitRetries));
+          continue;
         }
-      }
 
-      currentNewest = new Date(actualOldestDate);
-      currentNewest.setDate(currentNewest.getDate() - 1);
-
-      if (actualOldestDate <= targetOldestDate) {
-        remaining = false;
+        console.warn(`[Intervals.icu] HTTP ${response.status} for range ${oldestStr}..${newestStr}`);
+        return [];
+      } catch (err: any) {
+        if (err.message && (err.message.includes('Authentication') || err.message.includes('Athlete ID'))) {
+          throw err;
+        }
+        rateLimitRetries++;
+        if (rateLimitRetries >= 3) {
+          console.warn(`[Intervals.icu] Failed fetching range ${oldestStr}..${newestStr}:`, err);
+          return [];
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000 * rateLimitRetries));
       }
-      
-      // Safe pacing between chunks to prevent burst rate limits
-      if (remaining) await new Promise(resolve => setTimeout(resolve, 150));
     }
+    return [];
+  };
+
+  try {
+    let emptyStreak = 0;
+
+    // Fetch year by year backwards, ensuring 2026, 2025, 2024, 2023, 2022, 2021... are all covered
+    for (let yr = currentYear; yr >= oldestAllowedYear; yr--) {
+      const isCurrent = (yr === currentYear);
+      // For current year, buffer forward 2 days to account for UTC vs local offsets
+      const newestStr = isCurrent 
+        ? toLocalDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2))
+        : `${yr}-12-31`;
+      const oldestStr = `${yr}-01-01`;
+
+      const yearActivities = await fetchDateRange(oldestStr, newestStr);
+
+      if (yearActivities.length === 0) {
+        // Only trigger empty streak for years prior to 2023 to protect recent athlete history
+        if (yr < 2023) {
+          emptyStreak++;
+          if (emptyStreak >= 3) {
+            // 3 consecutive empty years in the distant past -> reached start of athlete career
+            break;
+          }
+        }
+      } else {
+        emptyStreak = 0;
+        yearActivities.forEach(item => {
+          if (item && item.id) {
+            activitiesMap.set(String(item.id), item);
+          }
+        });
+      }
+
+      // Safe pacing between years
+      await new Promise(resolve => setTimeout(resolve, 80));
+    }
+
+    const allActivities = Array.from(activitiesMap.values());
 
     return allActivities
       .filter(item => {
         const dur = item.moving_time || item.elapsed_time || (item as any).time || (item as any).duration || (item as any).icu_recording_time || 0;
         const dist = item.distance || (item as any).icu_distance || 0;
-        // Never display or process 0m / 0s / zero duration placeholder entries
         return dur >= 60 || dist >= 100;
       })
       .sort((a, b) => b.start_date_local.localeCompare(a.start_date_local));
   } catch (error: any) {
     console.error('Activities Fetch Error:', error);
-    if (allActivities.length > 0) return allActivities;
+    const existing = Array.from(activitiesMap.values());
+    if (existing.length > 0) return existing;
     throw error;
   }
 };
 
-export const fetchWellness = async (creds: IntervalsCredentials, daysBack: number = 1095): Promise<Wellness[]> => {
+export const fetchWellness = async (creds: IntervalsCredentials, daysBack: number = 3650): Promise<Wellness[]> => {
   const { apiKey, athleteId } = creds;
   if (apiKey === 'demo') return getMockWellness();
 
@@ -239,77 +260,65 @@ export const fetchWellness = async (creds: IntervalsCredentials, daysBack: numbe
   };
 
   const now = new Date();
+  const currentYear = now.getFullYear();
+  const oldestAllowedYear = currentYear - Math.ceil(daysBack / 365);
   
-  // Wellness API returns 1 year at a time. Fetch in chunks.
-  const allWellness: Wellness[] = [];
-  let currentNewest = new Date(now);
-  currentNewest.setDate(now.getDate() + 2); // Buffer forward
-
-  const startPastDate = new Date(now);
-  startPastDate.setDate(now.getDate() - daysBack);
-  const targetOldestDate = startPastDate;
+  const wellnessMap = new Map<string, Wellness>();
 
   try {
-    let remaining = true;
-    let rateLimitRetries = 0;
+    let emptyStreak = 0;
 
-    while (remaining) {
-      const chunkOldestDate = new Date(currentNewest);
-      chunkOldestDate.setDate(currentNewest.getDate() - 364); // Max 1 year
-
-      // Don't fetch further back than requested
-      const actualOldestDate = chunkOldestDate < targetOldestDate ? targetOldestDate : chunkOldestDate;
+    for (let yr = currentYear; yr >= oldestAllowedYear; yr--) {
+      const isCurrent = (yr === currentYear);
+      const newestStr = isCurrent 
+        ? toLocalDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2))
+        : `${yr}-12-31`;
+      const oldestStr = `${yr}-01-01`;
       
-      const oldestStr = toLocalDateString(actualOldestDate);
-      const newestStr = toLocalDateString(currentNewest);
+      const url = `/api/v1/athlete/${athleteId}/wellness?oldest=${oldestStr}&newest=${newestStr}&_t=${Date.now()}`;
       
-      const url = `/api/v1/athlete/${athleteId}/wellness?oldest=${oldestStr}&newest=${newestStr}`;
-      
-      const response = await intervalsFetch(url, { method: 'GET', headers });
-      if (response.ok) {
-        rateLimitRetries = 0;
-        const data = await response.json();
-        if (Array.isArray(data)) {
-          if (data.length === 0) {
-            remaining = false;
-          } else {
-            // Merge and avoid duplicates if they overlap at the edges
-            data.forEach(item => {
-              if (!allWellness.find(existing => existing.id === item.id || existing.date === item.date)) {
-                allWellness.push(item);
+      let rateLimitRetries = 0;
+      while (rateLimitRetries < 3) {
+        try {
+          const response = await intervalsFetch(url, { method: 'GET', headers });
+          if (response.ok) {
+            const data = await response.json();
+            if (Array.isArray(data)) {
+              if (data.length === 0) {
+                if (yr < 2023) {
+                  emptyStreak++;
+                  if (emptyStreak >= 3) break;
+                }
+              } else {
+                emptyStreak = 0;
+                data.forEach(item => {
+                  if (item && item.date) {
+                    wellnessMap.set(item.date, item);
+                  }
+                });
               }
-            });
+            }
+            break;
+          } else if (response.status === 429) {
+            rateLimitRetries++;
+            await new Promise(resolve => setTimeout(resolve, 1500 * rateLimitRetries));
+            continue;
+          } else {
+            break;
           }
-        }
-      } else if (response.status === 429) {
-        if (rateLimitRetries < 3) {
+        } catch {
           rateLimitRetries++;
-          await new Promise(resolve => setTimeout(resolve, 2000 * rateLimitRetries));
-          continue; // retry chunk
-        } else {
-          remaining = false;
+          await new Promise(resolve => setTimeout(resolve, 1000 * rateLimitRetries));
         }
-      } else {
-        remaining = false;
       }
 
-      // Move the window back
-      currentNewest = new Date(actualOldestDate);
-      currentNewest.setDate(currentNewest.getDate() - 1);
-      
-      if (actualOldestDate <= targetOldestDate) {
-        remaining = false;
-      }
-
-      // Safe pacing between chunks
-      if (remaining) await new Promise(resolve => setTimeout(resolve, 150));
+      await new Promise(resolve => setTimeout(resolve, 80));
     }
     
-    // Sort chronologically
-    return allWellness.sort((a, b) => a.date.localeCompare(b.date));
+    return Array.from(wellnessMap.values()).sort((a, b) => a.date.localeCompare(b.date));
   } catch (error) {
-    console.warn("Wellness Fetch Warning:", error);
-    return allWellness;
+    console.warn("Could not fetch wellness data:", error);
+    return Array.from(wellnessMap.values());
   }
 };
 
@@ -885,22 +894,32 @@ export const fetchPowerCurve = async (creds: IntervalsCredentials, year: number)
   
   const oldest = `${year}-01-01`;
   const newest = `${year}-12-31`;
-  const url = `/api/v1/athlete/${athleteId}/power-curve?oldest=${oldest}&newest=${newest}`;
-  
-  try {
-    const response = await intervalsFetch(url, { method: 'GET', headers });
-    if (!response.ok) return null;
-    return await response.json();
-  } catch (error) {
-    console.warn(`Could not fetch power curve for ${year}:`, error);
-    return null;
+
+  // Try /power-curve first, fallback to /power-curves
+  const endpoints = [
+    `/api/v1/athlete/${athleteId}/power-curve?oldest=${oldest}&newest=${newest}`,
+    `/api/v1/athlete/${athleteId}/power-curves?oldest=${oldest}&newest=${newest}`
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const response = await intervalsFetch(url, { method: 'GET', headers });
+      if (response.ok) {
+        const data = await response.json();
+        if (data) return data;
+      }
+    } catch {
+      // try next
+    }
   }
+
+  return null;
 };
 
 /**
  * Gets annual best efforts for standard intervals.
  */
-export const getAnnualPowerCurves = async (creds: IntervalsCredentials, yearsCount: number = 3): Promise<any[]> => {
+export const getAnnualPowerCurves = async (creds: IntervalsCredentials, yearsCount: number = 6): Promise<any[]> => {
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: yearsCount }, (_, i) => currentYear - i);
   const results = [];
@@ -909,18 +928,18 @@ export const getAnnualPowerCurves = async (creds: IntervalsCredentials, yearsCou
 
   for (const year of years) {
     try {
-      const data = await fetchPowerCurve(creds, year);
+      const rawData = await fetchPowerCurve(creds, year);
+      const data = Array.isArray(rawData) ? rawData[0] : (rawData?.curves ? rawData.curves[0] : rawData);
+
       if (data && data.watts && data.secs) {
         const bests = durations.map(d => {
-          // Find closest duration in returned data
           let idx = data.secs.indexOf(d);
           if (idx === -1) {
-            // Find first index where secs >= d
             idx = data.secs.findIndex((s: number) => s >= d);
           }
           return {
             duration: d,
-            watts: idx !== -1 ? data.watts[idx] : 0
+            watts: idx !== -1 ? Math.round(data.watts[idx]) : 0
           };
         });
         results.push({ year, bests });
@@ -930,8 +949,7 @@ export const getAnnualPowerCurves = async (creds: IntervalsCredentials, yearsCou
     } catch (e) {
       console.warn(`Failed to fetch power curve for ${year}, skipping:`, e);
     }
-    // Small delay between years to prevent hitting rate limits
-    if (creds.apiKey !== 'demo') await new Promise(r => setTimeout(r, 250));
+    if (creds.apiKey !== 'demo') await new Promise(r => setTimeout(r, 120));
   }
   return results;
 };

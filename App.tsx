@@ -132,10 +132,10 @@ const getFriendlyNextRideDay = (targetDate: Date) => {
 };
 
 const CHAT_SUGGESTIONS: string[] = [
+  "What's planned for coming days?",
   "What should I do today?",
-  "Analyze recent load",
-  "Current readiness?",
-  "Goal check",
+  "Review yesterday & past days",
+  "Current readiness & load",
   "Efficiency trend"
 ];
 
@@ -240,6 +240,7 @@ const App: React.FC = () => {
   const [overallTweakInput, setOverallTweakInput] = useState('');
   const [isPlanTweakExpanded, setIsPlanTweakExpanded] = useState(false);
   const [specificRideTweakInput, setSpecificRideTweakInput] = useState('');
+  const [visiblePastCount, setVisiblePastCount] = useState<number>(25);
 
   const [showRequestChangeModal, setShowRequestChangeModal] = useState(false);
   const [showDirectivesSubModal, setShowDirectivesSubModal] = useState(false);
@@ -1205,10 +1206,10 @@ const App: React.FC = () => {
         safeSetItem('wattson_ftp', profile.icu_ftp.toString());
       }
 
-      // 2. Fetch Activities (recent 3 years, with graceful cache fallback)
+      // 2. Fetch Activities (all training history, with graceful cache fallback)
       let fetchedActivities: Activity[] = [];
       try {
-        fetchedActivities = await fetchActivities(activeCreds, 1095);
+        fetchedActivities = await fetchActivities(activeCreds, 3650);
       } catch (e: any) {
         console.warn("Activities sync incomplete or failed, checking cache:", e);
         if (activities && activities.length > 0) {
@@ -1218,19 +1219,19 @@ const App: React.FC = () => {
         }
       }
 
-      // 3. Fetch Wellness (recent 3 years)
+      // 3. Fetch Wellness (all training history up to 10 years)
       let fetchedWellness: Wellness[] = [];
       try {
-        fetchedWellness = await fetchWellness(activeCreds, 1095);
+        fetchedWellness = await fetchWellness(activeCreds, 3650);
       } catch (e: any) {
         console.warn("Wellness fetch failed, using cache:", e);
         fetchedWellness = wellnessData || [];
       }
 
-      // 4. Fetch Power Curves (non-blocking enrichment)
+      // 4. Fetch Power Curves (6-year power curve coverage including 2026, 2025, 2024, 2023, 2022, 2021)
       let curves: any[] = [];
       try {
-        curves = await getAnnualPowerCurves(activeCreds, 3);
+        curves = await getAnnualPowerCurves(activeCreds, 6);
       } catch (e: any) {
         console.warn("Power curve fetch failed, using cache:", e);
         curves = powerCurves || [];
@@ -1637,7 +1638,11 @@ const App: React.FC = () => {
         readiness: suggestion?.readiness_score ?? stats.readiness,
         activities: activities || [],
         wellness: wellnessData || [],
-        powerCurves
+        powerCurves,
+        weeklyBriefing,
+        suggestion,
+        planContext,
+        ftp: ftp || 250
       });
       
       // Look for [UPDATE_PLAN: ...] in the response
@@ -2038,6 +2043,43 @@ const App: React.FC = () => {
       absoluteIndex: sortedUpcoming[0].absoluteIndex ?? 0
     };
   }, [timelineItems, hasRideToday]);
+
+  const chatContextSummary = useMemo(() => {
+    const now = new Date();
+    const todayStr = toLocalDateStr(now);
+    const dayLabel = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+    const todayActuals = (activities || []).filter(a => {
+      if (!a.start_date_local || !a.start_date_local.startsWith(todayStr)) return false;
+      const dur = a.moving_time || a.elapsed_time || (a as any).time || 0;
+      const dist = a.distance || 0;
+      return dur >= 60 || dist >= 100;
+    });
+
+    const todayPlannedItem = ridesSections.sortedTodayItems.find(i => i.type === 'today_suggested')?.dayData;
+    const tomorrowItem = ridesSections.sortedTomorrowItems[0]?.dayData;
+
+    let todayText = "0 rides logged today";
+    if (todayActuals.length > 0) {
+      const totTss = Math.round(todayActuals.reduce((sum, a) => sum + (a.icu_training_load || a.icu_tss || 0), 0));
+      todayText = `✓ ${todayActuals.length} done (${totTss > 0 ? `${totTss} TSS` : `${Math.round(todayActuals.reduce((s, a) => s + (a.moving_time || 0), 0)/60)}m`})`;
+    } else if (todayPlannedItem) {
+      const isRest = todayPlannedItem.intensity === 'Rest' || (todayPlannedItem.focus || '').toLowerCase().includes('rest') || (todayPlannedItem.duration_target || 0) <= 0;
+      todayText = isRest ? 'Planned: Rest Day' : `Planned: ${todayPlannedItem.duration_target}m ${todayPlannedItem.focus}`;
+    }
+
+    let tomorrowText = "";
+    if (tomorrowItem) {
+      const isRest = tomorrowItem.intensity === 'Rest' || (tomorrowItem.focus || '').toLowerCase().includes('rest') || (tomorrowItem.duration_target || 0) <= 0;
+      tomorrowText = isRest ? 'Rest' : `${tomorrowItem.duration_target}m ${tomorrowItem.focus}`;
+    }
+
+    return {
+      dayLabel,
+      todayText,
+      tomorrowText
+    };
+  }, [activities, ridesSections]);
 
 
 
@@ -2460,10 +2502,10 @@ const App: React.FC = () => {
             {/* Integrated Training Plan Section */}
             <div className="flex flex-col space-y-3 relative">
               {/* Planned Upcoming Sessions */}
-              {(ridesSections.sortedFutureItems.length > 0 || ridesSections.sortedTomorrowItems.length > 0 || ridesSections.sortedTodayItems.length > 0 || isPlanUpdating) && (
+              {(ridesSections.sortedFutureItems.length > 0 || ridesSections.sortedTomorrowItems.length > 0 || ridesSections.sortedTodayItems.length > 0 || isPlanUpdating) ? (
                 <div className="flex flex-col space-y-2.5 pt-0.5">
                   {/* Header & Request Change */}
-                  <div className="flex items-center justify-between gap-2 px-1">
+                  <div className="flex flex-wrap items-center justify-center gap-2 px-1">
                     <button
                       onClick={() => setIsOtherFutureExpanded(!isOtherFutureExpanded)}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/[0.02] hover:bg-white/[0.05] border border-white/[0.08] text-slate-300 hover:text-white text-[9.5px] font-semibold uppercase tracking-wider rounded-lg shrink-0 whitespace-nowrap transition-all cursor-pointer active:scale-95"
@@ -2479,23 +2521,29 @@ const App: React.FC = () => {
                       )}
                     </button>
 
-                    <button
-                      onClick={() => {
-                        setShowRequestChangeModal(true);
-                      }}
-                      className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-300 text-[9.5px] font-semibold uppercase tracking-wider transition-all flex items-center gap-1.5 active:scale-95 shrink-0 cursor-pointer"
-                    >
-                      <Sparkles size={10} className="text-emerald-400" />
-                      <span>Plan & Change</span>
-                    </button>
+                    <div className="flex items-center gap-1.5">
+
+
+                      <button
+                        onClick={() => {
+                          setShowRequestChangeModal(true);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-300 text-[9.5px] font-semibold uppercase tracking-wider transition-all flex items-center gap-1.5 active:scale-95 shrink-0 cursor-pointer"
+                      >
+                        <Sparkles size={10} className="text-emerald-400" />
+                        <span>Plan & Change</span>
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-2 pt-0.5">
                     {/* Plan Updating Indicator */}
                     {isPlanUpdating && (
                       <div className="p-3 rounded-2xl border border-emerald-500/20 bg-emerald-950/20 animate-pulse flex items-center gap-3 my-1">
-                        <div className="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
-                          <Loader2 size={13} className="animate-spin text-emerald-400" />
+                        <div className="flex flex-col gap-2 w-full">
+                          <div className="w-full bg-emerald-500/20 h-1.5 rounded-full overflow-hidden">
+                            <div className="bg-emerald-400 h-full w-[70%] animate-pulse rounded-full" />
+                          </div>
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
@@ -2524,14 +2572,10 @@ const App: React.FC = () => {
                       </motion.div>
                     )}
 
-                    {/* Tomorrow Rides */}
+
+
                     {ridesSections.sortedTomorrowItems.length > 0 && (
-                      <div className="flex flex-col space-y-1.5">
-                        <div className="flex items-center justify-between px-1">
-                          <span className="text-[9.5px] font-semibold uppercase tracking-wider text-blue-400">
-                            Tomorrow
-                          </span>
-                        </div>
+                      <div className="space-y-2 pt-0.5">
                         {ridesSections.sortedTomorrowItems.map((item) => (
                           <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} onClick={(day) => setSelectedSuggestedDay(day)} isToday={false} />
                         ))}
@@ -2571,6 +2615,18 @@ const App: React.FC = () => {
                     )}
                   </div>
                 </div>
+              ) : (
+                <div className="p-4 rounded-2xl border border-white/[0.08] bg-white/[0.02] flex flex-col items-center text-center space-y-2.5 my-1">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                    <Sparkles size={16} />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-semibold text-white">No 7-Day Plan Active</h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Generate a fast personalized training plan for the coming 7 days.</p>
+                  </div>
+                
+
+                </div>
               )}
             </div>
             
@@ -2583,11 +2639,13 @@ const App: React.FC = () => {
                       Training History
                     </span>
                     <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider">
-                      {ridesSections.sortedPastItems.filter(i => !i.isRestDay).length} Sessions
+                      {visiblePastCount < ridesSections.sortedPastItems.filter(i => !i.isRestDay).length 
+                        ? `Showing ${Math.min(visiblePastCount, ridesSections.sortedPastItems.filter(i => !i.isRestDay).length)} of ${ridesSections.sortedPastItems.filter(i => !i.isRestDay).length} Sessions`
+                        : `${ridesSections.sortedPastItems.filter(i => !i.isRestDay).length} Sessions`}
                     </span>
                   </div>
 
-                  {ridesSections.sortedPastItems.map((item, idx, arr) => {
+                  {ridesSections.sortedPastItems.slice(0, visiblePastCount).map((item, idx, arr) => {
                     const prevItem = idx > 0 ? arr[idx - 1] : null;
                     let showMonthHeader = false;
                     let monthLabel = '';
@@ -2626,6 +2684,32 @@ const App: React.FC = () => {
                       </React.Fragment>
                     );
                   })}
+
+                  {/* Load More Rides Button */}
+                  {ridesSections.sortedPastItems.length > visiblePastCount && (
+                    <div className="pt-2 pb-6 flex flex-col items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setVisiblePastCount(prev => prev + 25)}
+                        className="w-full py-2.5 px-4 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] active:scale-[0.99] border border-white/[0.08] hover:border-emerald-500/40 text-[11px] font-semibold text-slate-200 hover:text-white transition-all flex items-center justify-center gap-2 shadow-sm group"
+                      >
+                        <ChevronDown size={14} className="text-emerald-400 group-hover:translate-y-0.5 transition-transform" />
+                        <span>Load More Rides (+25)</span>
+                        <span className="text-[10px] text-slate-500 font-mono">
+                          (Showing {Math.min(visiblePastCount, ridesSections.sortedPastItems.length)} of {ridesSections.sortedPastItems.length})
+                        </span>
+                      </button>
+                      {ridesSections.sortedPastItems.length - visiblePastCount > 50 && (
+                        <button
+                          type="button"
+                          onClick={() => setVisiblePastCount(ridesSections.sortedPastItems.length)}
+                          className="text-[10px] text-slate-500 hover:text-emerald-400 transition-colors py-0.5"
+                        >
+                          Load all {ridesSections.sortedPastItems.length} rides
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -2636,6 +2720,23 @@ const App: React.FC = () => {
         <div 
           className={`flex-1 min-h-0 bg-transparent overflow-hidden relative ${activeTab === 'chat' ? 'flex flex-col' : 'hidden'}`}
         >
+             {/* Context Synchronization Header Strip */}
+             <div className="shrink-0 px-3.5 py-2 border-b border-white/[0.06] bg-[#07090e]/80 backdrop-blur-md flex items-center justify-between gap-2 z-10 text-[10px]">
+               <div className="flex items-center gap-2 min-w-0">
+                 <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono font-semibold tracking-wider shrink-0 uppercase text-[9px]">
+                   <Calendar size={10} />
+                   <span>{chatContextSummary.dayLabel}</span>
+                 </div>
+                 <span className="text-slate-300 font-medium truncate">
+                   {chatContextSummary.todayText}
+                 </span>
+               </div>
+               <div className="shrink-0 text-slate-400 flex items-center gap-1.5 font-mono text-[9.5px]">
+                 <span className="text-slate-600 hidden xs:inline">•</span>
+                 <span className="text-slate-400 truncate max-w-[130px] sm:max-w-[200px]">{chatContextSummary.tomorrowText}</span>
+               </div>
+             </div>
+
              <div className="flex-1 min-h-0 overflow-y-auto space-y-3.5 px-4 py-4 custom-scrollbar">
                {messages.length === 0 ? (
                  <div className="h-full flex flex-col items-center justify-center text-center px-6 pb-12 animate-in fade-in duration-300">
