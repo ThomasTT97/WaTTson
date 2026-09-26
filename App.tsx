@@ -31,6 +31,7 @@ import { AerobicEfficiencyDecouplingChart } from './components/AerobicEfficiency
 import { SuggestedWorkoutCard, formatPlannedRideTitle } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
+import { ChatWindow } from './components/ChatWindow';
 import { WorkoutLibrary } from './components/WorkoutLibrary';
 import { 
   PlanAndChangeModal, 
@@ -358,7 +359,6 @@ const App: React.FC = () => {
     }
   }, [generatedWeeks]);
 
-  const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [planContext, setPlanContext] = useState<string | null>(() => {
     const raw = localStorage.getItem('wattson_plan_context');
@@ -1604,7 +1604,6 @@ const App: React.FC = () => {
     return { last7Days, total7DayLoad, total7DayTime, statusLabel, statusColor, statusBg, readiness, recoveryProgress, recoveryLabel, form: Math.round(form), ctl: Math.round(ctl), atl: Math.round(atl) };
   }, [activities]);
 
-  const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const mainScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1617,108 +1616,6 @@ const App: React.FC = () => {
     const timer = setTimeout(scrollToTop, 50);
     return () => clearTimeout(timer);
   }, [activeTab]);
-
-  const handleSendMessage = async (text: string) => {
-    if (!text.trim() || isChatLoading) return;
-    const activeUid = currentUserRef.current?.uid;
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem(getChatClearedKey(activeUid));
-    }
-    setMessages(prev => [...prev, { role: 'user', text }]);
-    setChatInput('');
-    if (chatInputRef.current) {
-      chatInputRef.current.style.height = 'auto';
-    }
-    setIsChatLoading(true);
-    try {
-      const response = await sendChatMessage(messages, text, { 
-        goal: userGoal, 
-        recentLoad: stats.total7DayLoad, 
-        readiness: suggestion?.readiness_score ?? stats.readiness,
-        activities: activities || [],
-        wellness: wellnessData || [],
-        powerCurves,
-        weeklyBriefing,
-        suggestion,
-        planContext,
-        ftp: ftp || 250
-      });
-      
-      // Look for [UPDATE_PLAN: ...] in the response
-      const planUpdateIdx = response.indexOf('[UPDATE_PLAN:');
-      let finalResponseText = response;
-      let hasPlanUpdate = false;
-      let directive = '';
-      if (planUpdateIdx !== -1) {
-        const closingIdx = response.indexOf(']', planUpdateIdx);
-        if (closingIdx !== -1) {
-          directive = response.substring(planUpdateIdx + 13, closingIdx).trim();
-          finalResponseText = response.substring(0, planUpdateIdx).trim() + response.substring(closingIdx + 1).trim();
-          hasPlanUpdate = true;
-        }
-      }
-
-      if (!finalResponseText || finalResponseText.trim() === '' || finalResponseText.toLowerCase().includes('engine response error') || finalResponseText.toLowerCase().includes('comms error')) {
-        finalResponseText = "I'm sorry, I didn't quite catch that. Could you please clarify what you mean?";
-      }
-
-      const rawText = hasPlanUpdate 
-        ? finalResponseText + `\n\n*System: Coach context updated. Your training plan has been updated with: "${directive}".*`
-        : finalResponseText;
-
-      // Add empty model message first
-      setMessages(prev => [...prev, { role: 'model', text: '' }]);
-      
-      let currentIdx = 0;
-      // Dynamically calculate chunk size so the entire text displays briskly within ~250-400ms max
-      const totalLen = rawText.length;
-      const idealTicks = Math.min(20, Math.max(6, Math.floor(totalLen / 30)));
-      const dynamicChunkSize = Math.max(16, Math.ceil(totalLen / idealTicks));
-      const speed = 10; // Rapid and responsive streaming animation
-      
-      const typeNext = () => {
-        if (currentIdx < rawText.length) {
-          const chunkSize = Math.min(dynamicChunkSize, rawText.length - currentIdx);
-          currentIdx += chunkSize;
-          
-          setMessages(prev => {
-            const copy = [...prev];
-            if (copy.length > 0 && copy[copy.length - 1].role === 'model') {
-              copy[copy.length - 1] = {
-                ...copy[copy.length - 1],
-                text: rawText.substring(0, currentIdx)
-              };
-            }
-            return copy;
-          });
-          
-          setTimeout(typeNext, speed);
-        } else {
-          // Finished typing, synchronize context
-          if (hasPlanUpdate && directive) {
-            handleAddTweakFromApp(directive, undefined, false);
-          }
-          setIsChatLoading(false);
-          // Immediate cloud sync of complete conversation
-          if (currentUserRef.current) {
-            setMessages(currentMsgs => {
-              saveUserCloudProfile(currentUserRef.current!.uid, {
-                chatHistoryJson: JSON.stringify(currentMsgs.slice(-50))
-              }).catch(console.error);
-              return currentMsgs;
-            });
-          }
-        }
-      };
-      
-      setTimeout(typeNext, 15);
-
-    } catch (error) {
-      console.error("Chat error:", error);
-      setMessages(prev => [...prev, { role: 'model', text: "I'm sorry, I encountered an issue generating that response. Could you please clarify what you mean?" }]);
-      setIsChatLoading(false);
-    }
-  };
 
   const groupedActivities = useMemo(() => {
     const safeActivities = activities || [];
@@ -2724,181 +2621,31 @@ const App: React.FC = () => {
         <div 
           className={`flex-1 min-h-0 bg-transparent overflow-hidden relative ${activeTab === 'chat' ? 'flex flex-col' : 'hidden'}`}
         >
-             {/* Context Synchronization Header Strip */}
-             <div className="shrink-0 px-3.5 py-2 border-b border-white/[0.06] bg-[#07090e]/80 backdrop-blur-md flex items-center justify-between gap-2 z-10 text-[10px]">
-               <div className="flex items-center gap-2 min-w-0">
-                 <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono font-semibold tracking-wider shrink-0 uppercase text-[9px]">
-                   <Calendar size={10} />
-                   <span>{chatContextSummary.dayLabel}</span>
-                 </div>
-                 <span className="text-slate-300 font-medium truncate">
-                   {chatContextSummary.todayText}
-                 </span>
-               </div>
-               <div className="shrink-0 text-slate-400 flex items-center gap-1.5 font-mono text-[9.5px]">
-                 <span className="text-slate-600 hidden xs:inline">•</span>
-                 <span className="text-slate-400 truncate max-w-[130px] sm:max-w-[200px]">{chatContextSummary.tomorrowText}</span>
-               </div>
-             </div>
-
-             <div className="flex-1 min-h-0 overflow-y-auto space-y-3.5 px-4 py-4 custom-scrollbar">
-               {messages.length === 0 ? (
-                 <div className="h-full flex flex-col items-center justify-center text-center px-6 pb-12 animate-in fade-in duration-300">
-                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-4">
-                       <Bot size={22} className="text-emerald-400" />
-                    </div>
-                    <p className="text-xs font-semibold text-white uppercase tracking-wider mb-1.5">waTTson Coach</p>
-                    <p className="text-[11px] text-slate-400 leading-relaxed mb-5 max-w-[240px]">
-                      Your training assistant is ready. Ask any question or tap a quick focus below:
-                    </p>
-                    <div className="flex flex-wrap gap-2 justify-center max-w-[320px]">
-                       {(CHAT_SUGGESTIONS as string[]).map((suggestionText) => (
-                         <button 
-                           key={suggestionText}
-                           onClick={() => handleSendMessage(suggestionText)}
-                           className="text-[10px] font-medium text-slate-300 bg-[#0b0e14]/80 border border-white/[0.06] hover:border-emerald-500/30 hover:bg-emerald-500/5 hover:text-emerald-300 rounded-xl py-2 px-3.5 active:scale-95 transition-all flex items-center gap-1.5"
-                         >
-                           <Sparkles size={11} className="text-emerald-400" /> {suggestionText}
-                         </button>
-                       ))}
-                    </div>
-                 </div>
-               ) : (
-                <div className="space-y-3.5">
-                  {(messages as ChatMessage[]).map((msg, idx) => {
-                    const isUser = msg.role === 'user';
-                    
-                    // Parse system instructions if appended
-                    const textParts = msg.text.split('*System:');
-                    const mainText = textParts[0].trim();
-                    const systemText = textParts[1] ? textParts[1].replace(/\*/g, '').trim() : '';
-
-                    // If it's a typing model placeholder
-                    const isEmptyModel = !isUser && !mainText;
-
-                    return (
-                      <div 
-                        key={idx} 
-                        className={`flex ${isUser ? 'justify-end' : 'justify-start'} animate-in fade-in duration-150`}
-                      >
-                        
-                        <div className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl ${
-                          isUser 
-                          ? 'bg-white/[0.08] text-white text-[12.5px] rounded-tr-xs' 
-                          : 'bg-white/[0.02] text-slate-200 rounded-tl-sm border border-white/[0.06] text-[12.5px]'
-                        }`}>
-                          <div className="leading-relaxed whitespace-pre-line">
-                            {isEmptyModel ? (
-                              <div className="flex gap-1 items-center py-1">
-                                <div className="w-1.5 h-1.5 bg-slate-400/60 rounded-full animate-bounce [animation-delay:0ms]"></div>
-                                <div className="w-1.5 h-1.5 bg-slate-400/60 rounded-full animate-bounce [animation-delay:150ms]"></div>
-                                <div className="w-1.5 h-1.5 bg-slate-400/60 rounded-full animate-bounce [animation-delay:300ms]"></div>
-                              </div>
-                            ) : (
-                              mainText
-                            )}
-                          </div>
-                          
-                          {systemText && (
-                            <div className="mt-2 pt-1.5 border-t border-white/10 flex items-start gap-1.5 text-[10px] text-slate-300 font-mono tracking-wide leading-relaxed bg-white/[0.02] p-2 rounded-lg border border-white/5">
-                              <Check size={10} className="text-slate-400 mt-0.5 shrink-0" />
-                              <div>
-                                <span className="font-semibold uppercase text-[8px] tracking-wider text-slate-400 block mb-0.5">DIRECTIVE SYNCED</span>
-                                {systemText}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {isChatLoading && messages.length > 0 && messages[messages.length - 1].role === 'user' && (
-                    <div className="flex justify-start animate-in fade-in duration-150">
-                        <div className="bg-white/[0.02] border border-white/[0.06] px-3.5 py-2.5 rounded-2xl rounded-tl-sm flex gap-1.5 items-center">
-                          <div className="w-1.5 h-1.5 bg-slate-400/60 rounded-full animate-bounce"></div>
-                          <div className="w-1.5 h-1.5 bg-slate-400/60 rounded-full animate-bounce [animation-delay:0.2s]"></div>
-                          <div className="w-1.5 h-1.5 bg-slate-400/60 rounded-full animate-bounce [animation-delay:0.4s]"></div>
-                        </div>
-                    </div>
-                  )}
-                  <div ref={chatEndRef} className="h-4" />
-                </div>
-               )}
-             </div>
-
-             <div className={`flex-none px-4 pt-2.5 bg-[#05070a]/95 backdrop-blur-xl border-t border-white/[0.06] z-20 flex flex-col gap-2 transition-all duration-300 ${isKeyboardOpen ? 'pb-3' : 'pb-[88px]'}`}>
-
-               {/* Interactive Confirmation Chips if Coach asked for plan confirmation */}
-               {(() => {
-                 if (isChatLoading || messages.length === 0) return null;
-                 const lastMsg = messages[messages.length - 1];
-                 if (lastMsg.role !== 'model' || !lastMsg.text) return null;
-                 const t = lastMsg.text.toLowerCase();
-                 const isAskingConfirmation = (t.includes('update your training plan') || t.includes('update the training plan') || t.includes('update your plan') || t.includes('like me to update') || t.includes('confirm this change') || t.includes('apply this change') || t.includes('like me to apply')) && t.includes('?');
-                 
-                 if (!isAskingConfirmation) return null;
-
-                 return (
-                   <div className="flex items-center gap-2 pt-1 pb-0.5 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                     <button
-                       onClick={() => handleSendMessage("Yes, please update my training plan with this change.")}
-                       disabled={isChatLoading}
-                       className="flex-1 py-1.5 px-3 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 font-semibold text-[11px] rounded-xl flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-sm"
-                     >
-                       <Check size={12} className="stroke-[3]" />
-                       <span>Yes, update plan</span>
-                     </button>
-                     <button
-                       onClick={() => handleSendMessage("No, keep my current training plan.")}
-                       disabled={isChatLoading}
-                       className="flex-1 py-1.5 px-3 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-300 font-medium text-[11px] rounded-xl flex items-center justify-center gap-1.5 transition-all active:scale-95"
-                     >
-                       <X size={12} />
-                       <span>No, keep current plan</span>
-                     </button>
-                   </div>
-                 );
-               })()}
-
-               {/* Input Field & Send Button */}
-               <div className="flex gap-2 items-center">
-                 <textarea
-                   value={chatInput}
-                   onChange={(e) => setChatInput(e.target.value)}
-                   onKeyDown={(e) => {
-                     if (e.key === 'Enter' && !e.shiftKey) {
-                       e.preventDefault();
-                       if (chatInput.trim() && !isChatLoading) {
-                         handleSendMessage(chatInput);
-                         setChatInput("");
-                       }
-                     }
-                   }}
-                   onFocus={() => {
-                     setIsKeyboardOpen(true);
-                     setTimeout(() => {
-                       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-                     }, 150);
-                   }}
-                   placeholder="Ask waTTson anything..."
-                   rows={1}
-                   className="flex-1 bg-white/[0.03] border border-white/[0.08] focus:border-white/30 rounded-xl px-3.5 py-2 text-[12px] text-white placeholder-slate-500 focus:outline-none font-normal resize-none max-h-24 transition-all"
-                 />
-                 <button 
-                   onClick={() => {
-                     if (chatInput.trim() && !isChatLoading) {
-                       handleSendMessage(chatInput);
-                       setChatInput("");
-                     }
-                   }}
-                   disabled={!chatInput.trim() || isChatLoading}
-                   className="bg-white/10 hover:bg-white/20 disabled:opacity-30 text-white px-3.5 py-2 rounded-xl font-semibold text-[10px] uppercase tracking-wider transition-all shrink-0 active:scale-95 flex items-center justify-center gap-1 h-[36px]"
-                 >
-                   <span>Send</span>
-                   <Send size={11} className="stroke-[2.5]" />
-                 </button>
-               </div>
-             </div>
+          <ChatWindow
+            messages={messages}
+            setMessages={setMessages}
+            isChatLoading={isChatLoading}
+            setIsChatLoading={setIsChatLoading}
+            chatContextSummary={chatContextSummary}
+            userGoal={userGoal}
+            stats={stats}
+            suggestion={suggestion}
+            activities={activities}
+            wellnessData={wellnessData}
+            powerCurves={powerCurves}
+            weeklyBriefing={weeklyBriefing}
+            planContext={planContext}
+            ftp={ftp}
+            currentUser={currentUser}
+            handleAddTweakFromApp={handleAddTweakFromApp}
+            safeSetItem={safeSetItem}
+            syncToCloud={syncToCloud}
+            saveUserCloudProfile={saveUserCloudProfile}
+            getChatStorageKey={getChatStorageKey}
+            getChatClearedKey={getChatClearedKey}
+            isKeyboardOpen={isKeyboardOpen}
+            setIsKeyboardOpen={setIsKeyboardOpen}
+          />
         </div>
 
         {/* Settings Tab */}

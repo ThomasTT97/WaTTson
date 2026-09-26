@@ -172,6 +172,9 @@ export interface IntervalsCredentials {
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
+  id?: string;
+  timestamp?: number;
+  isStreaming?: boolean;
 }
 
 export interface UserProfileAnalysis {

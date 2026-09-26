@@ -1178,7 +1178,9 @@ export const sendChatMessage = async (
     suggestion?: DailySuggestion | null;
     planContext?: string | null;
     ftp?: number;
-  }
+  },
+  onChunk?: (chunk: string) => void,
+  signal?: AbortSignal
 ): Promise<string> => {
   const sortedActivities = [...context.activities].sort((a,b) => b.start_date_local.localeCompare(a.start_date_local));
   const safeWellness = context.wellness || [];
@@ -1760,15 +1762,103 @@ POWER MILESTONES & SPIKES:
     parts: [{ text: message }]
   });
 
-  const response = await callGemini({
+  const geminiPayload = {
     contents,
     config: {
       systemInstruction,
       temperature: 0.7,
     }
-  });
-  return response.text || "I'm sorry, I encountered an issue generating that response. Could you please clarify what you mean?";
+  };
+
+  // If streaming callback provided, attempt real-time SSE streaming
+  if (onChunk) {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-wattson-client': 'app'
+    };
+
+    try {
+      const { auth } = await import('./firebase');
+      if (auth.currentUser) {
+        const token = await auth.currentUser.getIdToken();
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+      }
+    } catch {}
+
+    try {
+      const response = await fetch('/api/gemini/stream', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ params: geminiPayload }),
+        signal
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`Streaming failed (${response.status})`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+      let accumulatedText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith('data:')) continue;
+          const dataStr = trimmed.substring(5).trim();
+          if (dataStr === '[DONE]') {
+            return accumulatedText;
+          }
+          try {
+            const parsed = JSON.parse(dataStr);
+            if (parsed.text) {
+              accumulatedText += parsed.text;
+              onChunk(parsed.text);
+            } else if (parsed.error) {
+              throw new Error(parsed.error);
+            }
+          } catch (e: any) {
+            if (e.message && e.message !== 'Unexpected end of JSON input') {
+              throw e;
+            }
+          }
+        }
+      }
+
+      if (accumulatedText.trim().length > 0) {
+        return accumulatedText;
+      }
+      throw new Error('Empty stream response.');
+    } catch (streamErr: any) {
+      if (signal?.aborted) {
+        throw streamErr;
+      }
+      console.warn('[Gemini Service] Streaming failed, falling back to standard generate:', streamErr?.message || streamErr);
+    }
+  }
+
+  // Standard non-streaming generation (or fallback if stream failed)
+  const response = await callGemini(geminiPayload);
+  const resultText = response.text || "I'm sorry, I encountered an issue generating that response. Could you please clarify what you mean?";
+  if (onChunk) {
+    onChunk(resultText);
+  }
+  return resultText;
 };
+
+/**
+ * Convenient alias to stream coaching chat responses directly.
+ */
+export const streamChatMessage = sendChatMessage;
 
 /**
  * Generates an athlete profile analysis based on their history.

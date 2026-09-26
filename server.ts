@@ -114,6 +114,121 @@ app.post('/api/gemini/generate', aiLimiter, async (req, res) => {
   }
 });
 
+// Server-side Gemini Streaming API endpoint (SSE)
+app.post('/api/gemini/stream', aiLimiter, async (req, res) => {
+  try {
+    const clientHeader = req.headers['x-wattson-client'];
+    const authHeader = req.headers['authorization'];
+    if (!clientHeader && !authHeader) {
+      return res.status(403).json({ error: 'Direct access forbidden. Requests must originate from the waTTson client.' });
+    }
+
+    const { params, options } = req.body || {};
+    if (!params || typeof params !== 'object') {
+      return res.status(400).json({ error: 'Invalid request: "params" object is required.' });
+    }
+
+    const payloadStr = JSON.stringify(params);
+    if (payloadStr.length > 500000) {
+      return res.status(413).json({ error: 'Payload too large. Prompt context exceeds allowable limit.' });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'Server configuration error: GEMINI_API_KEY is not set.' });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
+    });
+
+    const models = options?.preferFlashLite === false
+      ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest']
+      : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+
+    // Setup Server-Sent Events headers
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof (res as any).flushHeaders === 'function') {
+      (res as any).flushHeaders();
+    }
+
+    let isClientConnected = true;
+    req.on('close', () => {
+      isClientConnected = false;
+    });
+
+    let streamStarted = false;
+    let lastError: any = null;
+
+    for (const model of models) {
+      if (!isClientConnected) break;
+      try {
+        const thinkingLevel = model === 'gemini-3.1-flash-lite'
+          ? ThinkingLevel.MINIMAL
+          : (options?.thinkingLevel || ThinkingLevel.LOW);
+
+        const mergedConfig = {
+          ...(params?.config || {}),
+          thinkingConfig: params?.config?.thinkingConfig || { thinkingLevel }
+        };
+
+        const responseStream = await ai.models.generateContentStream({
+          ...(params || {}),
+          model,
+          config: mergedConfig
+        });
+
+        for await (const chunk of responseStream) {
+          if (!isClientConnected) break;
+          streamStarted = true;
+          const text = chunk.text;
+          if (text) {
+            res.write(`data: ${JSON.stringify({ text })}\n\n`);
+          }
+        }
+
+        if (isClientConnected) {
+          res.write('data: [DONE]\n\n');
+          res.end();
+        }
+        return;
+      } catch (err: any) {
+        console.warn(`[Gemini Stream] Model ${model} failed:`, err?.message || err);
+        lastError = err;
+        if (streamStarted) {
+          if (isClientConnected) {
+            res.write(`data: ${JSON.stringify({ error: err?.message || 'Stream interrupted.' })}\n\n`);
+            res.end();
+          }
+          return;
+        }
+        continue;
+      }
+    }
+
+    if (!streamStarted && isClientConnected) {
+      res.write(`data: ${JSON.stringify({ error: lastError?.message || 'All Gemini models failed.' })}\n\n`);
+      res.end();
+    }
+  } catch (error: any) {
+    console.error('[Gemini Stream] Unexpected error:', error);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: error?.message || 'Internal server error' });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: error?.message || 'Internal server error' })}\n\n`);
+      res.end();
+    }
+  }
+});
+
 // Proxy for intervals.icu requests (hardened against SSRF, path traversal & abuse)
 app.use('/api/intervals-proxy', proxyLimiter, async (req, res) => {
   try {
