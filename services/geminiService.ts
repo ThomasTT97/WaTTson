@@ -1,4 +1,26 @@
-import { GoogleGenAI, Type, GenerateContentResponse, ThinkingLevel } from "@google/genai";
+export enum Type {
+  TYPE_UNSPECIFIED = "TYPE_UNSPECIFIED",
+  STRING = "STRING",
+  NUMBER = "NUMBER",
+  INTEGER = "INTEGER",
+  BOOLEAN = "BOOLEAN",
+  ARRAY = "ARRAY",
+  OBJECT = "OBJECT",
+  NULL = "NULL",
+}
+
+export enum ThinkingLevel {
+  THINKING_LEVEL_UNSPECIFIED = "THINKING_LEVEL_UNSPECIFIED",
+  LOW = "LOW",
+  HIGH = "HIGH",
+  MINIMAL = "MINIMAL",
+}
+
+export interface GenerateContentResponse {
+  text?: string;
+  [key: string]: any;
+}
+
 import { 
   Activity, 
   ActivityInterval, 
@@ -11,7 +33,8 @@ import {
   AnnualPowerCurve,
   TrainingMode,
   TrainingMethodology,
-  ThreeMonthReview
+  ThreeMonthReview,
+  formatDuration
 } from "../types";
 import {
   getRideFeedbackPrompt,
@@ -221,48 +244,40 @@ export const sanitizeWorkoutSteps = (steps: any[] | undefined, ftp?: number): an
  * with minimal thinking overhead and proper telemetry User-Agent headers.
  */
 const callGemini = async (params: any, options?: { preferFlashLite?: boolean; thinkingLevel?: ThinkingLevel }): Promise<GenerateContentResponse> => {
-  const ai = new GoogleGenAI({ 
-    apiKey: process.env.GEMINI_API_KEY,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build'
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'x-wattson-client': 'app'
+  };
+
+  try {
+    const { auth } = await import('./firebase');
+    if (auth.currentUser) {
+      const token = await auth.currentUser.getIdToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
       }
     }
+  } catch {}
+
+  const response = await fetch('/api/gemini/generate', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ params, options })
   });
-  
-  // Model priority:
-  // 1. gemini-3.1-flash-lite (Ultra-fast, lowest latency, minimal thinking overhead, immune to flash 503 spikes)
-  // 2. gemini-3.8-flash (High performance model with low thinking level)
-  // 3. gemini-flash-latest (General fast fallback)
-  const models = options?.preferFlashLite === false 
-    ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest']
-    : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
-  
-  let lastError: any = null;
-  for (const model of models) {
+
+  if (!response.ok) {
+    let errorMsg = `Server error (${response.status})`;
     try {
-      const thinkingLevel = model === 'gemini-3.1-flash-lite' 
-        ? ThinkingLevel.MINIMAL 
-        : (options?.thinkingLevel || ThinkingLevel.LOW);
-
-      const mergedConfig = {
-        ...params.config,
-        thinkingConfig: params.config?.thinkingConfig || { thinkingLevel }
-      };
-
-      return await ai.models.generateContent({
-        ...params,
-        model,
-        config: mergedConfig
-      });
-    } catch (error: any) {
-      console.warn(`Gemini model ${model} failed, trying fallback...`, error);
-      lastError = error;
-      // Always try the next model in the fallback chain regardless of error type
-      continue;
-    }
+      const errorJson = await response.json();
+      errorMsg = errorJson.error || errorJson.message || errorMsg;
+    } catch {}
+    throw new Error(errorMsg);
   }
-  throw lastError || new Error("All Gemini models failed.");
+
+  const data = await response.json();
+  return {
+    text: data.text
+  };
 };
 
 /**
@@ -600,7 +615,7 @@ export const getDailySuggestion = async (
           workout_steps: matched.workout_steps.map(step => ({
             duration: step.duration,
             target_watts: Math.round(step.target_pct * (ftp || 250)),
-            label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+            label: `${formatDuration(step.duration)} ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
           }))
         };
       } else if (result.primary.workout_steps) {
@@ -622,7 +637,7 @@ export const getDailySuggestion = async (
           workout_steps: matched.workout_steps.map(step => ({
             duration: step.duration,
             target_watts: Math.round(step.target_pct * (ftp || 250)),
-            label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+            label: `${formatDuration(step.duration)} ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
           }))
         };
       } else if (result.alternative.workout_steps) {
@@ -786,7 +801,7 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
             duration: step.duration,
             target_watts: Math.round(step.target_pct * ftp),
             target_pct: step.target_pct,
-            label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+            label: `${formatDuration(step.duration)} ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
           })),
           why: next.why || 'Balanced aerobic training without overtraining fatigue'
         };
@@ -888,7 +903,7 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
             duration: step.duration,
             target_watts: Math.round(step.target_pct * ftp),
             target_pct: step.target_pct,
-            label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+            label: `${formatDuration(step.duration)} ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
           })),
           why: 'Aerobic base building (swapped redundant back-to-back recovery ride)'
         };
@@ -1752,7 +1767,7 @@ POWER MILESTONES & SPIKES:
       temperature: 0.7,
     }
   });
-  return response.text || "Direct comms error.";
+  return response.text || "I'm sorry, I encountered an issue generating that response. Could you please clarify what you mean?";
 };
 
 /**

@@ -12,7 +12,8 @@ import {
   WeeklyBriefing,
   TrainingMode,
   TrainingMethodology,
-  ThreeMonthReview
+  ThreeMonthReview,
+  formatDuration
 } from './types';
 import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile, getAnnualPowerCurves, uploadWorkout } from './services/intervalsService';
 import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile, analyzeThreeMonthReview, normalizeBriefingDays } from './services/geminiService';
@@ -163,8 +164,6 @@ const App: React.FC = () => {
       const saved = localStorage.getItem('wattson_creds');
       if (saved) return JSON.parse(saved);
     } catch {}
-    const envKey = (process.env.INTERVALS_API_KEY as string) || '';
-    if (envKey && envKey.length > 5) return { apiKey: envKey, athleteId: '0' };
     return null;
   });
 
@@ -1525,7 +1524,7 @@ const App: React.FC = () => {
         workout_steps: workout.workout_steps.map(step => ({
           duration: step.duration,
           target_watts: Math.round(step.target_pct * (ftp || 250)),
-          label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+          label: `${formatDuration(step.duration)} ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
         }))
       },
       alternative: {
@@ -1659,6 +1658,10 @@ const App: React.FC = () => {
         }
       }
 
+      if (!finalResponseText || finalResponseText.trim() === '' || finalResponseText.toLowerCase().includes('engine response error') || finalResponseText.toLowerCase().includes('comms error')) {
+        finalResponseText = "I'm sorry, I didn't quite catch that. Could you please clarify what you mean?";
+      }
+
       const rawText = hasPlanUpdate 
         ? finalResponseText + `\n\n*System: Coach context updated. Your training plan has been updated with: "${directive}".*`
         : finalResponseText;
@@ -1710,8 +1713,9 @@ const App: React.FC = () => {
       
       setTimeout(typeNext, 15);
 
-    } catch {
-      setMessages(prev => [...prev, { role: 'model', text: "Engine response error." }]);
+    } catch (error) {
+      console.error("Chat error:", error);
+      setMessages(prev => [...prev, { role: 'model', text: "I'm sorry, I encountered an issue generating that response. Could you please clarify what you mean?" }]);
       setIsChatLoading(false);
     }
   };
@@ -3481,7 +3485,7 @@ const App: React.FC = () => {
                   />
                   <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3.5 space-y-2">
                     <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1.5">
-                      Intervals
+                      main interval(s)
                     </span>
                     <GroupedWorkoutStepsList 
                       steps={currentWorkout.workout_steps}
@@ -3717,7 +3721,7 @@ const App: React.FC = () => {
                               />
                               <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-3.5 space-y-2">
                                 <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block border-b border-white/5 pb-1.5">
-                                  Intervals
+                                  main interval(s)
                                 </span>
                                 <GroupedWorkoutStepsList 
                                   steps={selectedSuggestedDay.workout_steps}
@@ -3861,7 +3865,7 @@ const App: React.FC = () => {
             <div className="grid grid-cols-2 gap-2 bg-white/[0.02] p-2.5 rounded-xl border border-white/[0.06] text-center">
               <div className="flex items-center justify-center gap-1.5 text-xs text-slate-200 font-mono">
                 <Clock size={13} className="text-slate-400" />
-                <span>{currentWorkout?.duration_minutes} min</span>
+                <span>{formatDuration(currentWorkout?.duration_minutes || 0)}</span>
               </div>
               <div className="flex items-center justify-center gap-1.5 text-xs text-slate-200 font-mono border-l border-white/[0.06]">
                 <Zap size={13} className="text-amber-400" />

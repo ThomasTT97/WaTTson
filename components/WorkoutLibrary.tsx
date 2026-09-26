@@ -4,7 +4,7 @@ import {
   ChevronDown, ChevronRight, X, Activity 
 } from 'lucide-react';
 import { LibraryWorkout, WORKOUT_LIBRARY } from '../services/workoutLibrary';
-import { IntervalsCredentials } from '../types';
+import { IntervalsCredentials, formatDuration } from '../types';
 import { uploadWorkout } from '../services/intervalsService';
 import { 
   isEnduranceWorkout, 
@@ -160,15 +160,8 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
     }
   };
 
-  const formatDisplayDuration = (mins: number, category?: string, title?: string) => {
-    const isEndurance = category === 'Endurance' || (title && title.toLowerCase().includes('endurance'));
-    if (isEndurance) {
-      if (mins % 60 === 0) return `${mins / 60}H`;
-      const h = Math.floor(mins / 60);
-      const m = mins % 60;
-      return h > 0 ? `${h}H${m > 0 ? (m < 10 ? `0${m}` : m) : ''}` : `${m} MIN`;
-    }
-    return `${mins} MIN`;
+  const formatDisplayDuration = (mins: number) => {
+    return formatDuration(mins);
   };
 
   return (
@@ -248,7 +241,7 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
                         </span>
                         <div className="flex items-center gap-2 shrink-0">
                           <span className="text-[9px] text-slate-400 uppercase tracking-wider bg-white/[0.03] px-2 py-0.5 rounded border border-white/5">
-                            {formatDisplayDuration(workout.duration_minutes, workout.category, workout.title)}
+                            {formatDisplayDuration(workout.duration_minutes)}
                           </span>
                           <span className="text-[9px] text-amber-400 font-mono">
                             {workout.tss} TSS
@@ -325,9 +318,7 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
                         <Clock size={10} className="text-slate-400" /> Duration
                       </span>
                       <span className="text-xs font-bold text-white mt-0.5 font-mono">
-                        {selectedWorkout.category === 'Endurance' || selectedWorkout.title.toLowerCase().includes('endurance')
-                          ? formatDisplayDuration(selectedWorkout.duration_minutes, selectedWorkout.category, selectedWorkout.title)
-                          : `${selectedWorkout.duration_minutes} MIN`}
+                        {formatDuration(selectedWorkout.duration_minutes)}
                       </span>
                     </div>
                     <div className="flex flex-col items-center justify-center border-x border-white/[0.06]">
@@ -368,7 +359,7 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
                   />
                   <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-3 space-y-1.5">
                     <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 block border-b border-white/[0.06] pb-1">
-                      Intervals
+                      main interval(s)
                     </span>
                     <GroupedWorkoutStepsList 
                       steps={selectedWorkout.workout_steps}

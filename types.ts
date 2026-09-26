@@ -1,4 +1,11 @@
 
+export const formatDuration = (mins: number) => {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h > 0) return m > 0 ? `${h}h${m}min` : `${h}h`;
+  return `${m}min`;
+};
+
 export type TrainingMode = 'cycling' | 'triathlon' | 'running';
 export type TrainingMethodology = 'polarized' | 'pyramidal' | 'norwegian';
 

@@ -17,125 +17,17 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/logo.png">
     <!-- Updated to user-provided logo.png -->
 
-    <!-- Styles -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Inter', 'system-ui', 'sans-serif'],
-              display: ['Space Grotesk', 'sans-serif'],
-              mono: ['JetBrains Mono', 'monospace'],
-            }
-          }
-        }
-      }
-    </script>
-    <style>
-        :root {
-            --bg-primary: #05070a;
-            --surface: rgba(20, 25, 35, 0.6);
-            --accent: #10b981;
-            --accent-muted: rgba(0, 229, 255, 0.1);
-            --border: rgba(255, 255, 255, 0.05);
-        }
-
-        * {
-            box-sizing: border-box;
-        }
-
-        html, body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background-color: var(--bg-primary);
-            -webkit-text-size-adjust: 100%;
-            overscroll-behavior: none;
-            width: 100%;
-            height: 100dvh;
-        }
-
-        body {
-            font-family: 'Inter', system-ui, -apple-system, sans-serif;
-            color: #f8fafc;
-            -webkit-tap-highlight-color: transparent;
-            letter-spacing: -0.015em;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-        }
-
-        #root {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            height: 100%;
-            background-color: transparent;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-        
-        .premium-bg {
-            position: fixed;
-            inset: 0;
-            z-index: -1;
-            background: 
-                radial-gradient(120% 100% at 50% 0%, rgba(0, 229, 255, 0.03) 0%, transparent 50%),
-                radial-gradient(100% 100% at 50% 100%, rgba(52, 211, 153, 0.03) 0%, transparent 50%),
-                var(--bg-primary);
-            pointer-events: none;
-        }
-
-        .glass-card {
-            background: rgba(14, 17, 23, 0.65);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.45);
-            transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        .text-header {
-            font-family: 'Space Grotesk', sans-serif;
-            font-weight: 700;
-            letter-spacing: -0.04em;
-            color: #fff;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar { width: 0px; }
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-
-        @keyframes subtle-float {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-4px); }
-        }
-
-        .float-animation {
-            animation: subtle-float 4s infinite ease-in-out;
-        }
-    </style>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^19.2.4",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.40.0",
-    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
-    "recharts": "https://esm.sh/recharts@^3.7.0",
-    "vite": "https://esm.sh/vite@^7.3.1",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.3"
-  }
-}
-</script>
+    <!-- Meta description & OpenGraph -->
+    <meta name="description" content="An intelligent cycling coach that syncs with Intervals.icu to analyze your training load, provide feedback on rides, and suggest daily workouts based on your fitness trends.">
+    <meta property="og:title" content="waTTson | Elite Performance Coach">
+    <meta property="og:description" content="An intelligent cycling coach that syncs with Intervals.icu to analyze your training load, provide feedback on rides, and suggest daily workouts based on your fitness trends.">
 </head>
 <body>
     <div id="root"></div>
-    <script type="module" src="index.tsx"></script>
+    <script type="module" src="/index.tsx"></script>
 </body>
 </html>

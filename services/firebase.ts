@@ -21,9 +21,7 @@ import firebaseConfig from '../firebase-applet-config.json';
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 // Using initializeFirestore with experimentalForceLongPolling avoids WebChannel streaming issues in sandboxed iframes and proxy environments
-export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
-}, firebaseConfig.firestoreDatabaseId);
+export const db = initializeFirestore(app, {}, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
@@ -77,7 +75,9 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 // Connection test on boot as mandated by SKILL.md
 export async function testFirestoreConnection() {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    if (auth.currentUser) {
+      await getDocFromServer(doc(db, 'test', 'connection'));
+    }
   } catch (error: any) {
     if (error instanceof Error && (error.message.includes('offline') || error.message.includes('unavailable') || (error as any)?.code === 'unavailable')) {
       console.warn("Firestore operating in offline/delayed sync mode.");

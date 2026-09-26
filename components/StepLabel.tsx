@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { formatDuration } from "../types";
 
 interface StepLabelProps {
   label: string;
@@ -17,8 +18,19 @@ export const sanitizeStepLabel = (label: string): string => {
   cleaned = cleaned.replace(/\b(?:rep|set|interval|lap)\s*#?\d+\b/gi, '');
   cleaned = cleaned.replace(/#\d+/g, '');
 
-  // Convert minutes to short "m"
-  cleaned = cleaned.replace(/(\d+)\s*(?:minutes|minute|mins|min)\b/gi, '$1m');
+  // Convert minutes >= 60 to hours format (e.g. 100m, 100 min -> 1h40min, 120m -> 2h), otherwise short "m"
+  cleaned = cleaned.replace(/\b(\d+)\s*(?:minutes|minute|mins|min|m)\b/gi, (match, minsStr) => {
+    const mins = parseInt(minsStr, 10);
+    if (!isNaN(mins) && mins >= 60) {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return m > 0 ? `${h}h${m}min` : `${h}h`;
+    }
+    return `${mins}m`;
+  });
+
+  // Remove "@" before watts and normalize to "watt" (e.g. "@ 195W" -> "195watt", "@ 195 watt" -> "195watt")
+  cleaned = cleaned.replace(/@\s*(\d+)\s*(?:[wW]|watt)\b/gi, '$1watt');
 
   // Shorten wordy cycling jargon into clean, concise interval labels
   cleaned = cleaned.replace(/\baerobic\s+warmup(?:\s+with\s+openers)?\b/gi, 'Warm-up');
@@ -108,15 +120,18 @@ export const StepLabel: React.FC<StepLabelProps> = ({ label, target_pct, target_
     effectiveWatts = Math.round(target_watts * (currentFtp / effOriginalFtp));
   }
 
-  if (effectiveWatts && effectiveWatts > 0 && !/\b\d+\s*[wW]\b/.test(formattedLabel) && !formattedLabel.includes('+')) {
-    formattedLabel = `${formattedLabel} @ ${effectiveWatts}W`;
+  if (effectiveWatts && effectiveWatts > 0 && !/\b\d+\s*watt\b/i.test(formattedLabel) && !formattedLabel.includes('+')) {
+    formattedLabel = `${formattedLabel} ${effectiveWatts}watt`;
   } else {
-    // Normalize wattage casing to uppercase W
-    formattedLabel = formattedLabel.replace(/\b(\d+)\s*w\b/g, '$1W');
+    // Normalize wattage casing to "watt"
+    formattedLabel = formattedLabel.replace(/\b(\d+)\s*[wW]\b/g, '$1watt');
   }
 
-  // If label has percentage before watts, e.g. "3m Under (95%) @ 285W", rearrange cleanly to "3m Under @ 285W (95%)"
-  formattedLabel = formattedLabel.replace(/\((\d+%)\)\s*@\s*(\d+[wW])/gi, '@ $2 ($1)');
+  // Remove stray '@' so it formats as "1h40min 195watt"
+  formattedLabel = formattedLabel.replace(/@\s*/g, '').trim();
+
+  // If label has percentage before watts, e.g. "3m Under (95%) 285watt", rearrange cleanly to "3m Under 285watt (95%)"
+  formattedLabel = formattedLabel.replace(/\((\d+%)\)\s*(\d+\s*watt)/gi, '$2 ($1)');
 
   // Handle explicit "3x: ..." or "3 times: ..." strings
   const match = formattedLabel.match(/^(\d+)\s*(?:times|x)\s*:\s*(.+)$/i) || 
@@ -442,13 +457,13 @@ export const getMinimalistPrescription = (
         const isOver = /over|surge/i.test(l);
         const isUnder = /under/i.test(l);
         const tag = isOver ? ' (Over)' : isUnder ? ' (Under)' : '';
-        const wattStr = w > 0 ? ` @ ${w}W` : '';
-        bullets.push({ text: `${dur}m${wattStr}${tag}` });
+        const wattStr = w > 0 ? ` ${w}watt` : '';
+        bullets.push({ text: `${formatDuration(dur)}${wattStr}${tag}` });
       });
 
       if (cg.recoveryBetweenSets && cg.recoveryBetweenSets.duration) {
         bullets.push({
-          text: `${cg.recoveryBetweenSets.duration}m rest between sets`,
+          text: `${formatDuration(cg.recoveryBetweenSets.duration)} rest between sets`,
           isRest: true
         });
       }
@@ -464,7 +479,7 @@ export const getMinimalistPrescription = (
       intervalLines.push(`${cg.multiplier} sets × ${cg.innerMultiplier} × (${sub})`);
     });
   } else {
-    // 2. Check for regular repeating groups (e.g. 3 x 15m @ 300W)
+    // 2. Check for regular repeating groups (e.g. 3 x 15m 300watt)
     const regularGroups = grouped.filter(g => g.isGroup && !g.isCompoundGroup && g.steps && g.steps.length > 0);
     if (regularGroups.length > 0) {
       regularGroups.forEach(rg => {
@@ -480,34 +495,34 @@ export const getMinimalistPrescription = (
 
           const dur = workStep.duration || 1;
           const w = getWatts(workStep);
-          const wattStr = w > 0 ? ` @ ${w}W` : '';
+          const wattStr = w > 0 ? ` ${w}watt` : '';
           const l = (workStep.label || '').toLowerCase();
           const tag = /over/i.test(l) ? ' (Over)' : /under/i.test(l) ? ' (Under)' : '';
 
-          bullets.push({ text: `${mult} × ${dur}m${wattStr}${tag}` });
+          bullets.push({ text: `${mult} × ${formatDuration(dur)}${wattStr}${tag}` });
           if (recStep && recStep.duration) {
             bullets.push({
-              text: `${recStep.duration}m rest between intervals`,
+              text: `${formatDuration(recStep.duration)} rest between intervals`,
               isRest: true
             });
           }
 
-          intervalLines.push(`${mult} × ${dur}m${wattStr}`);
+          intervalLines.push(`${mult} × ${formatDuration(dur)}${wattStr}`);
         } else if (rg.steps!.length === 1) {
           const s = rg.steps![0];
           const dur = s.duration || 1;
           const w = getWatts(s);
-          const wattStr = w > 0 ? ` @ ${w}W` : '';
-          bullets.push({ text: `${mult} × ${dur}m${wattStr}` });
-          intervalLines.push(`${mult} × ${dur}m${wattStr}`);
+          const wattStr = w > 0 ? ` ${w}watt` : '';
+          bullets.push({ text: `${mult} × ${formatDuration(dur)}${wattStr}` });
+          intervalLines.push(`${mult} × ${formatDuration(dur)}${wattStr}`);
         } else {
           rg.steps!.forEach(s => {
             const dur = s.duration || 1;
             const w = getWatts(s);
             const isRec = isRecovery(s);
-            const wattStr = w > 0 ? ` @ ${w}W` : '';
+            const wattStr = w > 0 ? ` ${w}watt` : '';
             bullets.push({
-              text: `${mult} × ${dur}m${wattStr}`,
+              text: `${mult} × ${formatDuration(dur)}${wattStr}`,
               isRest: isRec
             });
           });
@@ -528,7 +543,7 @@ export const getMinimalistPrescription = (
       const s = mainWorkSteps[0];
       const dur = s.duration || 1;
       const w = getWatts(s);
-      const text = w > 0 ? `${dur}m @ ${w}W` : `${dur}m`;
+      const text = w > 0 ? `${formatDuration(dur)} ${w}watt` : `${formatDuration(dur)}`;
       bullets.push({ text });
       intervalLines.push(text);
     } else if (mainWorkSteps.length > 1) {
@@ -537,19 +552,19 @@ export const getMinimalistPrescription = (
         nonRecovery.forEach(s => {
           const dur = s.duration || 1;
           const w = getWatts(s);
-          const text = w > 0 ? `${dur}m @ ${w}W` : `${dur}m`;
+          const text = w > 0 ? `${formatDuration(dur)} ${w}watt` : `${formatDuration(dur)}`;
           bullets.push({ text });
           intervalLines.push(text);
         });
       } else {
         const totalDur = mainWorkSteps.reduce((acc, s) => acc + (s.duration || 0), 0);
-        bullets.push({ text: `${totalDur}m Recovery` });
-        intervalLines.push(`${totalDur}m Recovery`);
+        bullets.push({ text: `${formatDuration(totalDur)} Recovery` });
+        intervalLines.push(`${formatDuration(totalDur)} Recovery`);
       }
     } else {
       const totalDur = steps.reduce((acc, s) => acc + (s.duration || 0), 0);
-      bullets.push({ text: `${totalDur}m Ride` });
-      intervalLines.push(`${totalDur}m Ride`);
+      bullets.push({ text: `${formatDuration(totalDur)} Ride` });
+      intervalLines.push(`${formatDuration(totalDur)} Ride`);
     }
 
     groups.push({ bullets });
@@ -557,8 +572,8 @@ export const getMinimalistPrescription = (
 
   // Assemble footnote (Warm-up & Cool-down)
   const footnoteParts: string[] = [];
-  if (warmupMins > 0) footnoteParts.push(`${warmupMins}m warm-up`);
-  if (cooldownMins > 0) footnoteParts.push(`${cooldownMins}m cool-down`);
+  if (warmupMins > 0) footnoteParts.push(`${formatDuration(warmupMins)} warm-up`);
+  if (cooldownMins > 0) footnoteParts.push(`${formatDuration(cooldownMins)} cool-down`);
 
   return {
     groups,
