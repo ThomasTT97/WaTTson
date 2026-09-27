@@ -67,16 +67,16 @@ function diffInCalendarDays(dateStr1: string, dateStr2: string): number {
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const WEEKDAYS_SHORT = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const MONTHS: Record<string, number> = {
-  jan: 0, january: 0,
-  feb: 1, february: 1,
-  mar: 2, march: 2,
+  jan: 0, january: 1, januari: 0,
+  feb: 1, february: 1, februari: 1,
+  mar: 2, march: 2, maart: 2,
   apr: 3, april: 3,
-  may: 4,
-  jun: 5, june: 5,
-  jul: 6, july: 6,
-  aug: 7, august: 7,
+  may: 4, mei: 4,
+  jun: 5, june: 5, juni: 5,
+  jul: 6, july: 6, juli: 6,
+  aug: 7, august: 7, augustus: 7,
   sep: 8, sept: 8, september: 8,
-  oct: 9, october: 9,
+  oct: 9, october: 9, oktober: 9,
   nov: 10, november: 10,
   dec: 11, december: 11
 };
@@ -94,16 +94,24 @@ export function parseScheduleDurationsFromDirective(directiveText: string): Reco
   const dayTokens = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
   dayTokens.forEach(day => {
-    const regex = new RegExp(`\\b${day}:?\\s*([0-9.]+\\s*(?:h|m|hours|mins)?|rest)\\b`, 'i');
-    const match = directiveText.match(regex);
+    // English abbreviations
+    const engRegex = new RegExp(`\\b${day}:?\\s*([0-9.]+\\s*(?:h|m|hours|mins)?|rest)\\b`, 'i');
+    
+    // Dutch abbreviations
+    const dutchAbbr: Record<string, string> = {
+      'mon': 'ma', 'tue': 'di', 'wed': 'wo', 'thu': 'do', 'fri': 'vr', 'sat': 'za', 'sun': 'zo'
+    };
+    const dutchRegex = new RegExp(`\\b${dutchAbbr[day]}:?\\s*([0-9.]+\\s*(?:u|m|uur|min)?|rust)\\b`, 'i');
+
+    const match = directiveText.match(engRegex) || directiveText.match(dutchRegex);
     if (match) {
       const val = match[1].trim().toLowerCase();
-      if (val === 'rest' || val === '0' || val === '0h' || val === '0m') {
+      if (val === 'rest' || val === 'rust' || val === '0' || val === '0h' || val === '0u' || val === '0m') {
         daysMap[day] = { durationMins: 0, isRest: true };
-      } else if (val.endsWith('h') || val.endsWith('hours')) {
+      } else if (val.endsWith('h') || val.endsWith('hours') || val.endsWith('u') || val.endsWith('uur')) {
         const num = parseFloat(val);
         daysMap[day] = { durationMins: Math.round(num * 60), isRest: false };
-      } else if (val.endsWith('m') || val.endsWith('mins')) {
+      } else if (val.endsWith('m') || val.endsWith('mins') || val.endsWith('min')) {
         const num = parseFloat(val);
         daysMap[day] = { durationMins: Math.round(num), isRest: false };
       } else {

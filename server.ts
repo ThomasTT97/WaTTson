@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 
 const app = express();
+app.set('trust proxy', 1); // Trust first proxy (Cloud Run / AI Studio)
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 // Security headers with Helmet (configured for iframe preview and popup OAuth compatibility)

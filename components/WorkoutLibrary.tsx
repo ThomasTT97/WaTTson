@@ -236,9 +236,14 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
                         }}
                         className="w-full px-4 py-2.5 text-left hover:bg-white/[0.03] transition-colors flex items-center justify-between gap-3 cursor-pointer"
                       >
-                        <span className="text-xs text-white font-medium tracking-normal hover:text-slate-200">
-                          {workout.title}
-                        </span>
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <span className="text-xs text-white font-medium tracking-normal hover:text-slate-200 truncate">
+                            {workout.title}
+                          </span>
+                          <span className="text-[7.5px] font-bold uppercase tracking-wider text-slate-500">
+                            {workout.sport}
+                          </span>
+                        </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <span className="text-[9px] text-slate-400 uppercase tracking-wider bg-white/[0.03] px-2 py-0.5 rounded border border-white/5">
                             {formatDisplayDuration(workout.duration_minutes)}

@@ -480,13 +480,14 @@ export const getDailySuggestion = async (
   userGoal?: string, 
   forTomorrow: boolean = false, 
   ftp?: number,
-  methodology?: TrainingMethodology
+  methodology?: TrainingMethodology,
+  trainingMode: TrainingMode = 'cycling'
 ): Promise<DailySuggestion> => {
   const targetDate = new Date();
   if (forTomorrow) targetDate.setDate(targetDate.getDate() + 1);
   
   const targetStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
-  const cacheKey = `wattson_suggestion_${targetStr}_${userGoal || 'default'}_${methodology || 'polarized'}`;
+  const cacheKey = `wattson_suggestion_${targetStr}_${userGoal || 'default'}_${methodology || 'polarized'}_${trainingMode}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
@@ -533,7 +534,8 @@ export const getDailySuggestion = async (
     hasPowerOnMostRides: true,
     hrStatsText: "",
     methodology,
-    yesterdayRestContext
+    yesterdayRestContext,
+    trainingMode
   });
 
   const response = await callGemini({
@@ -710,7 +712,7 @@ export const getDailySuggestion = async (
   return result;
 };
 
-export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: string): WeeklyBriefing => {
+export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: string, trainingMode: TrainingMode = 'cycling'): WeeklyBriefing => {
   if (!briefing || !briefing.days) return briefing;
 
   let ftp = briefing.ftp;
@@ -1058,7 +1060,7 @@ export const getWeeklyBriefing = async (
   
   if (!force) {
     const cached = getCache(cacheKey);
-    if (cached) return normalizeBriefingDays(cached, planContext);
+    if (cached) return normalizeBriefingDays(cached, planContext, trainingMode);
   }
 
   const latestWellness = wellness[wellness.length - 1];
@@ -1243,7 +1245,7 @@ export const getWeeklyBriefing = async (
     }
   });
   const rawResult = safeParseJSON(response.text) as WeeklyBriefing;
-  const result = normalizeBriefingDays(rawResult, planContext);
+  const result = normalizeBriefingDays(rawResult, planContext, trainingMode);
   result.ftp = ftp || 250;
   setCache(cacheKey, result);
   return result;

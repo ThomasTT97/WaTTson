@@ -126,6 +126,18 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
           </div>
         </div>
 
+        {/* Secondary Info Bar */}
+        <div className="flex items-center justify-between px-4 py-1.5 bg-white/[0.01] border border-white/[0.04] rounded-lg mb-4">
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-sky-400/50" />
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">File Recording</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider">Recorded Laps:</span>
+            <span className="text-[10px] font-bold text-sky-400 font-mono">{(intervals || []).length > 0 ? (intervals || []).length : '--'}</span>
+          </div>
+        </div>
+
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-0.5">
           {loading ? (

@@ -32,6 +32,7 @@ interface DailySuggestionParams {
   hrStatsText?: string;
   methodology?: TrainingMethodology;
   yesterdayRestContext?: string;
+  trainingMode?: TrainingMode;
 }
 
 interface WeeklyBriefingParams {
@@ -130,7 +131,7 @@ export const getRideFeedbackPrompt = (p: RideFeedbackParams): string => {
     ${detectedIntervalsCtx}
     
     Return JSON with:
-    summary: A 2-4 sentence coaching summary. Start with a punchy hook. If laps/intervals data or a Recognized Workout Interval Pattern is provided, you MUST explicitly comment on the execution of those intervals (e.g., consistency, power target adherence, physiological benefits). If no laps are provided, deduce the efforts from the overall metrics and discuss them.
+    summary: A 2-4 sentence coaching summary. Start with a punchy hook. If laps/intervals data or a Recognized Workout Interval Pattern is provided, you MUST explicitly comment on the execution of those intervals (e.g., consistency, power target adherence, physiological benefits). If multiple laps (>1) are present, you MUST analyze and discuss the specific efforts done during those laps to determine if they were structured intervals or purposeful surges. If no laps are provided, deduce the efforts from the overall metrics and discuss them.
     goal_contribution: A clear explanation of how this session contributes to ${p.userGoal}.
     one_thing_to_improve: Exactly 1 action-oriented, helpful conclusion of something they could do better on their next training session based on this ride's data (e.g. "Focus on keeping your cadence above 85 rpm on climbs", "Make sure to fuel with 60g carbs per hour for rides over 90 min", "Control your heart rate during recovery intervals to maximize adaptation"). If the user missed targets during the intervals, point it out.
     workout_steps: If a planned workout exists, provide the structured steps intended for this workout. 
@@ -164,11 +165,25 @@ export const getDailySuggestionPrompt = (p: DailySuggestionParams): string => {
     : `${ftpText}
        For the 'label', use a descriptive format: for stable rides e.g. "5 min 180w", for intervals e.g. "3 times: 5 min 300w + 2 min 180w". Always use "min" for minutes consistently!`;
 
+  const sportGuideline = p.trainingMode === 'triathlon'
+    ? `TRIATHLON MODE ENABLED:
+       You MUST generate a mix of Cycling, Running, and Swimming. 
+       1. If the suggested workout is a Run or Swim, set 'target_watts' to 0 in 'workout_steps'.
+       2. The 'title' and 'description' MUST clearly state the sport (e.g., "Endurance Run", "Interval Swim").
+       3. Provide structured 'workout_steps' for the specific sport (reps/distance for swim, pace/time for run).`
+    : p.trainingMode === 'running'
+    ? `RUNNING ONLY MODE ENABLED:
+       Generate ONLY running workouts. No cycling or swimming. 
+       1. Set 'target_watts' to 0 in 'workout_steps'.
+       2. Use running-specific terminology in 'label' (e.g., "5:00/km pace", "intervals").`
+    : `CYCLING ONLY MODE: Default to standard cycling workouts.`;
+
   return `You are waTTson, an elite cycling coach. Suggest a workout for ${p.targetStr}. 
     History (14d log): ${p.history}. 
     Goal: "${p.userGoal}". 
     ${p.yesterdayRestContext ? `Yesterday & Recovery Context: ${p.yesterdayRestContext}` : ''}
     ${methodologyText}
+    ${sportGuideline}
     
     CRITICAL REALISTIC TRAINING & STRUCTURE RULES:
     1. For each workout option (primary and alternative), you MUST provide structured "workout_steps".
@@ -412,22 +427,28 @@ export const getChatMessagePrompt = (p: ChatMessageParams): string => {
     PLAN ADAPTATION & TWO-STEP CONFIRMATION PROTOCOL:
     ========================================================
     CRITICAL RULE: You MUST NEVER update the training plan or append the [UPDATE_PLAN: ...] tag before confirming the change in the chat conversation with the user!
+    
+    SUPPORTED LANGUAGES: 
+    - You MUST support Dutch (Nederlands) natively.
+    - If the user asks in Dutch, you respond in Dutch.
+    - Confirmation words in Dutch: "ja", "ja graag", "bevestig", "doe maar", "akkoord", "sounds good", "zeker".
 
     STEP 1: INITIAL PROPOSAL / TWEAK REQUEST
-    - When the user asks to modify, adjust, or change their training plan (e.g. "add more intensity", "make tomorrow rest", "schedule a commute on Friday", "what if I do hill repeats?", "change today's workout to endurance", "can we do sweet spot tomorrow?"):
+    - When the user asks to modify, adjust, or change their training plan (e.g. "add more intensity", "make tomorrow rest", "zet morgen op rustdag", "plan een commute op vrijdag"):
       - Explain the proposed adjustment clearly and concisely (1-2 sentences) along with why it makes sense for their goal.
-      - Explicitly ask the user to confirm the update in the chat before applying it (e.g. "Would you like me to update your training plan with this change?").
+      - Explicitly ask the user to confirm the update in the chat before applying it (e.g. "Would you like me to update your training plan with this change?" or in Dutch: "Zal ik je trainingsschema aanpassen met deze wijziging?").
       - ABSOLUTELY DO NOT append the [UPDATE_PLAN: ...] tag in this initial proposal message.
     
     STEP 2: EXPLICIT USER CONFIRMATION
-    - ONLY when the user explicitly agrees or confirms the proposed change in their message (e.g. "yes", "confirm", "please update", "apply changes", "yes please", "sure go ahead", "sounds good", "do it", "make the change", etc.):
+    - ONLY when the user explicitly agrees or confirms the proposed change in their message (e.g. "yes", "confirm", "ja", "doe maar", "bevestig"):
       - Acknowledge that the training plan is updated in 1 concise sentence.
       - Append the hidden tag at the very end of your message in the exact format: [UPDATE_PLAN: actual technical directive for the weekly builder].
-      - In the directive, you MUST explicitly state the target day (e.g., "today", "tomorrow", "Friday") and the specific requested action. 
+      - The technical directive inside the tag SHOULD be in English to ensure system parsing reliability.
       - Example: "Plan updated! I have scheduled a 45 min active recovery spin for today. [UPDATE_PLAN: Schedule a 45 min Zone 1 active recovery ride for today]"
+      - Dutch Example: "Schema aangepast! Ik heb een rustdag ingepland voor morgen. [UPDATE_PLAN: Schedule a rest day for tomorrow]"
     
     STEP 3: USER DECLINES OR REQUESTS MODIFICATION
-    - If the user says "no", declines, or asks for a different option, do NOT update the plan. Provide an alternative proposal and ask if they'd like to apply that one instead.`;
+    - If the user says "no", "nee", "niet doen", declines, or asks for a different option, do NOT update the plan. Provide an alternative proposal and ask if they'd like to apply that one instead.`;
 };
 
 export const getUserProfilePrompt = (p: UserProfileParams): string => {

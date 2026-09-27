@@ -714,6 +714,7 @@ const App: React.FC = () => {
   
   const [userGoal, setUserGoal] = useState<string>(() => localStorage.getItem('wattson_goal') || 'Improve cycling performance');
   const [showGoalEditor, setShowGoalEditor] = useState(false);
+  const [methodologyInfo, setMethodologyInfo] = useState<TrainingMethodology | null>(null);
   const [showChangelog, setShowChangelog] = useState(false);
   const [formKey, setFormKey] = useState(creds?.apiKey || '');
   const [formId, setFormId] = useState(creds?.athleteId || '');
@@ -1381,7 +1382,7 @@ const App: React.FC = () => {
       const fetchNewSuggestion = async () => {
         setLoadingSuggestion(true);
         try {
-          const data = await getDailySuggestion(activities!, userGoal, hasRideToday, ftp || undefined, trainingMethodology);
+          const data = await getDailySuggestion(activities!, userGoal, hasRideToday, ftp || undefined, trainingMethodology, trainingMode);
           setSuggestion(data);
           safeSetItem('wattson_daily_cache', JSON.stringify(data));
         } catch (err) {
@@ -2651,7 +2652,7 @@ const App: React.FC = () => {
 
         {/* Chat Tab */}
         <div 
-          className={`flex-1 min-h-0 bg-transparent overflow-hidden relative ${activeTab === 'chat' ? 'flex flex-col' : 'hidden'}`}
+          className={`flex-1 min-h-0 bg-transparent overflow-x-hidden max-w-full relative ${activeTab === 'chat' ? 'flex flex-col' : 'hidden'}`}
         >
           <ChatWindow
             messages={messages}
@@ -3097,7 +3098,18 @@ const App: React.FC = () => {
                                 }`}
                               >
                                 <span className="text-[11px] uppercase tracking-wider">{m.replace("_", " ")}</span>
-                                {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setMethodologyInfo(m as TrainingMethodology);
+                                    }}
+                                    className="p-1 rounded-md text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-colors"
+                                  >
+                                    <Info size={12} />
+                                  </button>
+                                  {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
+                                </div>
                               </button>
                             );
                           })}
@@ -3175,6 +3187,68 @@ const App: React.FC = () => {
         </div>
       </div>
     )}
+    
+    <AnimatePresence>
+      {methodologyInfo && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[230] bg-black/80 backdrop-blur-md flex items-center justify-center p-4" 
+          onClick={() => setMethodologyInfo(null)}
+        >
+          <motion.div 
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            className="bg-[#0c0e15] border border-white/10 w-full max-w-sm rounded-2xl p-6 shadow-2xl flex flex-col gap-4" 
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+                  <Info size={16} className="text-emerald-400" />
+                </div>
+                <h2 className="text-sm font-bold text-white uppercase tracking-wider">{methodologyInfo}</h2>
+              </div>
+              <button 
+                onClick={() => setMethodologyInfo(null)} 
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div className="space-y-3">
+              <p className="text-xs text-slate-300 leading-relaxed font-medium">
+                {methodologyInfo === 'polarized' && "The 80/20 rule. Focuses on 80% low-intensity (Zone 1/2) volume and 20% high-intensity intervals (Zone 5+). It strictly avoids the middle 'gray zone' (Zones 3/4) to maximize physiological adaptations while minimizing metabolic fatigue."}
+                {methodologyInfo === 'pyramidal' && "A distribution where most time is spent in Zone 1/2, a significant amount in Zone 3/4 (Threshold), and the least amount in Zone 5+. This is ideal for base building and preparing for steady-state endurance events like time trials or long climbs."}
+                {methodologyInfo === 'norwegian' && "Characterized by massive volume at low intensity combined with controlled, high-frequency threshold training (often 4x4 or double-threshold sessions). It emphasizes strict intensity control to accumulate maximum threshold volume without crossing the anaerobic limit."}
+              </p>
+              
+              <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.06]">
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Key Characteristic</h4>
+                <div className="flex items-center gap-2">
+                  <Check size={14} className="text-emerald-400 shrink-0" />
+                  <span className="text-[11px] text-slate-200 font-medium">
+                    {methodologyInfo === 'polarized' && "Strict intensity discipline"}
+                    {methodologyInfo === 'pyramidal' && "Balanced threshold progression"}
+                    {methodologyInfo === 'norwegian' && "High-volume threshold accumulation"}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setMethodologyInfo(null)}
+              className="w-full py-3 bg-white text-slate-950 font-bold text-xs uppercase tracking-widest rounded-xl transition-all active:scale-[0.98] cursor-pointer"
+            >
+              Close
+            </button>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
       {showWorkoutDetail && currentWorkout && (
         <div className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => setShowWorkoutDetail(false)}>
           <div className="bg-[#0c0e15] border-t sm:border border-white/10 w-full sm:max-w-md h-[100dvh] sm:h-auto sm:max-h-[88dvh] rounded-none sm:rounded-[2.2rem] p-5 sm:p-6 shadow-[0_-10px_40px_rgba(0,0,0,0.8)] sm:shadow-2xl flex flex-col overflow-hidden relative" onClick={e => e.stopPropagation()}>
