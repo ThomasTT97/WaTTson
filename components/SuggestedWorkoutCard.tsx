@@ -12,7 +12,12 @@ interface SuggestedWorkoutCardProps {
 
 export const formatPlannedRideTitle = (focusStr?: string): string => {
   if (!focusStr) return 'Ride';
-  const cleanedFocus = focusStr.replace(/\s*\(\d+h\d*\)/i, '');
+  // Remove various parenthetical duration/pattern info to keep titles clean: (60m), (1h), (2x15m), (4x intervals), etc.
+  const cleanedFocus = focusStr
+    .replace(/\s*\(\s*\d+(?:\.\d+)?\s*[hms]\s*\)/gi, '')
+    .replace(/\s*\(\s*\d+\s*[x×]\s*\d+\s*[hms]\s*(?:.*)?\)/gi, '')
+    .replace(/\s*\(\s*\d+\s*[x×]\s*intervals\s*(?:.*)?\)/gi, '');
+    
   const trimmed = cleanedFocus.trim();
   const lower = trimmed.toLowerCase();
 

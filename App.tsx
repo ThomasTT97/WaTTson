@@ -484,33 +484,65 @@ const App: React.FC = () => {
 
         if (hadExistingWorkout && existingDay) {
           const oldDur = existingDay.duration_target || 60;
-          const scale = requestedMins / oldDur;
+          
+          // Intelligent scaling: Adjust Easy steps, preserve Work steps
+          const isWorkStep = (s: any) => {
+            const pct = s.target_pct || (s.target_watts && userFtp ? s.target_watts / userFtp : 0);
+            if (pct > 0.75) return true;
+            const label = (s.label || '').toLowerCase();
+            return /interval|rep|set|threshold|vo2|sweet|tempo|under|over/i.test(label) && !/recovery|rest|spin|easy/i.test(label);
+          };
 
-          let scaledSteps = (existingDay.workout_steps && existingDay.workout_steps.length > 0)
-            ? existingDay.workout_steps.map(s => {
-                const scaledDur = Math.max(1, Math.round(s.duration * scale));
+          const fillerSteps = (existingDay.workout_steps || []).filter(s => !isWorkStep(s));
+          const fillerDuration = fillerSteps.reduce((sum, s) => sum + (s.duration || 0), 0);
+          const diff = requestedMins - oldDur;
+
+          let scaledSteps;
+          if (existingDay.workout_steps && existingDay.workout_steps.length > 0) {
+            if (fillerDuration > 0 && (diff > 0 || fillerDuration > Math.abs(diff))) {
+              const fillerScale = (fillerDuration + diff) / fillerDuration;
+              scaledSteps = existingDay.workout_steps.map(step => {
+                if (isWorkStep(step)) return { ...step };
+                const newDur = Math.max(1, Math.round(step.duration * fillerScale));
                 return {
-                  ...s,
-                  duration: scaledDur,
-                  label: s.label ? s.label.replace(/^\d+m\s*/, `${scaledDur}m `) : `${scaledDur}m Workout Step`
+                  ...step,
+                  duration: newDur,
+                  label: step.label ? step.label.replace(/^\d+m\s*/, `${newDur}m `) : `${newDur}m Step`
                 };
-              })
-            : [
+              });
+            } else {
+              const scale = requestedMins / oldDur;
+              scaledSteps = existingDay.workout_steps.map(step => {
+                const newDur = Math.max(1, Math.round(step.duration * scale));
+                return {
+                  ...step,
+                  duration: newDur,
+                  label: step.label ? step.label.replace(/^\d+m\s*/, `${newDur}m `) : `${newDur}m Step`
+                };
+              });
+            }
+          } else {
+            scaledSteps = [
                 { duration: Math.max(5, Math.round(requestedMins * 0.15)), target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${Math.max(5, Math.round(requestedMins * 0.15))}m Warm-up (55% FTP)` },
                 { duration: Math.max(10, Math.round(requestedMins * 0.7)), target_pct: 0.68, target_watts: Math.round(userFtp * 0.68), label: `${Math.max(10, Math.round(requestedMins * 0.7))}m Aerobic Pace (68% FTP)` },
                 { duration: Math.max(5, Math.round(requestedMins * 0.15)), target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${Math.max(5, Math.round(requestedMins * 0.15))}m Cool-down (55% FTP)` }
-              ];
+            ];
+          }
 
           const sumStepDur = scaledSteps.reduce((sum, s) => sum + s.duration, 0);
           if (sumStepDur !== requestedMins && scaledSteps.length > 0) {
-            scaledSteps[scaledSteps.length - 1].duration += (requestedMins - sumStepDur);
+            const lastFillerIdx = [...scaledSteps].reverse().findIndex(s => !isWorkStep(s));
+            const idx = lastFillerIdx !== -1 ? scaledSteps.length - 1 - lastFillerIdx : scaledSteps.length - 1;
+            scaledSteps[idx].duration += (requestedMins - sumStepDur);
+            scaledSteps[idx].label = scaledSteps[idx].label.replace(/^\d+m/, `${scaledSteps[idx].duration}m`);
           }
 
           adaptedDays.push({
             ...existingDay,
             day: dayName,
+            focus: existingDay.focus,
             duration_target: requestedMins,
-            load_target: Math.round((existingDay.load_target || Math.round(oldDur * 0.7)) * scale),
+            load_target: Math.round((existingDay.load_target || Math.round(oldDur * 0.7)) * (requestedMins / oldDur)),
             workout_steps: scaledSteps,
             why: existingDay.why || 'Targeted aerobic development and progression.'
           });

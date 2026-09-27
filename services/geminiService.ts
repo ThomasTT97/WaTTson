@@ -605,17 +605,47 @@ export const getDailySuggestion = async (
     if (result.primary && result.primary.intensity !== 'Rest') {
       const matched = matchWorkoutToLibrary(result.primary.title || result.primary.description || '', result.primary.duration_minutes || 45, result.primary.intensity || 'Medium');
       if (matched) {
+        const matchedDuration = matched.duration_minutes || 60;
+        const targetDuration = result.primary.duration_minutes || matchedDuration;
+
+        // Intelligent scaling: Preserve Work, scale Filler
+        const isWorkStep = (s: any) => {
+          const pct = s.target_pct || 0;
+          if (pct > 0.75) return true;
+          const label = (s.label || '').toLowerCase();
+          return /interval|rep|set|threshold|vo2|sweet|tempo|under|over/i.test(label) && !/recovery|rest|spin|easy/i.test(label);
+        };
+
+        const fillerSteps = matched.workout_steps.filter(s => !isWorkStep(s));
+        const fillerDuration = fillerSteps.reduce((sum, s) => sum + (s.duration || 0), 0);
+        const diff = targetDuration - matchedDuration;
+
+        let scaledSteps;
+        if (fillerDuration > 0 && (diff > 0 || fillerDuration > Math.abs(diff))) {
+          const fillerScale = (fillerDuration + diff) / fillerDuration;
+          scaledSteps = matched.workout_steps.map(step => {
+            if (isWorkStep(step)) return { ...step };
+            return { ...step, duration: Math.max(1, Math.round(step.duration * fillerScale)) };
+          });
+        } else {
+          const scale = targetDuration / matchedDuration;
+          scaledSteps = matched.workout_steps.map(step => ({
+            ...step,
+            duration: Math.max(1, Math.round(step.duration * scale))
+          }));
+        }
+
         result.primary = {
           title: matched.title,
           description: matched.description,
           intensity: matched.intensity,
-          duration_minutes: matched.duration_minutes,
+          duration_minutes: targetDuration,
           type: matched.category.toLowerCase().includes('interval') || matched.workout_steps.length > 3 ? 'intervals' : 'endurance',
-          tss: matched.tss,
-          workout_steps: matched.workout_steps.map(step => ({
+          tss: matched.tss ? Math.round(matched.tss * (targetDuration / matchedDuration)) : result.primary.tss,
+          workout_steps: scaledSteps.map(step => ({
             duration: step.duration,
             target_watts: Math.round(step.target_pct * (ftp || 250)),
-            label: `${formatDuration(step.duration)} ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+            label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
           }))
         };
       } else if (result.primary.workout_steps) {
@@ -627,17 +657,47 @@ export const getDailySuggestion = async (
     if (result.alternative && result.alternative.intensity !== 'Rest') {
       const matched = matchWorkoutToLibrary(result.alternative.title || result.alternative.description || '', result.alternative.duration_minutes || 45, result.alternative.intensity || 'Medium');
       if (matched) {
+        const matchedDuration = matched.duration_minutes || 60;
+        const targetDuration = result.alternative.duration_minutes || matchedDuration;
+
+        // Intelligent scaling: Preserve Work, scale Filler
+        const isWorkStep = (s: any) => {
+          const pct = s.target_pct || 0;
+          if (pct > 0.75) return true;
+          const label = (s.label || '').toLowerCase();
+          return /interval|rep|set|threshold|vo2|sweet|tempo|under|over/i.test(label) && !/recovery|rest|spin|easy/i.test(label);
+        };
+
+        const fillerSteps = matched.workout_steps.filter(s => !isWorkStep(s));
+        const fillerDuration = fillerSteps.reduce((sum, s) => sum + (s.duration || 0), 0);
+        const diff = targetDuration - matchedDuration;
+
+        let scaledSteps;
+        if (fillerDuration > 0 && (diff > 0 || fillerDuration > Math.abs(diff))) {
+          const fillerScale = (fillerDuration + diff) / fillerDuration;
+          scaledSteps = matched.workout_steps.map(step => {
+            if (isWorkStep(step)) return { ...step };
+            return { ...step, duration: Math.max(1, Math.round(step.duration * fillerScale)) };
+          });
+        } else {
+          const scale = targetDuration / matchedDuration;
+          scaledSteps = matched.workout_steps.map(step => ({
+            ...step,
+            duration: Math.max(1, Math.round(step.duration * scale))
+          }));
+        }
+
         result.alternative = {
           title: matched.title,
           description: matched.description,
           intensity: matched.intensity,
-          duration_minutes: matched.duration_minutes,
+          duration_minutes: targetDuration,
           type: matched.category.toLowerCase().includes('interval') || matched.workout_steps.length > 3 ? 'intervals' : 'endurance',
-          tss: matched.tss,
-          workout_steps: matched.workout_steps.map(step => ({
+          tss: matched.tss ? Math.round(matched.tss * (targetDuration / matchedDuration)) : result.alternative.tss,
+          workout_steps: scaledSteps.map(step => ({
             duration: step.duration,
             target_watts: Math.round(step.target_pct * (ftp || 250)),
-            label: `${formatDuration(step.duration)} ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+            label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
           }))
         };
       } else if (result.alternative.workout_steps) {
@@ -724,30 +784,58 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
       const matched = matchWorkoutToLibrary(currentDay.focus || '', targetDuration, currentDay.intensity || 'Medium');
       if (matched) {
         const matchedDuration = matched.duration_minutes || 60;
-        const scaleFactor = targetDuration / matchedDuration;
+        
+        // Intelligent scaling: Adjust Easy steps, preserve Work steps
+        const isWorkStep = (s: any) => {
+          const pct = s.target_pct || 0;
+          if (pct > 0.75) return true;
+          const label = (s.label || '').toLowerCase();
+          return /interval|rep|set|threshold|vo2|sweet|tempo|under|over/i.test(label) && !/recovery|rest|spin|easy/i.test(label);
+        };
 
-        const scaledSteps = matched.workout_steps.map(step => {
-          const scaledDur = Math.max(1, Math.round(step.duration * scaleFactor));
-          return {
-            duration: scaledDur,
-            target_watts: Math.round(step.target_pct * ftp),
-            target_pct: step.target_pct,
-            label: `${scaledDur}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
-          };
-        });
+        const fillerSteps = matched.workout_steps.filter(s => !isWorkStep(s));
+        const fillerDuration = fillerSteps.reduce((sum, s) => sum + (s.duration || 0), 0);
+        const diff = targetDuration - matchedDuration;
 
-        // Ensure sum of step durations exactly matches targetDuration
-        const totalStepDur = scaledSteps.reduce((sum, s) => sum + s.duration, 0);
-        if (totalStepDur !== targetDuration && scaledSteps.length > 0) {
-          scaledSteps[scaledSteps.length - 1].duration += (targetDuration - totalStepDur);
+        let scaledSteps;
+        if (fillerDuration > 0 && (diff > 0 || fillerDuration > Math.abs(diff))) {
+          const fillerScale = (fillerDuration + diff) / fillerDuration;
+          scaledSteps = matched.workout_steps.map(step => {
+            if (isWorkStep(step)) return { ...step };
+            return { ...step, duration: Math.max(1, Math.round(step.duration * fillerScale)) };
+          });
+        } else {
+          // Fallback to simple scaling if no filler or reduction too large
+          const scale = targetDuration / matchedDuration;
+          scaledSteps = matched.workout_steps.map(step => ({
+            ...step,
+            duration: Math.max(1, Math.round(step.duration * scale))
+          }));
+        }
+
+        // Final label and watts mapping
+        const finalSteps = scaledSteps.map(step => ({
+          duration: step.duration,
+          target_watts: Math.round(step.target_pct * ftp),
+          target_pct: step.target_pct,
+          label: `${step.duration}m ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+        }));
+
+        // Ensure sum matches targetDuration
+        const totalStepDur = finalSteps.reduce((sum, s) => sum + s.duration, 0);
+        if (totalStepDur !== targetDuration && finalSteps.length > 0) {
+          const lastFillerIdx = [...finalSteps].reverse().findIndex(s => (s.target_pct || 0) <= 0.75);
+          const idx = lastFillerIdx !== -1 ? finalSteps.length - 1 - lastFillerIdx : finalSteps.length - 1;
+          finalSteps[idx].duration += (targetDuration - totalStepDur);
+          finalSteps[idx].label = finalSteps[idx].label.replace(/^\d+m/, `${finalSteps[idx].duration}m`);
         }
 
         return {
           ...currentDay,
           focus: matched.title,
-          workout_steps: scaledSteps,
+          workout_steps: finalSteps,
           duration_target: targetDuration,
-          load_target: matched.tss ? Math.round(matched.tss * scaleFactor) : currentDay.load_target,
+          load_target: matched.tss ? Math.round(matched.tss * (targetDuration / matchedDuration)) : currentDay.load_target,
           why: `${matched.category} focus: ${matched.description}`
         };
       }

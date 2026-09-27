@@ -4,6 +4,7 @@ import { formatDuration } from "../types";
 
 interface StepLabelProps {
   label: string;
+  duration?: number;
   target_pct?: number;
   target_watts?: number;
   currentFtp?: number;
@@ -104,10 +105,15 @@ export const scaleLabelWatts = (label: string, currentFtp?: number, originalFtp?
   });
 };
 
-export const StepLabel: React.FC<StepLabelProps> = ({ label, target_pct, target_watts, currentFtp, originalFtp }) => {
+export const StepLabel: React.FC<StepLabelProps> = ({ label, duration, target_pct, target_watts, currentFtp, originalFtp }) => {
   const effOriginalFtp = originalFtp || (target_pct && target_pct > 0 && target_watts ? Math.round(target_watts / target_pct) : 250);
   
-  let formattedLabel = formatLabel(label);
+  // Ensure duration is present in the label if provided and not already there
+  const inputLabel = (duration && duration > 0 && !/\b\d+\s*(?:m|h|min|minute)\b/i.test(label))
+    ? `${duration}m ${label}`
+    : label;
+
+  let formattedLabel = formatLabel(inputLabel);
   
   if (currentFtp && effOriginalFtp && currentFtp !== effOriginalFtp) {
     formattedLabel = scaleLabelWatts(formattedLabel, currentFtp, effOriginalFtp);
@@ -732,6 +738,7 @@ export const GroupedWorkoutStepsList: React.FC<GroupedWorkoutStepsListProps> = (
                               <div className={`w-1.5 h-1.5 rounded-full ${intensity.dot} shrink-0`} />
                               <StepLabel 
                                 label={step.label}
+                                duration={step.duration}
                                 target_pct={step.target_pct}
                                 target_watts={step.target_watts}
                                 currentFtp={currentFtp}
@@ -757,6 +764,7 @@ export const GroupedWorkoutStepsList: React.FC<GroupedWorkoutStepsListProps> = (
                               <div className={`w-1.5 h-1.5 rounded-full ${intensity.dot} shrink-0`} />
                               <StepLabel 
                                 label={step.label}
+                                duration={step.duration}
                                 target_pct={step.target_pct}
                                 target_watts={step.target_watts}
                                 currentFtp={currentFtp}
@@ -777,6 +785,7 @@ export const GroupedWorkoutStepsList: React.FC<GroupedWorkoutStepsListProps> = (
                       <div className={`w-1.5 h-1.5 rounded-full ${intensity.dot} shrink-0`} />
                       <StepLabel 
                         label={step.label}
+                        duration={step.duration}
                         target_pct={step.target_pct}
                         target_watts={step.target_watts}
                         currentFtp={currentFtp}

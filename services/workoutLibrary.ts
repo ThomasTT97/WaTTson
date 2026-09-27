@@ -185,6 +185,40 @@ export const WORKOUT_LIBRARY: LibraryWorkout[] = [
       { duration: 8, target_pct: 0.50, label: 'Spinning cooldown' }
     ]
   },
+  {
+    id: 'sweet_spot_long_2h',
+    title: 'Sweet Spot Endurance (2h)',
+    description: 'A long endurance block featuring two sustained 25-minute Sweet Spot efforts. Designed for riders building massive aerobic durability and event-specific muscular stamina.',
+    category: 'Tempo/Sweet Spot',
+    intensity: 'Medium',
+    duration_minutes: 120,
+    tss: 105,
+    workout_steps: [
+      { duration: 20, target_pct: 0.60, label: 'Gradual progressive warmup' },
+      { duration: 25, target_pct: 0.88, label: 'Sweet Spot Block 1 @ 88% FTP' },
+      { duration: 10, target_pct: 0.55, label: 'Active recovery spin' },
+      { duration: 25, target_pct: 0.88, label: 'Sweet Spot Block 2 @ 88% FTP' },
+      { duration: 40, target_pct: 0.62, label: 'Zone 2 endurance finish' }
+    ]
+  },
+  {
+    id: 'threshold_sustained_90',
+    title: 'Threshold Foundation (1h30)',
+    description: 'Three 15-minute Threshold intervals at 96% FTP. A rigorous session designed to lift your functional threshold power and improve your ability to sustain high-intensity efforts.',
+    category: 'Threshold',
+    intensity: 'Hard',
+    duration_minutes: 90,
+    tss: 85,
+    workout_steps: [
+      { duration: 15, target_pct: 0.60, label: 'Thorough warm-up with ramp' },
+      { duration: 15, target_pct: 0.96, label: 'Threshold Interval 1 @ 96% FTP' },
+      { duration: 5, target_pct: 0.55, label: 'Active recovery' },
+      { duration: 15, target_pct: 0.96, label: 'Threshold Interval 2 @ 96% FTP' },
+      { duration: 5, target_pct: 0.55, label: 'Active recovery' },
+      { duration: 15, target_pct: 0.96, label: 'Threshold Interval 3 @ 96% FTP' },
+      { duration: 20, target_pct: 0.52, label: 'Easy spinning cooldown' }
+    ]
+  },
 
   // --- THRESHOLD ---
   {
@@ -448,9 +482,18 @@ export const matchWorkoutToLibrary = (focus: string, duration: number, intensity
   }
 
   // Select the candidate with the closest duration
-  return candidates.reduce((best, cur) => {
+  const bestMatch = candidates.reduce((best, cur) => {
     const bestDiff = Math.abs(best.duration_minutes - effectiveDuration);
     const curDiff = Math.abs(cur.duration_minutes - effectiveDuration);
     return curDiff < bestDiff ? cur : best;
   }, candidates[0]);
+
+  // If the duration difference is too large (e.g. > 25%), avoid forcing a library match 
+  // to prevent unrealistic scaling of core interval structures.
+  const durationDiffPct = Math.abs(bestMatch.duration_minutes - effectiveDuration) / (bestMatch.duration_minutes || 60);
+  if (durationDiffPct > 0.25) {
+    return null;
+  }
+
+  return bestMatch;
 };
