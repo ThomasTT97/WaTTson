@@ -63,6 +63,7 @@ interface ChatWindowProps {
   getChatClearedKey: (uid?: string | null) => string;
   isKeyboardOpen: boolean;
   setIsKeyboardOpen: (open: boolean) => void;
+  isActive?: boolean;
 }
 
 const QUICK_TOPICS = [
@@ -96,7 +97,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
     getChatStorageKey,
     getChatClearedKey,
     isKeyboardOpen,
-    setIsKeyboardOpen
+    setIsKeyboardOpen,
+    isActive = false
   } = props;
 
   const [chatInput, setChatInput] = useState('');
@@ -118,6 +120,11 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
   const onTypingCompleteRef = useRef<(() => void) | null>(null);
 
   const scrollToBottom = useCallback((smooth = true) => {
+    if (scrollContainerRef.current) {
+      if (!smooth) {
+        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+      }
+    }
     if (chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
     }
@@ -198,9 +205,46 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
     };
   }, []);
 
-  // Ensure scroll to bottom on mount and message updates
+  // Automatically scroll down to latest message when switching to the chat tab
   useEffect(() => {
-    // Small delay to ensure DOM is ready
+    if (isActive) {
+      const scrollDown = (smooth = false) => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+        }
+        if (chatEndRef.current) {
+          chatEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
+        }
+      };
+
+      // Immediate scroll attempt
+      scrollDown(false);
+
+      // Next paint frame when tab visibility applies
+      const raf = requestAnimationFrame(() => {
+        scrollDown(false);
+      });
+
+      // Quick timeout after layout calculation
+      const timer1 = setTimeout(() => {
+        scrollDown(false);
+      }, 50);
+
+      // Smooth settling timeout
+      const timer2 = setTimeout(() => {
+        scrollDown(true);
+      }, 150);
+
+      return () => {
+        cancelAnimationFrame(raf);
+        clearTimeout(timer1);
+        clearTimeout(timer2);
+      };
+    }
+  }, [isActive]);
+
+  // Ensure scroll to bottom on mount
+  useEffect(() => {
     const timer = setTimeout(() => {
       scrollToBottom(false);
     }, 100);
@@ -209,8 +253,10 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
 
   // Also scroll when messages change length (new message added)
   useEffect(() => {
-    scrollToBottom(true);
-  }, [messages.length, scrollToBottom]);
+    if (isActive) {
+      scrollToBottom(true);
+    }
+  }, [messages.length, scrollToBottom, isActive]);
 
   const handleStopGenerating = () => {
     if (abortControllerRef.current) {

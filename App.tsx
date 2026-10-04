@@ -806,7 +806,6 @@ const App: React.FC = () => {
   };
 
   const [showSuggestionDetail, setShowSuggestionDetail] = useState(false);
-  const chatEndRef = useRef<HTMLDivElement>(null);
   const todayElementRef = useRef<HTMLDivElement>(null);
   const todayAndPastContainerRef = useRef<HTMLDivElement>(null);
   const [hidePlanHeader, setHidePlanHeader] = useState(false);
@@ -2117,13 +2116,6 @@ const App: React.FC = () => {
   }, [activities, ridesSections]);
 
 
-
-  useEffect(() => {
-    if (activeTab === 'chat' && chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [messages, isChatLoading, activeTab, isKeyboardOpen]);
-
   const currentWorkout = suggestion ? (showAlternative ? suggestion.alternative : suggestion.primary) : null;
 
   if (loading && (!activities || activities.length === 0)) return (
@@ -2380,7 +2372,64 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Section 2: Next Up */}
+            {/* Section 2: Performance Metrics */}
+            <div className="space-y-1.5 pt-0.5">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">
+                  Performance Metrics
+                </span>
+              </div>
+
+              {/* Unified 5-Metric Strip */}
+              <div className="p-3 rounded-2xl border border-white/[0.06] bg-white/[0.02]">
+                <div className="grid grid-cols-5 gap-1 divide-x divide-white/[0.06]">
+                  <div className="flex flex-col items-center justify-center text-center px-1">
+                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">Fitness</span>
+                    <span className="text-sm font-semibold text-cyan-400 font-mono mt-0.5">{stats.ctl}</span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center text-center px-1">
+                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">Fatigue</span>
+                    <span className="text-sm font-semibold text-amber-400 font-mono mt-0.5">{stats.atl}</span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center text-center px-1">
+                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">Form</span>
+                    <span className={`text-sm font-semibold font-mono mt-0.5 ${stats.form >= 5 ? 'text-emerald-400' : stats.form < -25 ? 'text-rose-400' : stats.form < -10 ? 'text-amber-400' : 'text-slate-200'}`}>
+                      {stats.form > 0 ? `+${stats.form}` : stats.form}
+                    </span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center text-center px-1">
+                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">7D Time</span>
+                    <span className="text-sm font-semibold text-slate-100 font-mono mt-0.5">{stats.total7DayTime}h</span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center text-center px-1">
+                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">7D Load</span>
+                    <span className="text-sm font-semibold text-emerald-400 font-mono mt-0.5">{stats.total7DayLoad}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Section: Insights */}
+            <div className="space-y-1.5 pt-0.5">
+              <div 
+                onClick={() => setShowInsights(true)}
+                className="px-3.5 py-2.5 rounded-2xl border border-white/[0.06] flex items-center justify-between gap-3 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.05] cursor-pointer transition-all active:scale-[0.99]"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-6 h-6 rounded-lg bg-white/[0.03] border border-white/[0.08] flex items-center justify-center text-slate-300 shrink-0">
+                    <TrendingUp size={12} />
+                  </div>
+                  <div>
+                    <h2 className="text-xs font-semibold text-slate-200 tracking-tight">
+                      Insights
+                    </h2>
+                  </div>
+                </div>
+                <ChevronRight size={13} className="text-slate-600 shrink-0" />
+              </div>
+            </div>
+
+            {/* Section 3: Next Workout */}
             <div className="space-y-1.5 pt-0.5">
               <div className="flex items-center justify-between px-1">
                 <span className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">
@@ -2452,63 +2501,6 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Section 3: Performance Metrics */}
-            <div className="space-y-1.5 pt-0.5">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">
-                  Performance Metrics
-                </span>
-              </div>
-
-              {/* Unified 5-Metric Strip */}
-              <div className="p-3 rounded-2xl border border-white/[0.06] bg-white/[0.02]">
-                <div className="grid grid-cols-5 gap-1 divide-x divide-white/[0.06]">
-                  <div className="flex flex-col items-center justify-center text-center px-1">
-                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">Fitness</span>
-                    <span className="text-sm font-semibold text-cyan-400 font-mono mt-0.5">{stats.ctl}</span>
-                  </div>
-                  <div className="flex flex-col items-center justify-center text-center px-1">
-                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">Fatigue</span>
-                    <span className="text-sm font-semibold text-amber-400 font-mono mt-0.5">{stats.atl}</span>
-                  </div>
-                  <div className="flex flex-col items-center justify-center text-center px-1">
-                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">Form</span>
-                    <span className={`text-sm font-semibold font-mono mt-0.5 ${stats.form >= 5 ? 'text-emerald-400' : stats.form < -25 ? 'text-rose-400' : stats.form < -10 ? 'text-amber-400' : 'text-slate-200'}`}>
-                      {stats.form > 0 ? `+${stats.form}` : stats.form}
-                    </span>
-                  </div>
-                  <div className="flex flex-col items-center justify-center text-center px-1">
-                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">7D Time</span>
-                    <span className="text-sm font-semibold text-slate-100 font-mono mt-0.5">{stats.total7DayTime}h</span>
-                  </div>
-                  <div className="flex flex-col items-center justify-center text-center px-1">
-                    <span className="text-[8px] font-medium uppercase text-slate-400 tracking-wider">7D Load</span>
-                    <span className="text-sm font-semibold text-emerald-400 font-mono mt-0.5">{stats.total7DayLoad}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Section: Insights */}
-            <div className="space-y-1.5 pt-0.5">
-              <div 
-                onClick={() => setShowInsights(true)}
-                className="px-3.5 py-2.5 rounded-2xl border border-white/[0.06] flex items-center justify-between gap-3 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.05] cursor-pointer transition-all active:scale-[0.99]"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-6 h-6 rounded-lg bg-white/[0.03] border border-white/[0.08] flex items-center justify-center text-slate-300 shrink-0">
-                    <TrendingUp size={12} />
-                  </div>
-                  <div>
-                    <h2 className="text-xs font-semibold text-slate-200 tracking-tight">
-                      Insights
-                    </h2>
-                  </div>
-                </div>
-                <ChevronRight size={13} className="text-slate-600 shrink-0" />
-              </div>
-            </div>
-
             {/* Section 4: Latest Ride */}
             {lastActivity && (
               <div className="space-y-1.5 pt-0.5">
@@ -2522,6 +2514,7 @@ const App: React.FC = () => {
                   activity={lastActivity}
                   onClick={(act) => setSelectedActivity(act)}
                   isToday={new Date(lastActivity.start_date_local).toDateString() === new Date().toDateString()}
+                  highlightGreen={true}
                 />
               </div>
             )}
@@ -2779,6 +2772,7 @@ const App: React.FC = () => {
             getChatClearedKey={getChatClearedKey}
             isKeyboardOpen={isKeyboardOpen}
             setIsKeyboardOpen={setIsKeyboardOpen}
+            isActive={activeTab === 'chat'}
           />
         </div>
 
@@ -2807,7 +2801,7 @@ const App: React.FC = () => {
 
               <div className="flex flex-col pb-1 px-1">
                 {settingsView === "main" && (
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-3.5">
                     {/* Firebase Cloud Sync & User Profile */}
                     <FirebaseAuthCard 
                       currentUser={currentUser} 
@@ -2816,89 +2810,164 @@ const App: React.FC = () => {
                       compact={true}
                     />
 
-                    <div className="pt-1 px-1">
-                      <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-widest">Configuration</span>
+                    {/* Section 1: Performance Benchmarks */}
+                    <div className="space-y-1.5">
+                      <div className="px-1 flex items-center justify-between">
+                        <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider">
+                          Performance Benchmarks
+                        </span>
+                      </div>
+
+                      <div className="bg-white/[0.02] border border-white/[0.07] rounded-2xl overflow-hidden divide-y divide-white/[0.04] shadow-sm">
+                        {/* Rider Profile */}
+                        <button 
+                          onClick={() => setSettingsView("rider_profile")}
+                          className="w-full p-3.5 flex items-center justify-between group hover:bg-white/[0.03] transition-colors text-left cursor-pointer active:bg-white/[0.05]"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
+                              <User size={16} />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-white tracking-tight">Rider Profile</p>
+                              <p className="text-[10.5px] text-slate-400 font-medium truncate">Comprehensive Assessment & Phenotype</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 ml-3">
+                            <span className="text-[9.5px] font-semibold text-violet-300/90 px-2 py-0.5 rounded-md bg-violet-500/10 border border-violet-500/20">
+                              Assessment
+                            </span>
+                            <ChevronRight size={14} className="text-slate-500 group-hover:text-slate-300 group-hover:translate-x-0.5 transition-all" />
+                          </div>
+                        </button>
+
+                        {/* Your Goal */}
+                        <button 
+                          onClick={() => setSettingsView("goal")}
+                          className="w-full p-3.5 flex items-center justify-between group hover:bg-white/[0.03] transition-colors text-left cursor-pointer active:bg-white/[0.05]"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
+                              <Target size={16} />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-white tracking-tight">Primary Ambition</p>
+                              <p className="text-[10.5px] text-slate-400 font-medium italic truncate max-w-[210px]">
+                                "{userGoal.replace(/^[\s"'|\\]+|[\s"'|\\]+$/g, '').replace(/\\"/g, '"').trim() || 'Improve cycling performance'}"
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 ml-3">
+                            <span className="text-[9.5px] font-semibold text-slate-400 px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/[0.06]">
+                              Edit
+                            </span>
+                            <ChevronRight size={14} className="text-slate-500 group-hover:text-slate-300 group-hover:translate-x-0.5 transition-all" />
+                          </div>
+                        </button>
+
+                        {/* Engine Benchmark / FTP */}
+                        <button 
+                          onClick={() => setSettingsView("ftp")}
+                          className="w-full p-3.5 flex items-center justify-between group hover:bg-white/[0.03] transition-colors text-left cursor-pointer active:bg-white/[0.05]"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                              <Zap size={16} />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-white tracking-tight">Engine Benchmark</p>
+                              <p className="text-[10.5px] text-slate-400 font-medium">Functional Threshold Power</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 ml-3">
+                            <span className="font-mono font-bold text-xs text-emerald-400 px-2.5 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 shadow-sm">
+                              {ftp ? `${ftp}W FTP` : "Set FTP"}
+                            </span>
+                            <ChevronRight size={14} className="text-slate-500 group-hover:text-slate-300 group-hover:translate-x-0.5 transition-all" />
+                          </div>
+                        </button>
+                      </div>
                     </div>
 
-                    <button 
-                      onClick={() => setSettingsView("rider_profile")}
-                      className="glass-card px-3 py-2.5 rounded-xl flex items-center justify-between group active:scale-[0.98] transition-all border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-slate-300"><User size={16} /></div>
-                        <div className="text-left">
-                          <p className="text-[11px] font-bold text-white uppercase tracking-wider">Your Rider Profile</p>
-                          <p className="text-[9.5px] text-slate-400 font-medium tracking-wide">Comprehensive Assessment</p>
-                        </div>
+                    {/* Section 2: Training Engine & Catalog */}
+                    <div className="space-y-1.5">
+                      <div className="px-1 flex items-center justify-between">
+                        <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider">
+                          Training Engine & Library
+                        </span>
                       </div>
-                      <ChevronRight size={14} className="text-slate-500 group-hover:text-white transition-colors" />
-                    </button>
 
-                    <button 
-                      onClick={() => setSettingsView("goal")}
-                      className="glass-card px-3 py-2.5 rounded-xl flex items-center justify-between group active:scale-[0.98] transition-all border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-slate-300 shrink-0"><Target size={16} /></div>
-                        <div className="text-left min-w-0">
-                          <p className="text-[11px] font-bold text-white uppercase tracking-wider">Your Goal</p>
-                          <p className="text-[9.5px] text-slate-400 font-medium italic truncate max-w-[190px]">\"{userGoal}\"</p>
-                        </div>
-                      </div>
-                      <ChevronRight size={14} className="text-slate-500 group-hover:text-white transition-colors shrink-0 ml-2" />
-                    </button>
+                      <div className="bg-white/[0.02] border border-white/[0.07] rounded-2xl overflow-hidden divide-y divide-white/[0.04] shadow-sm">
+                        {/* Training Setup */}
+                        <button 
+                          onClick={() => setSettingsView("training_method")}
+                          className="w-full p-3.5 flex items-center justify-between group hover:bg-white/[0.03] transition-colors text-left cursor-pointer active:bg-white/[0.05]"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 shrink-0">
+                              <Settings size={16} />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-white tracking-tight">Training Setup</p>
+                              <p className="text-[10.5px] text-slate-400 font-medium capitalize">
+                                {trainingMethodology.replace("_", " ")} · {trainingMode}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 ml-3">
+                            <span className="text-[9.5px] font-semibold text-slate-300 capitalize px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/[0.06]">
+                              Configure
+                            </span>
+                            <ChevronRight size={14} className="text-slate-500 group-hover:text-slate-300 group-hover:translate-x-0.5 transition-all" />
+                          </div>
+                        </button>
 
-                    <button 
-                      onClick={() => setSettingsView("ftp")}
-                      className="glass-card px-3 py-2.5 rounded-xl flex items-center justify-between group active:scale-[0.98] transition-all border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-slate-300"><Zap size={16} /></div>
-                        <div className="text-left">
-                          <p className="text-[11px] font-bold text-white uppercase tracking-wider">Engine Benchmark</p>
-                          <p className="text-[9.5px] text-slate-400 font-mono font-medium">{ftp ? `${ftp}W FTP` : "Click to set"}</p>
-                        </div>
+                        {/* Workout Library */}
+                        <button 
+                          onClick={() => setSettingsView("workout_library")}
+                          className="w-full p-3.5 flex items-center justify-between group hover:bg-white/[0.03] transition-colors text-left cursor-pointer active:bg-white/[0.05]"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
+                              <BookOpen size={16} />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-white tracking-tight">Workout Library</p>
+                              <p className="text-[10.5px] text-slate-400 font-medium">Curated Intervals & Catalog</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 ml-3">
+                            <span className="text-[9.5px] font-semibold text-slate-400 px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/[0.06]">
+                              Browse
+                            </span>
+                            <ChevronRight size={14} className="text-slate-500 group-hover:text-slate-300 group-hover:translate-x-0.5 transition-all" />
+                          </div>
+                        </button>
                       </div>
-                      <ChevronRight size={14} className="text-slate-500 group-hover:text-white transition-colors" />
-                    </button>
+                    </div>
 
-                    <button 
-                      onClick={() => setSettingsView("training_method")}
-                      className="glass-card px-3 py-2.5 rounded-xl flex items-center justify-between group active:scale-[0.98] transition-all border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-slate-300"><Settings size={16} /></div>
-                        <div className="text-left">
-                          <p className="text-[11px] font-bold text-white uppercase tracking-wider">Training Setup</p>
-                          <p className="text-[9.5px] text-slate-400 font-medium">{trainingMethodology.replace("_", " ")} • {trainingMode}</p>
+                    {/* Connection & Footer Card */}
+                    <div className="mt-1 p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                        <div>
+                          <p className="text-[11px] font-bold text-white leading-tight">Intervals.icu Connected</p>
+                          <p className="text-[9.5px] text-slate-500 font-mono">Real-time telemetry link</p>
                         </div>
                       </div>
-                      <ChevronRight size={14} className="text-slate-500 group-hover:text-white transition-colors" />
-                    </button>
-
-                    <button 
-                      onClick={() => setSettingsView("workout_library")}
-                      className="glass-card px-3 py-2.5 rounded-xl flex items-center justify-between group active:scale-[0.98] transition-all border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-slate-300"><BookOpen size={16} /></div>
-                        <div className="text-left">
-                          <p className="text-[11px] font-bold text-white uppercase tracking-wider">Workout Library</p>
-                          <p className="text-[9.5px] text-slate-400 font-medium">Curated Training Catalog</p>
-                        </div>
-                      </div>
-                      <ChevronRight size={14} className="text-slate-500 group-hover:text-white transition-colors" />
-                    </button>
-                    
-                    <div className="pt-2 border-t border-white/5 flex items-center justify-between">
                       <button 
                         onClick={handleLogout}
-                        className="text-[10px] font-bold text-rose-400 hover:text-rose-300 transition-colors flex items-center gap-1.5 px-2 py-1 cursor-pointer"
+                        className="px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                        title="Disconnect Intervals.icu account"
                       >
-                        <LogOut size={13} />
-                        <span>Disconnect Account</span>
+                        <LogOut size={12} />
+                        <span>Disconnect</span>
                       </button>
-                      <span className="text-[9px] text-slate-500 font-mono">v1.0.0</span>
+                    </div>
+
+                    <div className="flex items-center justify-between px-2 pt-0.5 text-[9.5px] text-slate-500 font-mono">
+                      <span>waTTson AI Coach</span>
+                      <span>v1.0.0</span>
                     </div>
                   </div>
                 )}

@@ -104,15 +104,19 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
     return (
       <div 
         onClick={() => onClick(day)}
-        className={`p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border ${
+        className={`p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border border-dashed bg-arcering relative overflow-hidden ${
           isToday 
-            ? 'border-white/[0.12] bg-white/[0.04] hover:border-white/20' 
-            : 'border-white/[0.06] bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.05]'
+            ? 'border-white/25 hover:border-white/35' 
+            : 'border-white/10 hover:border-white/20'
         }`}
       >
         {/* Date block */}
-        <div className="w-9 h-9 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-colors bg-indigo-500/10 border-indigo-500/25 text-indigo-300">
-          <span className="text-[7.5px] font-bold uppercase leading-none mb-0.5 tracking-wider">{weekday}</span>
+        <div className={`w-9 h-9 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-colors bg-[#080b11]/90 backdrop-blur-sm ${
+          isToday 
+            ? 'border-white/20 text-slate-200' 
+            : 'border-white/[0.08] text-slate-400 group-hover:border-white/15'
+        }`}>
+          <span className="text-[7.5px] font-bold uppercase leading-none mb-0.5 tracking-wider text-slate-400">{weekday}</span>
           <span className="text-xs font-bold font-mono leading-none text-slate-200">{dayNum || '–'}</span>
         </div>
 
@@ -122,7 +126,7 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
             <h3 className="font-semibold text-xs truncate leading-tight tracking-tight text-slate-300 group-hover:text-white transition-colors">
               {day.focus || 'Rest Day'}
             </h3>
-            <span className="text-[7.5px] font-semibold px-1.5 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1 shrink-0 text-indigo-300/90 bg-indigo-500/10 border border-indigo-500/20">
+            <span className="text-[7.5px] font-semibold px-1.5 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1 shrink-0 text-slate-400 bg-[#080b11]/90 backdrop-blur-sm border border-white/[0.08]">
               <Coffee size={9} /> Rest
             </span>
           </div>
@@ -130,7 +134,7 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
 
         {/* Cozy rest icon */}
         <div className="flex items-center justify-center shrink-0">
-          <div className="p-1.5 rounded-xl border border-white/[0.05] bg-white/[0.02] text-slate-500 flex items-center justify-center">
+          <div className="p-1.5 rounded-xl border border-white/[0.08] bg-[#080b11]/90 backdrop-blur-sm text-slate-500 group-hover:text-slate-400 flex items-center justify-center transition-colors">
             <Coffee size={13} />
           </div>
         </div>
@@ -148,19 +152,19 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
   return (
     <div 
       onClick={() => onClick(day)}
-      className={`p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border ${
+      className={`p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border shadow-[0_0_12px_rgba(59,130,246,0.06)] ${
         isToday 
-          ? 'border-white/[0.12] bg-white/[0.04] hover:border-white/20' 
-          : 'border-white/[0.06] bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.05]'
+          ? 'border-blue-400/60 bg-blue-500/[0.05] hover:border-blue-400/80' 
+          : 'border-blue-500/40 bg-blue-500/[0.02] hover:border-blue-400/60 hover:bg-blue-500/[0.05]'
       }`}
     >
       <div className={`w-9 h-9 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-colors ${
         isToday
-          ? 'bg-blue-500/10 border-blue-500/25 text-blue-400'
-          : 'bg-white/[0.02] border-white/[0.06] text-slate-300 group-hover:border-white/10'
+          ? 'bg-blue-500/15 border-blue-500/35 text-blue-400'
+          : 'bg-blue-500/10 border-blue-500/25 text-blue-300 group-hover:border-blue-500/40'
       }`}>
-        <span className={`text-[7.5px] font-bold uppercase leading-none mb-0.5 tracking-wider ${isToday ? 'text-blue-400' : 'text-slate-400'}`}>{weekday}</span>
-        <span className={`text-xs font-bold font-mono leading-none ${isToday ? 'text-blue-300' : 'text-white'}`}>{dayNum || '–'}</span>
+        <span className={`text-[7.5px] font-bold uppercase leading-none mb-0.5 tracking-wider ${isToday ? 'text-blue-400' : 'text-blue-400/90'}`}>{weekday}</span>
+        <span className={`text-xs font-bold font-mono leading-none ${isToday ? 'text-blue-200' : 'text-slate-100'}`}>{dayNum || '–'}</span>
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col justify-center">

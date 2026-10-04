@@ -92,3 +92,13 @@ body {
 .float-animation {
   animation: subtle-float 4s infinite ease-in-out;
 }
+
+.bg-arcering {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.04) 0px,
+    rgba(255, 255, 255, 0.04) 2px,
+    transparent 2px,
+    transparent 10px
+  );
+}

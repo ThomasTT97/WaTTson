@@ -76,37 +76,54 @@ export const FirebaseAuthCard: React.FC<FirebaseAuthCardProps> = ({
   if (currentUser) {
     if (compact) {
       return (
-        <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-          <div className="flex items-center gap-2.5 min-w-0">
-            {currentUser.photoURL ? (
-              <img 
-                src={currentUser.photoURL} 
-                alt={currentUser.displayName || 'Rider'} 
-                className="w-7 h-7 rounded-full border border-emerald-400/40 object-cover flex-shrink-0"
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              <div className="w-7 h-7 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold text-xs flex-shrink-0">
-                {(currentUser.displayName || currentUser.email || 'R')[0].toUpperCase()}
+        <div className="relative overflow-hidden p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.08] backdrop-blur-xl transition-all">
+          <div className="absolute top-0 right-0 w-36 h-36 bg-emerald-500/[0.04] rounded-full blur-2xl pointer-events-none" />
+          <div className="flex items-center justify-between gap-3 relative z-10">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="relative shrink-0">
+                {currentUser.photoURL ? (
+                  <img 
+                    src={currentUser.photoURL} 
+                    alt={currentUser.displayName || 'Rider'} 
+                    className="w-10 h-10 rounded-xl border border-white/10 object-cover shadow-sm"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-sm shadow-sm">
+                    {(currentUser.displayName || currentUser.email || 'R')[0].toUpperCase()}
+                  </div>
+                )}
+                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#05070a] flex items-center justify-center">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                </div>
               </div>
-            )}
-            <div className="min-w-0">
-              <p className="text-[11px] font-bold text-white truncate leading-tight">
-                {currentUser.displayName || currentUser.email}
-              </p>
-              <div className="flex items-center gap-1 text-[9px] text-emerald-400 font-medium">
-                <Cloud size={10} className="stroke-[2.5]" />
-                <span>Cloud Synced</span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-bold text-white truncate leading-tight">
+                    {currentUser.displayName || 'Authenticated Rider'}
+                  </p>
+                  <ShieldCheck size={12} className="text-emerald-400 shrink-0" />
+                </div>
+                <p className="text-[10px] text-slate-400 truncate mt-0.5 max-w-[170px] sm:max-w-[220px]">
+                  {currentUser.email}
+                </p>
+                <div className="flex items-center gap-1 text-[9.5px] text-emerald-400/90 font-medium mt-0.5">
+                  <Cloud size={10} className="stroke-[2.5]" />
+                  <span>Cloud Synced</span>
+                </div>
               </div>
             </div>
+            
+            <button
+              onClick={handleSignOut}
+              disabled={loading}
+              className="shrink-0 px-2.5 py-1.5 rounded-xl bg-white/[0.03] hover:bg-rose-500/10 border border-white/[0.08] hover:border-rose-500/20 text-slate-400 hover:text-rose-400 text-[10px] font-semibold transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+              title="Sign out of Google"
+            >
+              <LogOut size={12} />
+              <span>Sign Out</span>
+            </button>
           </div>
-          <button
-            onClick={handleSignOut}
-            disabled={loading}
-            className="text-[10px] text-slate-400 hover:text-rose-400 px-2 py-1 rounded-lg hover:bg-rose-500/10 transition-colors uppercase font-bold tracking-wider"
-          >
-            Sign Out
-          </button>
         </div>
       );
     }
