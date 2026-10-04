@@ -22,11 +22,23 @@ interface CoachingModalProps {
 
 export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, onClose, userGoal, ftp, allActivities }) => {
   const [feedback, setFeedback] = useState<CoachingFeedback | null>(null);
-  const [intervals, setIntervals] = useState<any[]>([]);
+  
+  const initialIntervals = (activity.icu_intervals && activity.icu_intervals.length > 0)
+    ? activity.icu_intervals
+    : (activity.laps && activity.laps.length > 0)
+      ? activity.laps
+      : (activity.icu_laps && activity.icu_laps.length > 0)
+        ? activity.icu_laps
+        : (activity.icu_intervals_edited && activity.icu_intervals_edited.length > 0)
+          ? activity.icu_intervals_edited
+          : [];
+
+  const [intervals, setIntervals] = useState<any[]>(initialIntervals);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
     const fetchFeedback = async () => {
       setLoading(true);
       setError(null);
@@ -36,16 +48,34 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
           fetchActivityIntervals(activity.id, creds),
           fetchPlannedWorkout(dateStr, creds)
         ]);
-        setIntervals(fetchedIntervals || []);
-        const data = await getRideFeedback(activity, fetchedIntervals, plannedWorkout, userGoal, ftp, allActivities);
-        setFeedback(data);
+
+        if (!isMounted) return;
+
+        const resolvedIntervals = (fetchedIntervals && fetchedIntervals.length > 0)
+          ? fetchedIntervals
+          : initialIntervals;
+
+        setIntervals(resolvedIntervals);
+        if (resolvedIntervals.length > 0) {
+          (activity as any).icu_intervals = resolvedIntervals;
+        }
+
+        const data = await getRideFeedback(activity, resolvedIntervals, plannedWorkout, userGoal, ftp, allActivities);
+        if (isMounted) {
+          setFeedback(data);
+        }
       } catch (err: any) {
-        setError(err.message || "Engine analysis failed.");
+        if (isMounted) {
+          setError(err.message || "Engine analysis failed.");
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
     fetchFeedback();
+    return () => { isMounted = false; };
   }, [activity, creds, userGoal, ftp, allActivities]);
 
   const dateObj = new Date(activity.start_date_local);
@@ -61,7 +91,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
   const duration = formatDuration(activity.moving_time || activity.elapsed_time || 0);
   
   const avgWatts = Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0);
-  let rawNp = Math.round(activity.weighted_average_watts ?? activity.icu_weighted_average_watts ?? 0);
+  let rawNp = Math.round(activity.weighted_average_watts ?? activity.icu_weighted_avg_watts ?? activity.icu_weighted_average_watts ?? 0);
   
   if (rawNp === 0 && avgWatts > 0 && activity.icu_variability_index && activity.icu_variability_index > 1.01) {
     rawNp = Math.round(avgWatts * activity.icu_variability_index);
@@ -129,12 +159,23 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
         {/* Secondary Info Bar */}
         <div className="flex items-center justify-between px-4 py-1.5 bg-white/[0.01] border border-white/[0.04] rounded-lg mb-4">
           <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-sky-400/50" />
+            <div className="w-1.5 h-1.5 rounded-full bg-sky-400" />
             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">File Recording</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider">Recorded Laps:</span>
-            <span className="text-[10px] font-bold text-sky-400 font-mono">{(intervals || []).length > 0 ? (intervals || []).length : '--'}</span>
+            <span className="text-[10px] font-bold text-sky-400 font-mono">
+              {intervals && intervals.length > 0 ? (
+                `${intervals.length} ${intervals.length === 1 ? 'interval' : 'intervals'}`
+              ) : loading ? (
+                <span className="inline-flex items-center gap-1 text-slate-400 font-normal">
+                  <Loader2 size={10} className="animate-spin text-sky-400" />
+                  <span>reading...</span>
+                </span>
+              ) : (
+                'None'
+              )}
+            </span>
           </div>
         </div>
 
@@ -210,11 +251,22 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                       const timeStr = m > 0 ? `${m}m ${s > 0 ? `${s}s` : ''}` : `${s}s`;
                       const isWork = lap.type === 'WORK';
                       const isRecovery = lap.type === 'RECOVERY';
+                      const zoneBadge = lap.zone ? (
+                        <span className={`px-1 py-0.5 rounded text-[8px] font-mono font-bold ${
+                          lap.zone <= 2 ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20' :
+                          lap.zone === 3 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                          lap.zone === 4 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
+                          lap.zone === 5 ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' :
+                          'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                        }`}>
+                          Z{lap.zone}
+                        </span>
+                      ) : null;
                       
                       return (
                         <div key={idx} className="flex justify-between items-center text-xs py-1.5 border-b border-white/[0.03] last:border-0">
                           <div className="flex items-center gap-2 min-w-0 pr-2">
-                            <span className={`w-5 h-5 rounded-lg flex items-center justify-center text-[9px] font-bold ${
+                            <span className={`w-5 h-5 rounded-lg flex items-center justify-center text-[9px] font-bold shrink-0 ${
                               isWork 
                                 ? 'bg-emerald-500/10 text-emerald-400' 
                                 : isRecovery 
@@ -223,15 +275,23 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                             }`}>
                               {idx + 1}
                             </span>
-                            <span className="font-medium text-slate-200 truncate">
-                              {lap.label || (isWork ? 'Interval Effort' : isRecovery ? 'Recovery' : 'Lap')}
-                            </span>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              {zoneBadge}
+                              <span className="font-medium text-slate-200 truncate">
+                                {lap.label || (isWork ? 'Interval Effort' : isRecovery ? 'Recovery' : 'Lap')}
+                              </span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-3 font-mono shrink-0 text-right">
+                          <div className="flex items-center gap-2.5 font-mono shrink-0 text-right">
                             <span className="text-slate-400 text-[11px]">{timeStr}</span>
                             {lap.average_watts > 0 && (
                               <span className="text-emerald-400 font-semibold text-[11px]">
                                 {lap.average_watts}W
+                              </span>
+                            )}
+                            {lap.average_cadence > 0 && (
+                              <span className="text-slate-400 text-[10px]">
+                                {lap.average_cadence}rpm
                               </span>
                             )}
                             {lap.average_heartrate > 0 && (

@@ -327,39 +327,61 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
   const { apiKey } = creds;
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
   const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
-  const url = `/api/v1/activity/${activityId}`;
   
+  const cleanId = encodeURIComponent(String(activityId).trim());
+  const urlWithIntervals = `/api/v1/activity/${cleanId}?intervals=true`;
+  const urlStandard = `/api/v1/activity/${cleanId}`;
+
   try {
-    const response = await intervalsFetch(url, { method: 'GET', headers });
+    // 1. Fetch with ?intervals=true (Intervals.icu official parameter for detailed intervals & laps)
+    let response = await intervalsFetch(urlWithIntervals, { method: 'GET', headers });
+    if (!response.ok) {
+      // Fallback: try standard activity endpoint if ?intervals=true was rejected
+      response = await intervalsFetch(urlStandard, { method: 'GET', headers });
+    }
     if (!response.ok) return [];
+    
     const data = await response.json();
+    if (!data) return [];
     
     // Check all potential arrays where Intervals.icu provides laps / intervals
     let rawIntervals: any[] = [];
-    if (Array.isArray(data.icu_laps) && data.icu_laps.length > 0) {
+    if (Array.isArray(data)) {
+      rawIntervals = data;
+    } else if (Array.isArray(data.icu_intervals) && data.icu_intervals.length > 1) {
+      // Prefer icu_intervals when it contains multiple intervals
+      rawIntervals = data.icu_intervals;
+    } else if (Array.isArray(data.laps) && data.laps.length > 1) {
+      // Prefer hardware device laps (Wahoo, Garmin) if icu_intervals only had 1
+      rawIntervals = data.laps;
+    } else if (Array.isArray(data.icu_laps) && data.icu_laps.length > 1) {
       rawIntervals = data.icu_laps;
+    } else if (Array.isArray(data.icu_intervals_edited) && data.icu_intervals_edited.length > 1) {
+      rawIntervals = data.icu_intervals_edited;
     } else if (Array.isArray(data.icu_intervals) && data.icu_intervals.length > 0) {
       rawIntervals = data.icu_intervals;
-    } else if (Array.isArray(data.icu_intervals_edited) && data.icu_intervals_edited.length > 0) {
-      rawIntervals = data.icu_intervals_edited;
     } else if (Array.isArray(data.laps) && data.laps.length > 0) {
       rawIntervals = data.laps;
+    } else if (Array.isArray(data.icu_laps) && data.icu_laps.length > 0) {
+      rawIntervals = data.icu_laps;
+    } else if (Array.isArray(data.icu_intervals_edited) && data.icu_intervals_edited.length > 0) {
+      rawIntervals = data.icu_intervals_edited;
     } else if (Array.isArray(data.intervals) && data.intervals.length > 0) {
       rawIntervals = data.intervals;
     }
 
-    // Fallback: if empty, query the dedicated /intervals endpoint
-    if (rawIntervals.length === 0) {
+    // 2. Extra Fallback: if still empty, check if /api/v1/activity/{id} without query has anything
+    if (rawIntervals.length === 0 && urlWithIntervals !== urlStandard) {
       try {
-        const intervalsResp = await intervalsFetch(`/api/v1/activity/${activityId}/intervals`, { method: 'GET', headers });
-        if (intervalsResp.ok) {
-          const intervalsData = await intervalsResp.json();
-          if (Array.isArray(intervalsData)) {
-            rawIntervals = intervalsData;
-          } else if (intervalsData && Array.isArray(intervalsData.intervals) && intervalsData.intervals.length > 0) {
-            rawIntervals = intervalsData.intervals;
-          } else if (intervalsData && Array.isArray(intervalsData.laps) && intervalsData.laps.length > 0) {
-            rawIntervals = intervalsData.laps;
+        const fallbackResp = await intervalsFetch(urlStandard, { method: 'GET', headers });
+        if (fallbackResp.ok) {
+          const fallbackData = await fallbackResp.json();
+          if (Array.isArray(fallbackData.icu_intervals) && fallbackData.icu_intervals.length > 0) {
+            rawIntervals = fallbackData.icu_intervals;
+          } else if (Array.isArray(fallbackData.laps) && fallbackData.laps.length > 0) {
+            rawIntervals = fallbackData.laps;
+          } else if (Array.isArray(fallbackData.icu_laps) && fallbackData.icu_laps.length > 0) {
+            rawIntervals = fallbackData.icu_laps;
           }
         }
       } catch {}
@@ -396,7 +418,7 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
             ? l.avg_hr
             : ((typeof l.average_hr === 'number' && l.average_hr > 0)
               ? l.average_hr
-              : 0)));
+              : (typeof l.hr === 'number' ? l.hr : 0))));
 
       const maxHr = (typeof l.max_heartrate === 'number' && l.max_heartrate > 0)
         ? l.max_heartrate
@@ -420,6 +442,13 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
               : (typeof l.end_index === 'number' && typeof l.start_index === 'number' && l.end_index > l.start_index
                 ? l.end_index - l.start_index 
                 : 0))));
+
+      // Map zone and intensity if provided by Intervals.icu
+      const zone = typeof l.zone === 'number' ? l.zone : undefined;
+      let intensity = typeof l.intensity === 'number' ? l.intensity : undefined;
+      if (intensity !== undefined && intensity > 2.0) {
+        intensity = intensity / 100;
+      }
       
       // Map interval type to WORK | RECOVERY | WARMUP | COOLDOWN
       let type: 'WORK' | 'RECOVERY' | 'WARMUP' | 'COOLDOWN' = 'WORK';
@@ -427,14 +456,52 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
       if (rawType === 'RECOVERY' || rawType === 'REST') type = 'RECOVERY';
       else if (rawType === 'WARMUP' || rawType === 'WU') type = 'WARMUP';
       else if (rawType === 'COOLDOWN' || rawType === 'CD') type = 'COOLDOWN';
-      else if (rawType === 'WORK' || rawType === 'ACTIVE' || rawType === 'WORKOUT') type = 'WORK';
-      else {
+      else if (rawType === 'WORK' || rawType === 'ACTIVE' || rawType === 'WORKOUT' || rawType === 'INTERVAL') type = 'WORK';
+      else if (zone !== undefined) {
+        if (zone <= 2) {
+          if (idx === 0) type = 'WARMUP';
+          else if (idx === rawIntervals.length - 1) type = 'COOLDOWN';
+          else type = 'RECOVERY';
+        } else {
+          type = 'WORK';
+        }
+      } else if (intensity !== undefined) {
+        if (intensity <= 0.70) {
+          if (idx === 0) type = 'WARMUP';
+          else if (idx === rawIntervals.length - 1) type = 'COOLDOWN';
+          else type = 'RECOVERY';
+        } else {
+          type = 'WORK';
+        }
+      } else {
         // Fallback or guess based on label or power
         const label = (l.label || l.name || '').toUpperCase();
         if (label.includes('WARM') || label.includes('WU')) type = 'WARMUP';
         else if (label.includes('REC') || label.includes('REST') || label.includes('EASY')) type = 'RECOVERY';
         else if (label.includes('COOL') || label.includes('CD')) type = 'COOLDOWN';
         else if (label.includes('WORK') || label.includes('INT') || label.includes('EFFORT') || label.includes('SET')) type = 'WORK';
+      }
+
+      // Generate a user-friendly label if none was stored
+      let label = l.label || l.name;
+      if (!label) {
+        if (zone !== undefined) {
+          if (zone === 1 || zone === 2) {
+            label = idx === 0 ? 'Warmup (Z2)' : idx === rawIntervals.length - 1 ? 'Cooldown (Z2)' : 'Recovery (Z2)';
+          } else if (zone === 3) {
+            label = 'Tempo Effort (Z3)';
+          } else if (zone === 4) {
+            label = 'Sweet Spot / Threshold (Z4)';
+          } else if (zone === 5) {
+            label = 'VO2 Max Effort (Z5)';
+          } else if (zone === 6) {
+            label = 'Anaerobic Effort (Z6)';
+          } else if (zone >= 7) {
+            label = 'Sprint Burst (Z7)';
+          }
+        } else {
+          label = type === 'WORK' ? 'Work Interval' : type === 'RECOVERY' ? 'Recovery' : type === 'WARMUP' ? 'Warmup' : type === 'COOLDOWN' ? 'Cooldown' : `Lap ${idx + 1}`;
+        }
       }
 
       return {
@@ -449,7 +516,9 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
         moving_time: Math.round(movingTime),
         distance: typeof l.distance === 'number' ? Math.round(l.distance) : undefined,
         type,
-        label: l.label || l.name || (l.type ? `${l.type}` : undefined)
+        label,
+        zone,
+        intensity: intensity ? Math.round(intensity * 100) / 100 : undefined
       };
     });
   } catch (error) { 
@@ -547,6 +616,31 @@ const detectStructuredWorkoutPattern = (laps: any[], ftp: number, totalTime: num
     if (remainingSecs <= 15) return `${mins}m`;
     return `${mins}m ${remainingSecs}s`;
   };
+
+  // Check if multiple work intervals exist across the same training zone (e.g. 20m + 10m @ 274W)
+  const threshSsLaps = workLaps.filter(l => {
+    const pwr = getLapPowerHelper(l);
+    const pct = pwr / ftp;
+    return pct >= 0.84 && pct <= 1.05 && getLapTimeHelper(l) >= 300;
+  });
+
+  if (threshSsLaps.length >= 2) {
+    const totalSecs = threshSsLaps.reduce((sum, l) => sum + getLapTimeHelper(l), 0);
+    if (totalSecs >= 900) {
+      const avgP = Math.round(threshSsLaps.reduce((sum, l) => sum + getLapPowerHelper(l), 0) / threshSsLaps.length);
+      const durList = threshSsLaps.map(l => formatDurationShort(getLapTimeHelper(l))).join(', ');
+      
+      // Check for a secondary high-intensity finish effort (e.g. 5m @ 324W)
+      const vo2Laps = workLaps.filter(l => (getLapPowerHelper(l) / ftp) >= 1.06 && getLapTimeHelper(l) >= 120);
+      const vo2Suffix = vo2Laps.length > 0 
+        ? ` + ${vo2Laps.map(l => `${formatDurationShort(getLapTimeHelper(l))} @ ${Math.round(getLapPowerHelper(l))}W`).join(', ')}`
+        : '';
+
+      const isHighThresh = (avgP / ftp) >= 0.93;
+      const zoneName = isHighThresh ? 'Threshold / Sweet Spot Intervals' : 'Sweet Spot Intervals';
+      return `${zoneName} (${durList} @ ~${avgP}W${vo2Suffix})`;
+    }
+  }
 
   // Check each group against strict work volume criteria
   for (const g of groups) {
@@ -724,7 +818,7 @@ export const classifyActivityRide = (activity: Activity, passedIntervals?: Activ
 
   // 2. Resolve Power & True Intensity Factor (IF)
   const avgWatts = Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0);
-  let npWatts = Math.round(activity.weighted_average_watts ?? activity.icu_weighted_average_watts ?? 0);
+  let npWatts = Math.round(activity.weighted_average_watts ?? activity.icu_weighted_avg_watts ?? activity.icu_weighted_average_watts ?? 0);
   if (npWatts === 0 && avgWatts > 0 && activity.icu_variability_index && activity.icu_variability_index > 1.01) {
     npWatts = Math.round(avgWatts * activity.icu_variability_index);
   }

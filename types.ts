@@ -37,6 +37,7 @@ export interface Activity {
   weighted_average_watts?: number;
   icu_average_watts?: number;
   icu_weighted_average_watts?: number;
+  icu_weighted_avg_watts?: number;
   average_heartrate?: number;
   max_heartrate?: number;
   average_cadence?: number;
@@ -85,6 +86,8 @@ export interface ActivityInterval {
   max_heartrate?: number;
   average_cadence?: number;
   distance?: number;
+  zone?: number;
+  intensity?: number;
 }
 
 export interface PlannedWorkout {

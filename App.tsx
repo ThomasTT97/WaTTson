@@ -133,6 +133,31 @@ const getFriendlyNextRideDay = (targetDate: Date) => {
   }
 };
 
+export const getISOWeekNumber = (date: Date): { week: number; year: number } => {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return { week: weekNo, year: d.getUTCFullYear() };
+};
+
+export const getWeekRange = (calendarOffset: number) => {
+  const now = new Date();
+  const currentDay = now.getDay();
+  const daysSinceMonday = (currentDay + 6) % 7;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysSinceMonday + (calendarOffset * 7), 0, 0, 0, 0);
+  const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6, 23, 59, 59, 999);
+  return { start: monday, end: sunday };
+};
+
+export const getMonthRange = (calendarOffset: number) => {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() + calendarOffset, 1, 0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth() + calendarOffset + 1, 0, 23, 59, 59, 999);
+  return { start, end };
+};
+
 const CHAT_SUGGESTIONS: string[] = [
   "What's planned for coming days?",
   "What should I do today?",
@@ -261,6 +286,55 @@ const App: React.FC = () => {
   });
   const [insightsPeriod, setInsightsPeriod] = useState<'week' | 'month' | '6months' | 'year' | 'season'>('month');
   const [selectedSeasonYear, setSelectedSeasonYear] = useState(new Date().getFullYear());
+  const [selectedWeekOffset, setSelectedWeekOffset] = useState<number>(0);
+  const [selectedMonthOffset, setSelectedMonthOffset] = useState<number>(0);
+
+  const touchStartXRef = useRef<number | null>(null);
+  const touchStartYRef = useRef<number | null>(null);
+  const lastWheelTimeRef = useRef<number>(0);
+
+  const navigatePeriod = useCallback((dir: -1 | 1) => {
+    if (insightsPeriod === 'week') {
+      setSelectedWeekOffset(prev => (dir > 0 ? Math.min(0, prev + 1) : prev - 1));
+    } else if (insightsPeriod === 'month') {
+      setSelectedMonthOffset(prev => (dir > 0 ? Math.min(0, prev + 1) : prev - 1));
+    } else if (insightsPeriod === 'season') {
+      const currentYear = new Date().getFullYear();
+      setSelectedSeasonYear(prev => (dir > 0 ? Math.min(currentYear, prev + 1) : prev - 1));
+    }
+  }, [insightsPeriod]);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartXRef.current = e.touches[0].clientX;
+    touchStartYRef.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartXRef.current === null || touchStartYRef.current === null) return;
+    const deltaX = e.changedTouches[0].clientX - touchStartXRef.current;
+    const deltaY = e.changedTouches[0].clientY - touchStartYRef.current;
+    touchStartXRef.current = null;
+    touchStartYRef.current = null;
+    if (Math.abs(deltaX) > 40 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) {
+      if (deltaX > 0) {
+        navigatePeriod(-1);
+      } else {
+        navigatePeriod(1);
+      }
+    }
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    const now = Date.now();
+    if (now - lastWheelTimeRef.current < 220) return;
+    if (Math.abs(e.deltaX) > 20 || Math.abs(e.deltaY) > 25) {
+      const isHorizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      const val = isHorizontal ? e.deltaX : e.deltaY;
+      const dir: -1 | 1 = val > 0 ? 1 : -1;
+      navigatePeriod(dir);
+      lastWheelTimeRef.current = now;
+    }
+  };
   
   const [suggestion, setSuggestion] = useState<DailySuggestion | null>(() => {
     try {
@@ -278,6 +352,31 @@ const App: React.FC = () => {
   const [isOtherFutureExpanded, setIsOtherFutureExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'rides' | 'chat' | 'settings'>('dashboard');
   const [showInsights, setShowInsights] = useState(false);
+
+  useEffect(() => {
+    if (showInsights) {
+      const origOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = origOverflow;
+      };
+    }
+  }, [showInsights]);
+
+  useEffect(() => {
+    if (!showInsights) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowInsights(false);
+      } else if (e.key === 'ArrowLeft') {
+        navigatePeriod(-1);
+      } else if (e.key === 'ArrowRight') {
+        navigatePeriod(1);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showInsights, navigatePeriod]);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'rider_profile' | 'training_method' | 'ftp' | 'workout_library'>('main');
@@ -1289,12 +1388,14 @@ const App: React.FC = () => {
         icu_tss: a.icu_tss,
         average_watts: a.average_watts,
         icu_average_watts: a.icu_average_watts,
-        weighted_average_watts: a.weighted_average_watts,
-        icu_weighted_average_watts: a.icu_weighted_average_watts,
+        weighted_average_watts: a.weighted_average_watts ?? a.icu_weighted_avg_watts ?? a.icu_weighted_average_watts,
+        icu_weighted_average_watts: a.icu_weighted_average_watts ?? a.icu_weighted_avg_watts ?? a.weighted_average_watts,
+        icu_weighted_avg_watts: a.icu_weighted_avg_watts ?? a.icu_weighted_average_watts ?? a.weighted_average_watts,
         average_heartrate: a.average_heartrate,
         max_heartrate: a.max_heartrate,
         icu_intensity: a.icu_intensity,
         icu_variability_index: a.icu_variability_index,
+        icu_efficiency_factor: a.icu_efficiency_factor,
         icu_eftp: a.icu_eftp,
         icu_zone_times: a.icu_zone_times,
         icu_hr_zone_times: a.icu_hr_zone_times,
@@ -3763,64 +3864,277 @@ const App: React.FC = () => {
       )}
 
       {showInsights && (
-        <div className="fixed inset-0 z-[220] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => setShowInsights(false)}>
+        <div 
+          className="fixed inset-0 z-[220] bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200" 
+          onClick={() => setShowInsights(false)}
+        >
           <div 
-            className="bg-[#0a0c14] border-t sm:border border-white/[0.08] w-full sm:max-w-md h-[90dvh] sm:h-auto sm:max-h-[85dvh] rounded-none sm:rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col overflow-hidden relative" 
+            className="bg-[#0a0c14] border border-white/[0.08] w-full max-w-[420px] rounded-2xl sm:rounded-3xl p-4 sm:p-5 shadow-2xl flex flex-col relative select-none overflow-hidden" 
             onClick={e => e.stopPropagation()}
+            onWheel={handleWheel}
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
           >
-            {/* Mobile drag handle */}
-            <div className="w-10 h-1 bg-white/10 rounded-full mx-auto mb-4 shrink-0 sm:hidden" />
-
             {/* Header */}
-            <div className="flex items-center justify-between shrink-0 mb-4 pb-3 border-b border-white/[0.06]">
-              <h2 className="text-base font-bold text-white tracking-tight">Training Insights</h2>
+            <div className="flex items-center justify-between shrink-0 mb-3 pb-2.5 border-b border-white/[0.06]">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                  <TrendingUp size={13} />
+                </div>
+                <h2 className="text-sm sm:text-base font-bold text-white tracking-tight">Training Insights</h2>
+              </div>
               <button 
                 onClick={() => setShowInsights(false)} 
-                className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/[0.04] transition-colors shrink-0 cursor-pointer"
+                className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/[0.04] transition-colors shrink-0 cursor-pointer"
+                title="Close"
               >
                 <X size={16} />
               </button>
             </div>
 
-            {/* Period Selector */}
-            <div className="flex flex-col gap-2 mb-4">
+            {/* Period Selector Tabs */}
+            <div className="flex flex-col gap-2 mb-3 shrink-0">
               <div className="flex p-0.5 bg-white/[0.02] border border-white/[0.06] rounded-xl shrink-0">
                 {(['week', 'month', '6months', 'year', 'season'] as const).map((period) => (
                   <button
                     key={period}
                     onClick={() => setInsightsPeriod(period)}
-                    className={`flex-1 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                    className={`flex-1 py-1 sm:py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
                       insightsPeriod === period
                         ? 'bg-white/10 text-white shadow-sm'
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    {period === 'week' ? 'Last Week' : period === 'month' ? 'Month' : period === '6months' ? '6 Months' : period === 'season' ? 'Season' : 'Year'}
+                    {period === 'week' ? 'Week' : period === 'month' ? 'Month' : period === '6months' ? '6 Months' : period === 'season' ? 'Season' : '1 Year'}
                   </button>
                 ))}
               </div>
               
-              {insightsPeriod === 'season' && (
-                <div className="flex items-center justify-center gap-2 px-2 py-1 bg-white/[0.02] border border-white/[0.06] rounded-xl">
-                  <button onClick={() => setSelectedSeasonYear(y => y - 1)} className="text-slate-400 hover:text-white p-1">‹</button>
-                  <span className="text-xs font-bold text-white font-mono">{selectedSeasonYear}</span>
-                  <button onClick={() => setSelectedSeasonYear(y => y + 1)} className="text-slate-400 hover:text-white p-1">›</button>
-                </div>
-              )}
-            </div>
-
-            {/* Computed Insights Metrics */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-0.5">
+              {/* Stepper Navigation for Week, Month, and Season */}
               {(() => {
                 const now = new Date();
-                let cutoff, endCutoff, weeks;
+                const currentYear = now.getFullYear();
+
+                if (insightsPeriod === 'week') {
+                  const canGoForward = selectedWeekOffset < 0;
+
+                  let title: string;
+                  let subtitle: string;
+
+                  if (selectedWeekOffset === 0) {
+                    const currIso = getISOWeekNumber(now);
+                    title = 'Last 7 Days';
+                    subtitle = `Week ${currIso.week} · Rolling 7d`;
+                  } else {
+                    const calendarOffset = selectedWeekOffset + 1;
+                    const { start: weekStart, end: weekEnd } = getWeekRange(calendarOffset);
+                    const iso = getISOWeekNumber(weekStart);
+
+                    title = iso.year !== currentYear ? `Week ${iso.week} (${iso.year})` : `Week ${iso.week}`;
+
+                    const startDay = weekStart.getDate();
+                    const endDay = weekEnd.getDate();
+                    const startMonth = weekStart.toLocaleDateString('en-US', { month: 'short' });
+                    const endMonth = weekEnd.toLocaleDateString('en-US', { month: 'short' });
+                    const year = weekEnd.getFullYear();
+
+                    subtitle = startMonth === endMonth 
+                      ? `${startMonth} ${startDay} – ${endDay}, ${year}`
+                      : `${startMonth} ${startDay} – ${endMonth} ${endDay}, ${year}`;
+                  }
+
+                  return (
+                    <div className="flex items-center justify-between px-2 py-1 bg-white/[0.02] border border-white/[0.06] rounded-xl">
+                      <button 
+                        onClick={() => setSelectedWeekOffset(w => w - 1)} 
+                        className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/[0.06] transition-colors cursor-pointer"
+                        title="Previous Week"
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <div className="flex flex-col items-center justify-center min-w-0 px-2 text-center">
+                        <span className="text-xs font-bold text-white font-mono leading-tight">{title}</span>
+                        <span className="text-[9px] text-slate-400 font-medium leading-tight">{subtitle}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {selectedWeekOffset !== 0 && (
+                          <button 
+                            onClick={() => setSelectedWeekOffset(0)}
+                            className="px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded transition-all cursor-pointer"
+                            title="Back to rolling 7 days"
+                          >
+                            Now
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => setSelectedWeekOffset(w => Math.min(0, w + 1))} 
+                          disabled={!canGoForward}
+                          className={`p-1 rounded-lg transition-colors ${
+                            canGoForward 
+                              ? 'text-slate-400 hover:text-white hover:bg-white/[0.06] cursor-pointer' 
+                              : 'text-slate-600 opacity-25 cursor-not-allowed'
+                          }`}
+                          title="Next Week"
+                        >
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (insightsPeriod === 'month') {
+                  const canGoForward = selectedMonthOffset < 0;
+
+                  let title: string;
+                  let subtitle: string;
+
+                  if (selectedMonthOffset === 0) {
+                    title = 'Last 30 Days';
+                    subtitle = 'Rolling 30 days';
+                  } else {
+                    const calendarOffset = selectedMonthOffset + 1;
+                    const { start: monthStart, end: monthEnd } = getMonthRange(calendarOffset);
+                    const monthName = monthStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                    title = monthName;
+                    subtitle = `${monthStart.toLocaleDateString('en-US', { month: 'short' })} 1 – ${monthEnd.getDate()}, ${monthStart.getFullYear()}`;
+                  }
+
+                  return (
+                    <div className="flex items-center justify-between px-2 py-1 bg-white/[0.02] border border-white/[0.06] rounded-xl">
+                      <button 
+                        onClick={() => setSelectedMonthOffset(m => m - 1)} 
+                        className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/[0.06] transition-colors cursor-pointer"
+                        title="Previous Month"
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <div className="flex flex-col items-center justify-center min-w-0 px-2 text-center">
+                        <span className="text-xs font-bold text-white font-mono leading-tight">{title}</span>
+                        <span className="text-[9px] text-slate-400 font-medium leading-tight">{subtitle}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {selectedMonthOffset !== 0 && (
+                          <button 
+                            onClick={() => setSelectedMonthOffset(0)}
+                            className="px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded transition-all cursor-pointer"
+                            title="Back to rolling 30 days"
+                          >
+                            Now
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => setSelectedMonthOffset(m => Math.min(0, m + 1))} 
+                          disabled={!canGoForward}
+                          className={`p-1 rounded-lg transition-colors ${
+                            canGoForward 
+                              ? 'text-slate-400 hover:text-white hover:bg-white/[0.06] cursor-pointer' 
+                              : 'text-slate-600 opacity-25 cursor-not-allowed'
+                          }`}
+                          title="Next Month"
+                        >
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
                 if (insightsPeriod === 'season') {
-                  cutoff = new Date(selectedSeasonYear, 0, 1);
+                  const canGoForward = selectedSeasonYear < currentYear;
+
+                  return (
+                    <div className="flex items-center justify-between px-2 py-1 bg-white/[0.02] border border-white/[0.06] rounded-xl">
+                      <button 
+                        onClick={() => setSelectedSeasonYear(y => y - 1)} 
+                        className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/[0.06] transition-colors cursor-pointer"
+                        title="Previous Season"
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <div className="flex flex-col items-center justify-center min-w-0 px-2 text-center">
+                        <span className="text-xs font-bold text-white font-mono leading-tight">Season {selectedSeasonYear}</span>
+                        <span className="text-[9px] text-slate-400 font-medium leading-tight">
+                          {selectedSeasonYear === currentYear ? 'Current season' : 'Complete year'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {selectedSeasonYear !== currentYear && (
+                          <button 
+                            onClick={() => setSelectedSeasonYear(currentYear)}
+                            className="px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded transition-all cursor-pointer"
+                            title="Back to current season"
+                          >
+                            Now
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => setSelectedSeasonYear(y => Math.min(currentYear, y + 1))} 
+                          disabled={!canGoForward}
+                          className={`p-1 rounded-lg transition-colors ${
+                            canGoForward 
+                              ? 'text-slate-400 hover:text-white hover:bg-white/[0.06] cursor-pointer' 
+                              : 'text-slate-600 opacity-25 cursor-not-allowed'
+                          }`}
+                          title="Next Season"
+                        >
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="flex items-center justify-center px-2 py-1 bg-white/[0.02] border border-white/[0.06] rounded-xl">
+                    <span className="text-[10px] font-medium text-slate-400">
+                      {insightsPeriod === '6months' ? 'Rolling past 180 days of activity' : 'Rolling past 365 days of activity'}
+                    </span>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Computed Insights Metrics - Clean, No-Scroll Grid */}
+            <div className="shrink-0 space-y-2">
+              {(() => {
+                const now = new Date();
+                let cutoff: Date, endCutoff: Date, weeks: number;
+
+                if (insightsPeriod === 'week') {
+                  if (selectedWeekOffset === 0) {
+                    cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                    endCutoff = now;
+                    weeks = 1;
+                  } else {
+                    const calendarOffset = selectedWeekOffset + 1;
+                    const { start: weekStart, end: weekEnd } = getWeekRange(calendarOffset);
+                    cutoff = weekStart;
+                    endCutoff = weekEnd;
+                    weeks = 1;
+                  }
+                } else if (insightsPeriod === 'month') {
+                  if (selectedMonthOffset === 0) {
+                    cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+                    endCutoff = now;
+                    weeks = 30 / 7;
+                  } else {
+                    const calendarOffset = selectedMonthOffset + 1;
+                    const { start: monthStart, end: monthEnd } = getMonthRange(calendarOffset);
+                    cutoff = monthStart;
+                    endCutoff = monthEnd;
+                    const effectiveEnd = endCutoff.getTime() > now.getTime() ? now : endCutoff;
+                    const activeDays = Math.max(1, (effectiveEnd.getTime() - cutoff.getTime()) / (24 * 60 * 60 * 1000));
+                    weeks = Math.max(1, activeDays / 7);
+                  }
+                } else if (insightsPeriod === 'season') {
+                  cutoff = new Date(selectedSeasonYear, 0, 1, 0, 0, 0, 0);
                   endCutoff = new Date(selectedSeasonYear, 11, 31, 23, 59, 59, 999);
-                  if (endCutoff > now) endCutoff = now;
-                  weeks = Math.max(1, (endCutoff.getTime() - cutoff.getTime()) / (7 * 24 * 60 * 60 * 1000));
+                  const effectiveEnd = endCutoff.getTime() > now.getTime() ? now : endCutoff;
+                  const activeDays = Math.max(1, (effectiveEnd.getTime() - cutoff.getTime()) / (24 * 60 * 60 * 1000));
+                  weeks = Math.max(1, activeDays / 7);
                 } else {
-                  const daysMap = { week: 7, month: 30, '6months': 180, year: 365 };
+                  const daysMap = { '6months': 180, year: 365 };
                   const days = daysMap[insightsPeriod];
                   cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
                   endCutoff = now;
@@ -3831,6 +4145,7 @@ const App: React.FC = () => {
                   const d = new Date(a.start_date_local);
                   return d >= cutoff && d <= endCutoff;
                 });
+
                 const formatThousand = (val: number | string, decimals: number = 0) => {
                   const num = typeof val === 'number' ? val : parseFloat(val as string);
                   if (isNaN(num)) return val;
@@ -3842,47 +4157,124 @@ const App: React.FC = () => {
 
                 const totalHoursNum = filtered.reduce((acc, a) => acc + (a.moving_time || 0), 0) / 3600;
                 const totalHours = formatThousand(totalHoursNum, 1);
-                const totalTss = formatThousand(Math.round(filtered.reduce((acc, a) => acc + (a.icu_training_load || a.icu_tss || 0), 0)));
-                const avgTssPerWeek = formatThousand(Math.round(filtered.reduce((acc, a) => acc + (a.icu_training_load || a.icu_tss || 0), 0) / Math.max(1, weeks)));
-                const totalRides = formatThousand(filtered.length);
-                const avgWattsVal = Math.round(filtered.reduce((acc, a) => acc + (a.average_watts || a.icu_average_watts || 0), 0) / Math.max(1, filtered.filter(a => a.average_watts || a.icu_average_watts).length));
-                const avgWatts = avgWattsVal ? `${formatThousand(avgWattsVal)}W` : '—';
+                const rawTotalTss = Math.round(filtered.reduce((acc, a) => acc + (a.icu_training_load || a.icu_tss || 0), 0));
+                const totalTss = formatThousand(rawTotalTss);
+                const avgTssPerWeek = formatThousand(Math.round(rawTotalTss / Math.max(1, weeks)));
                 const totalDistKmNum = filtered.reduce((acc, a) => acc + (a.distance || 0), 0) / 1000;
                 const totalDistKm = formatThousand(totalDistKmNum, 0);
 
+                // Helper to extract Normalized Power accurately
+                const getNormalizedPower = (a: any): number => {
+                  if (!a) return 0;
+                  if (typeof a.icu_weighted_avg_watts === 'number' && a.icu_weighted_avg_watts > 0) {
+                    return Math.round(a.icu_weighted_avg_watts);
+                  }
+                  if (typeof a.weighted_average_watts === 'number' && a.weighted_average_watts > 0) {
+                    return Math.round(a.weighted_average_watts);
+                  }
+                  if (typeof a.icu_weighted_average_watts === 'number' && a.icu_weighted_average_watts > 0) {
+                    return Math.round(a.icu_weighted_average_watts);
+                  }
+                  if (typeof a.normalized_power === 'number' && a.normalized_power > 0) {
+                    return Math.round(a.normalized_power);
+                  }
+                  if (typeof a.np === 'number' && a.np > 0) {
+                    return Math.round(a.np);
+                  }
+                  const avgP = a.average_watts || a.icu_average_watts || 0;
+                  if (avgP > 0 && typeof a.icu_variability_index === 'number' && a.icu_variability_index > 0) {
+                    return Math.round(avgP * a.icu_variability_index);
+                  }
+                  return 0;
+                };
+
+                // Power: Average Watts & Normalized Power
+                const powerActivities = filtered.filter(a => (a.average_watts && a.average_watts > 0) || (a.icu_average_watts && a.icu_average_watts > 0));
+                const avgWattsVal = powerActivities.length > 0
+                  ? Math.round(powerActivities.reduce((acc, a) => acc + (a.average_watts || a.icu_average_watts || 0), 0) / powerActivities.length)
+                  : 0;
+
+                const npActivities = filtered.filter(a => getNormalizedPower(a) > 0);
+                const avgNpVal = npActivities.length > 0
+                  ? Math.round(npActivities.reduce((acc, a) => acc + getNormalizedPower(a), 0) / npActivities.length)
+                  : 0;
+
+                // Average Heart Rate
+                const hrActivities = filtered.filter(a => a.average_heartrate && a.average_heartrate > 0);
+                const avgHrVal = hrActivities.length > 0
+                  ? Math.round(hrActivities.reduce((acc, a) => acc + (a.average_heartrate || 0), 0) / hrActivities.length)
+                  : 0;
+
+                // Efficiency Factor
+                const efActivities = filtered.filter(a => {
+                  if (typeof a.icu_efficiency_factor === 'number' && a.icu_efficiency_factor > 0) return true;
+                  const np = getNormalizedPower(a) || (a.average_watts || a.icu_average_watts || 0);
+                  const hr = a.average_heartrate || 0;
+                  return np > 0 && hr > 0;
+                });
+
+                const avgEfVal = efActivities.length > 0
+                  ? efActivities.reduce((acc, a) => {
+                      if (typeof a.icu_efficiency_factor === 'number' && a.icu_efficiency_factor > 0) {
+                        return acc + a.icu_efficiency_factor;
+                      }
+                      const np = getNormalizedPower(a) || (a.average_watts || a.icu_average_watts || 0);
+                      const hr = a.average_heartrate || 1;
+                      return acc + (np / hr);
+                    }, 0) / efActivities.length
+                  : 0;
+
+                const avgEf = avgEfVal > 0 ? formatThousand(avgEfVal, 2) : '—';
+
                 return (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     <div className="grid grid-cols-2 gap-2">
-                      <div className="p-3.5 bg-white/[0.02] border border-white/[0.06] rounded-2xl space-y-1">
-                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Total Volume</span>
-                        <p className="text-lg font-bold text-white font-mono">{totalHours}h</p>
-                        <span className="text-[9px] text-slate-500">{filtered.length} activities logged</span>
+                      <div className="p-2.5 sm:p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl space-y-0.5">
+                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">Total Volume</span>
+                        <p className="text-base sm:text-lg font-bold text-white font-mono leading-tight">{totalHours}h</p>
+                        <span className="text-[9px] text-slate-500 block truncate">{filtered.length} activities logged</span>
                       </div>
-                      <div className="p-3.5 bg-white/[0.02] border border-white/[0.06] rounded-2xl space-y-1">
-                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Training Load</span>
-                        <p className="text-lg font-bold text-amber-400 font-mono">{totalTss} TSS</p>
-                        <span className="text-[9px] text-slate-500">{avgTssPerWeek} TSS / week avg</span>
+                      <div className="p-2.5 sm:p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl space-y-0.5">
+                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">Training Load</span>
+                        <p className="text-base sm:text-lg font-bold text-amber-400 font-mono leading-tight">{totalTss} TSS</p>
+                        <span className="text-[9px] text-slate-500 block truncate">
+                          {insightsPeriod === 'week' 
+                            ? (selectedWeekOffset === 0 ? 'Last 7 days total load' : 'Weekly total load') 
+                            : (insightsPeriod === 'month' && selectedMonthOffset === 0 ? 'Rolling 30 days load' : `${avgTssPerWeek} TSS / week avg`)}
+                        </span>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2">
-                      <div className="p-3.5 bg-white/[0.02] border border-white/[0.06] rounded-2xl space-y-1">
-                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Distance</span>
-                        <p className="text-lg font-bold text-cyan-400 font-mono">{totalDistKm} km</p>
-                        <span className="text-[9px] text-slate-500">Total distance covered</span>
+                      <div className="p-2.5 sm:p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl space-y-0.5">
+                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">Distance</span>
+                        <p className="text-base sm:text-lg font-bold text-cyan-400 font-mono leading-tight">{totalDistKm} km</p>
+                        <span className="text-[9px] text-slate-500 block truncate">Total distance covered</span>
                       </div>
-                      <div className="p-3.5 bg-white/[0.02] border border-white/[0.06] rounded-2xl space-y-1">
-                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">Avg Power</span>
-                        <p className="text-lg font-bold text-emerald-400 font-mono">{avgWatts}</p>
-                        <span className="text-[9px] text-slate-500">Average normalized power</span>
+                      <div className="p-2.5 sm:p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl space-y-0.5">
+                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">Power (Avg / NP)</span>
+                        <p className="text-base sm:text-lg font-bold text-emerald-400 font-mono truncate leading-tight">
+                          {avgWattsVal ? `${formatThousand(avgWattsVal)}W` : '—'}
+                          <span className="text-slate-500 font-normal text-xs mx-1">/</span>
+                          <span className="text-emerald-300">{avgNpVal ? `${formatThousand(avgNpVal)}W` : '—'}</span>
+                        </p>
+                        <span className="text-[9px] text-slate-500 block truncate">Avg power / NP</span>
                       </div>
                     </div>
 
-                    <div className="p-4 bg-white/[0.02] border border-white/[0.06] rounded-2xl space-y-2">
-                      <h3 className="text-[10px] font-bold text-white uppercase tracking-wider border-b border-white/[0.06] pb-2">Period Summary</h3>
-                      <p className="text-xs text-slate-300 leading-relaxed">
-                        Over the selected {insightsPeriod === 'week' ? 'past 7 days' : insightsPeriod === 'month' ? 'past 30 days' : insightsPeriod === '6months' ? 'past 6 months' : 'past year'}, you have successfully completed {filtered.length} sessions accumulating {totalHours} hours of training with a total training load of {totalTss} TSS ({avgTssPerWeek} TSS/wk).
-                      </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="p-2.5 sm:p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl space-y-0.5">
+                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">Avg Heart Rate</span>
+                        <p className="text-base sm:text-lg font-bold text-rose-400 font-mono leading-tight">
+                          {avgHrVal ? `${formatThousand(avgHrVal)} bpm` : '—'}
+                        </p>
+                        <span className="text-[9px] text-slate-500 block truncate">{hrActivities.length} activities with HR</span>
+                      </div>
+                      <div className="p-2.5 sm:p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl space-y-0.5">
+                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">Efficiency Factor</span>
+                        <p className="text-base sm:text-lg font-bold text-violet-400 font-mono leading-tight">{avgEf}</p>
+                        <span className="text-[9px] text-slate-500 block truncate">NP / HR efficiency</span>
+                      </div>
                     </div>
                   </div>
                 );
@@ -3890,10 +4282,10 @@ const App: React.FC = () => {
             </div>
 
             {/* Footer */}
-            <div className="pt-3 shrink-0 border-t border-white/[0.06] mt-auto">
+            <div className="pt-2.5 shrink-0 border-t border-white/[0.06] mt-3">
               <button 
                 onClick={() => setShowInsights(false)}
-                className="w-full py-2.5 bg-white/[0.04] hover:bg-white/[0.08] active:scale-[0.99] text-slate-300 hover:text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer"
+                className="w-full py-2 bg-white/[0.04] hover:bg-white/[0.08] active:scale-[0.99] text-slate-300 hover:text-white rounded-xl text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
               >
                 Close
               </button>

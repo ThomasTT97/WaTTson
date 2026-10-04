@@ -332,41 +332,45 @@ export const getRideFeedback = async (
   ftp?: number,
   allActivities?: Activity[]
 ): Promise<CoachingFeedback> => {
-  const cacheKey = `wattson_feedback_v8_${activity.id}_${userGoal || 'default'}`;
-  const cached = getCache(cacheKey);
-  if (cached) return cached;
-
   const plannedWorkoutCtx = plannedWorkout 
     ? `Planned Workout: "${plannedWorkout.name}". Description: "${plannedWorkout.description}".`
     : "No planned workout for this ride.";
 
-  let lapsCtx = "No specific device laps recorded. Please analyze the overall session metrics (duration, power, NP, intensity, max power spikes) to deduce if there were structured efforts, power surges, or steady state riding.";
-  
   let effectiveIntervals: any[] = [];
   if (intervals && intervals.length > 0) {
     effectiveIntervals = intervals;
-  } else if (Array.isArray((activity as any).icu_laps) && (activity as any).icu_laps.length > 0) {
-    effectiveIntervals = (activity as any).icu_laps;
   } else if (Array.isArray((activity as any).icu_intervals) && (activity as any).icu_intervals.length > 0) {
     effectiveIntervals = (activity as any).icu_intervals;
-  } else if (Array.isArray((activity as any).icu_intervals_edited) && (activity as any).icu_intervals_edited.length > 0) {
-    effectiveIntervals = (activity as any).icu_intervals_edited;
   } else if (Array.isArray((activity as any).laps) && (activity as any).laps.length > 0) {
     effectiveIntervals = (activity as any).laps;
+  } else if (Array.isArray((activity as any).icu_laps) && (activity as any).icu_laps.length > 0) {
+    effectiveIntervals = (activity as any).icu_laps;
+  } else if (Array.isArray((activity as any).icu_intervals_edited) && (activity as any).icu_intervals_edited.length > 0) {
+    effectiveIntervals = (activity as any).icu_intervals_edited;
   } else if (Array.isArray((activity as any).intervals) && (activity as any).intervals.length > 0) {
     effectiveIntervals = (activity as any).intervals;
   }
+
+  // Version 9 cache key includes intervals length so newly fetched laps instantly trigger fresh AI analysis
+  const cacheKey = `wattson_feedback_v9_${activity.id}_${effectiveIntervals.length}_${userGoal || 'default'}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
+  let lapsCtx = "No specific device laps recorded. Please analyze the overall session metrics (duration, power, NP, intensity, max power spikes) to deduce if there were structured efforts, power surges, or steady state riding.";
 
   const detectedRideType = detectIntervalsFromLaps(activity, effectiveIntervals) || undefined;
 
   // Detect power spikes and surge dynamics
   const maxWatts = activity.max_watts || 0;
   const avgWatts = activity.average_watts || activity.icu_average_watts || 0;
-  const npWatts = activity.weighted_average_watts || activity.icu_weighted_average_watts || 0;
+  let npWatts = activity.weighted_average_watts || activity.icu_weighted_avg_watts || activity.icu_weighted_average_watts || 0;
+  if (npWatts === 0 && avgWatts > 0 && activity.icu_variability_index && activity.icu_variability_index > 1.01) {
+    npWatts = Math.round(avgWatts * activity.icu_variability_index);
+  }
   let powerSpikesInfo = "";
   if (maxWatts > 0) {
     const spikeRatio = avgWatts > 0 ? (maxWatts / avgWatts).toFixed(1) : "N/A";
-    powerSpikesInfo = `Peak Power Spike: ${Math.round(maxWatts)}W (Peak/Avg Ratio: ${spikeRatio}x). NP: ${Math.round(npWatts)}W, Avg: ${Math.round(avgWatts)}W.`;
+    powerSpikesInfo = `Peak Power Spike: ${Math.round(maxWatts)}W (Peak/Avg Ratio: ${spikeRatio}x). NP: ${Math.round(npWatts || avgWatts)}W, Avg: ${Math.round(avgWatts)}W.`;
   }
 
   if (effectiveIntervals && effectiveIntervals.length > 0) {
@@ -404,10 +408,11 @@ export const getRideFeedback = async (
       })
       .filter(l => l.dur >= 5) // include short sprint efforts down to 5s
       .map((l, i) => {
+        const zoneStr = l.zone ? `Zone ${l.zone}` : '';
         const pwrStr = l.watts > 0 ? `Avg Power: ${Math.round(l.watts)}W${l.maxW ? ` (Max: ${Math.round(l.maxW)}W)` : ''}` : 'Power: N/A';
         const hrStr = l.hr > 0 ? `Avg HR: ${Math.round(l.hr)}bpm${l.maxH ? ` (Max HR: ${Math.round(l.maxH)}bpm)` : ''}` : '';
         const cadStr = l.cad ? `Cadence: ${Math.round(l.cad)}rpm` : '';
-        const metrics = [pwrStr, hrStr, cadStr].filter(Boolean).join(', ');
+        const metrics = [zoneStr, pwrStr, hrStr, cadStr].filter(Boolean).join(', ');
         return `Lap ${i+1}${l.label ? ` "${l.label}"` : ''} [${l.type || 'LAP'}]: Duration ${formatLapTime(l.dur)}, ${metrics}`;
       })
       .join('\n');
@@ -426,7 +431,7 @@ export const getRideFeedback = async (
     eftp: activity.icu_eftp || 'N/A',
     durationMins: Math.round((activity.moving_time || activity.elapsed_time || 0) / 60),
     avgPower: Math.round(activity.average_watts || activity.icu_average_watts || 0),
-    npPower: Math.round(activity.weighted_average_watts || activity.icu_weighted_average_watts || 0),
+    npPower: Math.round(npWatts || avgWatts),
     avgHr: Math.round(activity.average_heartrate || 0),
     userGoal: userGoal || 'Fitness',
     plannedWorkoutCtx,
