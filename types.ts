@@ -170,6 +170,12 @@ export interface WeeklyBriefing {
 export interface IntervalsCredentials {
   apiKey: string;
   athleteId: string;
+  provider?: 'intervals' | 'strava';
+  accessToken?: string;
+  refreshToken?: string;
+  athleteName?: string;
+  avatarUrl?: string;
+  expiresAt?: number;
 }
 
 export interface ChatMessage {

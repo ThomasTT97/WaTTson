@@ -61,8 +61,6 @@ interface ChatWindowProps {
   saveUserCloudProfile: (uid: string, data: { chatHistoryJson: string }) => Promise<any>;
   getChatStorageKey: (uid?: string | null) => string;
   getChatClearedKey: (uid?: string | null) => string;
-  isKeyboardOpen: boolean;
-  setIsKeyboardOpen: (open: boolean) => void;
   isActive?: boolean;
 }
 
@@ -96,8 +94,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
     saveUserCloudProfile,
     getChatStorageKey,
     getChatClearedKey,
-    isKeyboardOpen,
-    setIsKeyboardOpen,
     isActive = false
   } = props;
 
@@ -120,11 +116,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
   const onTypingCompleteRef = useRef<(() => void) | null>(null);
 
   const scrollToBottom = useCallback((smooth = true) => {
-    if (scrollContainerRef.current) {
-      if (!smooth) {
-        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
-      }
-    }
     if (chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
     }
@@ -209,9 +200,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
   useEffect(() => {
     if (isActive) {
       const scrollDown = (smooth = false) => {
-        if (scrollContainerRef.current) {
-          scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
-        }
         if (chatEndRef.current) {
           chatEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
         }
@@ -409,7 +397,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
   };
 
   return (
-    <div className="flex-1 min-h-0 bg-transparent overflow-x-hidden flex flex-col relative font-sans max-w-full">
+    <div className="h-full bg-transparent overflow-x-hidden flex flex-col relative font-sans max-w-full">
       {/* Refined Header Strip */}
       <div className="shrink-0 px-4 py-2.5 border-b border-white/[0.04] bg-[#07090e]/95 backdrop-blur-xl flex items-center justify-between gap-3 z-10">
         <div className="flex items-center gap-3 min-w-0">
@@ -432,7 +420,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
       <div 
         ref={scrollContainerRef}
         onScroll={handleScroll}
-        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-6 custom-scrollbar space-y-6 relative selection:bg-slate-500/30"
+        className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-6 custom-scrollbar space-y-6 relative selection:bg-slate-500/30"
       >
         <AnimatePresence mode="popLayout" initial={false}>
           {messages.length === 0 ? (
@@ -459,10 +447,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
         </AnimatePresence>
       </div>
 
-      {/* Floating Scroll Bottom Button removed based on user request */}
-
       {/* Input & Action Area */}
-      <div className={`flex-none px-4 pt-3 bg-[#05070a]/95 backdrop-blur-2xl border-t border-white/[0.04] z-20 flex flex-col gap-3 transition-all duration-300 ${isKeyboardOpen ? 'pb-4' : 'pb-[88px]'}`}>
+      <div className="flex-none px-4 pt-3 pb-6 bg-[#05070a]/95 backdrop-blur-2xl border-t border-white/[0.04] z-20 flex flex-col gap-3">
         
         {/* Suggestion & Plan Chips */}
         <div className="flex flex-col gap-2.5">
@@ -485,10 +471,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
                   e.preventDefault();
                   if (chatInput.trim() && !isChatLoading) handleSendMessage(chatInput);
                 }
-              }}
-              onFocus={() => {
-                setIsKeyboardOpen(true);
-                setTimeout(() => scrollToBottom(true), 150);
               }}
               placeholder="Message waTTson..."
               rows={1}

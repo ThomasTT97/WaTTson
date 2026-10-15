@@ -108,6 +108,12 @@ export interface UserCloudProfile {
   generatedWeeksJson?: string;
   createdAt?: string;
   updatedAt?: string;
+  provider?: 'intervals' | 'strava';
+  accessToken?: string;
+  refreshToken?: string;
+  athleteName?: string;
+  avatarUrl?: string;
+  expiresAt?: number;
 }
 
 // Auth Helpers
@@ -171,6 +177,12 @@ export async function saveUserCloudProfile(userId: string, data: Partial<UserClo
     if (data.weeklyBriefingJson !== undefined) cleanData.weeklyBriefingJson = data.weeklyBriefingJson;
     if (data.generatedWeeksJson !== undefined) cleanData.generatedWeeksJson = data.generatedWeeksJson;
     if (data.createdAt !== undefined) cleanData.createdAt = data.createdAt;
+    if (data.provider !== undefined) cleanData.provider = data.provider;
+    if (data.accessToken !== undefined) cleanData.accessToken = data.accessToken;
+    if (data.refreshToken !== undefined) cleanData.refreshToken = data.refreshToken;
+    if (data.athleteName !== undefined) cleanData.athleteName = data.athleteName;
+    if (data.avatarUrl !== undefined) cleanData.avatarUrl = data.avatarUrl;
+    if (data.expiresAt !== undefined) cleanData.expiresAt = Number(data.expiresAt);
 
     await setDoc(doc(db, 'users', userId), cleanData, { merge: true });
   } catch (error) {

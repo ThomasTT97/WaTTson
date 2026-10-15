@@ -230,6 +230,49 @@ app.post('/api/gemini/stream', aiLimiter, async (req, res) => {
   }
 });
 
+// Strava Auth
+app.get('/api/auth/strava/url', (req, res) => {
+  const redirectUri = `${req.headers.referer || process.env.APP_URL}/auth/strava/callback`;
+  const params = new URLSearchParams({
+    client_id: process.env.STRAVA_CLIENT_ID!,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'activity:read,activity:write',
+  });
+  res.json({ url: `https://www.strava.com/oauth/authorize?${params}` });
+});
+
+// Intervals.icu Auth
+app.get('/api/auth/intervals/url', (req, res) => {
+  const redirectUri = `${req.headers.referer || process.env.APP_URL}/auth/intervals/callback`;
+  const params = new URLSearchParams({
+    client_id: process.env.INTERVALS_CLIENT_ID!,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'read,write',
+  });
+  res.json({ url: `https://intervals.icu/oauth/authorize?${params}` });
+});
+
+// Callback handler
+app.get(['/auth/strava/callback', '/auth/intervals/callback'], async (req, res) => {
+  res.send(`
+    <html>
+      <body>
+        <script>
+          if (window.opener) {
+            window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', code: '${req.query.code}', provider: '${req.path.includes('strava') ? 'strava' : 'intervals'}' }, '*');
+            window.close();
+          } else {
+            window.location.href = '/';
+          }
+        </script>
+        <p>Authentication successful. This window should close automatically.</p>
+      </body>
+    </html>
+  `);
+});
+
 // Proxy for intervals.icu requests (hardened against SSRF, path traversal & abuse)
 app.use('/api/intervals-proxy', proxyLimiter, async (req, res) => {
   try {

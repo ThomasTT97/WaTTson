@@ -88,6 +88,36 @@
           "type": "string",
           "description": "ISO timestamp of last document update",
           "maxLength": 64
+        },
+        "provider": {
+          "type": "string",
+          "description": "OAuth provider (intervals or strava)",
+          "enum": ["intervals", "strava"],
+          "maxLength": 32
+        },
+        "accessToken": {
+          "type": "string",
+          "description": "OAuth access token",
+          "maxLength": 2048
+        },
+        "refreshToken": {
+          "type": "string",
+          "description": "OAuth refresh token",
+          "maxLength": 2048
+        },
+        "athleteName": {
+          "type": "string",
+          "description": "Athlete display name from provider",
+          "maxLength": 128
+        },
+        "avatarUrl": {
+          "type": "string",
+          "description": "Athlete avatar URL from provider",
+          "maxLength": 1024
+        },
+        "expiresAt": {
+          "type": "number",
+          "description": "OAuth token expiration timestamp"
         }
       },
       "required": ["id", "email"]

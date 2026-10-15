@@ -34,7 +34,8 @@ service cloud.firestore {
           'trainingMethodology', 'trainingMode', 'planMode', 'ftp',
           'planContext', 'chatHistoryJson',
           'intervalsApiKey', 'intervalsAthleteId', 'weeklyBriefingJson',
-          'generatedWeeksJson', 'createdAt', 'updatedAt'
+          'generatedWeeksJson', 'createdAt', 'updatedAt',
+          'provider', 'accessToken', 'refreshToken', 'athleteName', 'avatarUrl', 'expiresAt'
         ])
         && data.id is string && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$')
         && data.email is string && data.email.size() <= 256
@@ -52,7 +53,13 @@ service cloud.firestore {
         && (!('weeklyBriefingJson' in data) || (data.weeklyBriefingJson is string && data.weeklyBriefingJson.size() <= 50000))
         && (!('generatedWeeksJson' in data) || (data.generatedWeeksJson is string && data.generatedWeeksJson.size() <= 1000))
         && (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64))
-        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64))
+        && (!('provider' in data) || (data.provider is string && data.provider in ['intervals', 'strava']))
+        && (!('accessToken' in data) || (data.accessToken is string && data.accessToken.size() <= 2048))
+        && (!('refreshToken' in data) || (data.refreshToken is string && data.refreshToken.size() <= 2048))
+        && (!('athleteName' in data) || (data.athleteName is string && data.athleteName.size() <= 128))
+        && (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 1024))
+        && (!('expiresAt' in data) || (data.expiresAt is number));
     }
 
     // User document path
