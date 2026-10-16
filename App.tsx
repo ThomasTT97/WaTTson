@@ -4391,23 +4391,22 @@ const App: React.FC = () => {
         changes={APP_CHANGELOG}
       />
       {/* Floating Modern Navigation Dock */}
-      {!isKeyboardOpen && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-[340px] bg-[#080b11]/90 backdrop-blur-xl border border-white/[0.08] rounded-2xl p-1 shadow-[0_8px_30px_rgba(0,0,0,0.6)] flex items-center justify-between gap-1">
-          {[
-            { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
-            { id: 'rides', icon: Bike, label: 'Rides' },
-            { id: 'chat', icon: MessageSquare, label: 'waTTson' },
-            { id: 'settings', icon: User, label: 'Profile' }
-          ].map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setActiveTab(item.id as any)}
-                className="relative flex-1 py-1.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all duration-200 active:scale-95 group overflow-hidden"
-              >
-                {isActive && (
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-[340px] bg-[#080b11]/90 backdrop-blur-xl border border-white/[0.08] rounded-2xl p-1 shadow-[0_8px_30px_rgba(0,0,0,0.6)] flex items-center justify-between gap-1">
+        {[
+          { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
+          { id: 'rides', icon: Bike, label: 'Rides' },
+          { id: 'chat', icon: MessageSquare, label: 'waTTson' },
+          { id: 'settings', icon: User, label: 'Profile' }
+        ].map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id as any)}
+              className="relative flex-1 py-1.5 flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all duration-200 active:scale-95 group overflow-hidden"
+            >
+              {isActive && (
                   <motion.div
                     layoutId="activeTabPill"
                     className="absolute inset-0 bg-emerald-500/10 border border-emerald-500/20 rounded-xl"
@@ -4431,7 +4430,6 @@ const App: React.FC = () => {
             );
           })}
         </div>
-      )}
     </div>
   );
 };

@@ -448,7 +448,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
       </div>
 
       {/* Input & Action Area */}
-      <div className="flex-none px-4 pt-3 pb-6 bg-[#05070a]/95 backdrop-blur-2xl border-t border-white/[0.04] z-20 flex flex-col gap-3">
+      <div className="flex-none px-4 pt-3 pb-24 bg-[#05070a]/95 backdrop-blur-2xl border-t border-white/[0.04] z-20 flex flex-col gap-3">
         
         {/* Suggestion & Plan Chips */}
         <div className="flex flex-col gap-2.5">
