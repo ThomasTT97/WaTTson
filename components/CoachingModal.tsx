@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Activity, IntervalsCredentials, CoachingFeedback } from '../types';
 import { getRideFeedback } from '../services/geminiService';
 import { fetchActivityIntervals, fetchPlannedWorkout } from '../services/intervalsService';
@@ -34,49 +34,42 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
           : [];
 
   const [intervals, setIntervals] = useState<any[]>(initialIntervals);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let isMounted = true;
-    const fetchFeedback = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const dateStr = activity.start_date_local.split('T')[0];
-        const [fetchedIntervals, plannedWorkout] = await Promise.all([
-          fetchActivityIntervals(activity.id, creds),
-          fetchPlannedWorkout(dateStr, creds)
-        ]);
+  const handleRunAnalysis = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const dateStr = activity.start_date_local.split('T')[0];
+      const [fetchedIntervals, plannedWorkout] = await Promise.all([
+        fetchActivityIntervals(activity.id, creds),
+        fetchPlannedWorkout(dateStr, creds)
+      ]);
 
-        if (!isMounted) return;
+      const resolvedIntervals = (fetchedIntervals && fetchedIntervals.length > 0)
+        ? fetchedIntervals
+        : initialIntervals;
 
-        const resolvedIntervals = (fetchedIntervals && fetchedIntervals.length > 0)
-          ? fetchedIntervals
-          : initialIntervals;
-
-        setIntervals(resolvedIntervals);
-        if (resolvedIntervals.length > 0) {
-          (activity as any).icu_intervals = resolvedIntervals;
-        }
-
-        const data = await getRideFeedback(activity, resolvedIntervals, plannedWorkout, userGoal, ftp, allActivities);
-        if (isMounted) {
-          setFeedback(data);
-        }
-      } catch (err: any) {
-        if (isMounted) {
-          setError(err.message || "Engine analysis failed.");
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+      setIntervals(resolvedIntervals);
+      if (resolvedIntervals.length > 0) {
+        (activity as any).icu_intervals = resolvedIntervals;
       }
-    };
-    fetchFeedback();
-    return () => { isMounted = false; };
-  }, [activity, creds, userGoal, ftp, allActivities]);
+
+      const data = await getRideFeedback(activity, resolvedIntervals, plannedWorkout, userGoal, ftp, allActivities);
+      setFeedback(data);
+    } catch (err: any) {
+      setError(err.message || "Engine analysis failed.");
+    } finally {
+      setLoading(false);
+    }
+  }, [activity, creds, initialIntervals, userGoal, ftp, allActivities]);
+
+  useEffect(() => {
+    if (!feedback && !loading && !error) {
+      handleRunAnalysis();
+    }
+  }, [handleRunAnalysis, feedback, loading, error]);
 
   const dateObj = new Date(activity.start_date_local);
   const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
@@ -181,7 +174,19 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-0.5">
-          {loading ? (
+          {!feedback && !loading && !error ? (
+            <div className="w-full py-12 flex flex-col items-center justify-center bg-white/[0.02] rounded-2xl border border-white/[0.06] text-center px-4">
+              <Sparkles size={24} className="text-emerald-400 mb-3" />
+              <h3 className="text-sm font-bold text-white mb-1">Analyze Workout</h3>
+              <p className="text-xs text-slate-400 mb-4">Click below to run an AI-powered analysis of this workout.</p>
+              <button 
+                onClick={handleRunAnalysis}
+                className="px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 font-bold rounded-xl text-xs uppercase tracking-wider transition-all border border-emerald-500/20"
+              >
+                Analyze Ride
+              </button>
+            </div>
+          ) : loading ? (
             <div className="w-full py-12 flex flex-col items-center justify-center bg-white/[0.02] rounded-2xl border border-white/[0.06] text-center px-4">
               <Loader2 size={20} className="animate-spin text-slate-400 mb-2" />
               <span className="text-xs font-medium text-slate-300">Analyzing ride data & power distribution...</span>
@@ -190,6 +195,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
             <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-center">
               <span className="text-xs font-semibold text-rose-400 block mb-1">Analysis Unavailable</span>
               <p className="text-[11px] text-slate-400">{error}</p>
+              <button onClick={handleRunAnalysis} className="mt-3 text-[10px] text-emerald-400 font-bold underline">Retry Analysis</button>
             </div>
           ) : feedback && (
             <>

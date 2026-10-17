@@ -57,8 +57,8 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
     });
 
     const models = options?.preferFlashLite === false
-      ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest']
-      : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+      ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-2.0-flash', 'gemini-flash-latest']
+      : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
 
     let lastError: any = null;
     for (const model of models) {

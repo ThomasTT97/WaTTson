@@ -388,6 +388,7 @@ const App: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showInsights, navigatePeriod]);
+  const [showAdditionalStats, setShowAdditionalStats] = useState(false);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [settingsView, setSettingsView] = useState<'main' | 'goal' | 'data' | 'rider_profile' | 'training_method' | 'ftp' | 'workout_library'>('main');
@@ -4352,7 +4353,7 @@ const App: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                       <div className="p-2.5 sm:p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl space-y-0.5">
                         <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">Avg Heart Rate</span>
                         <p className="text-base sm:text-lg font-bold text-rose-400 font-mono leading-tight">
@@ -4367,19 +4368,11 @@ const App: React.FC = () => {
                       </div>
                     </div>
                   </div>
+
                 );
               })()}
             </div>
 
-            {/* Footer */}
-            <div className="pt-2.5 shrink-0 border-t border-white/[0.06] mt-3">
-              <button 
-                onClick={() => setShowInsights(false)}
-                className="w-full py-2 bg-white/[0.04] hover:bg-white/[0.08] active:scale-[0.99] text-slate-300 hover:text-white rounded-xl text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
           </div>
         </div>
       )}

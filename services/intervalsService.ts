@@ -98,6 +98,10 @@ export const fetchAthleteId = async (apiKey: string): Promise<string> => {
       throw new Error(`Intervals.icu error: ${response.status}. Please try again later.`);
     }
     
+    const contentType = response.headers.get("content-type");
+    if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Intervals.icu returned an unexpected format. Check if the service is down or you are logged out.");
+    }
     const data = await response.json();
     if (!data || !data.id) {
       throw new Error("Could not retrieve athlete ID from Intervals.icu.");
@@ -341,6 +345,10 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
     }
     if (!response.ok) return [];
     
+    const contentType = response.headers.get("content-type");
+    if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Intervals.icu returned an unexpected format.");
+    }
     const data = await response.json();
     if (!data) return [];
     
