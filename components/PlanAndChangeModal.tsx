@@ -243,10 +243,8 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
       const dayShort = getDayShort(d);
       const dayName = getDayName(d);
 
-      // Find matching day from previously set availability
-      const savedMatch = saved?.days?.find(sd => 
-        (sd.dateStr && sd.dateStr === dateStr) || sd.dayShort === dayShort
-      );
+      // Find matching day from previously set availability - prioritize day of week
+      const savedMatch = saved?.days?.find(sd => sd.dayShort === dayShort);
 
       let prefilledMins = 60;
       if (savedMatch !== undefined) {
