@@ -246,7 +246,8 @@ export const sanitizeWorkoutSteps = (steps: any[] | undefined, ftp?: number): an
 const callGemini = async (params: any, options?: { preferFlashLite?: boolean; thinkingLevel?: ThinkingLevel }): Promise<GenerateContentResponse> => {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'x-wattson-client': 'app'
+    'x-wattson-client': 'app',
+    'x-wattson-app-id': 'c1b22b2d-9717-465e-bcf5-f44e5221095e'
   };
 
   try {
@@ -1869,7 +1870,8 @@ POWER MILESTONES & SPIKES:
   if (onChunk) {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'x-wattson-client': 'app'
+      'x-wattson-client': 'app',
+      'x-wattson-app-id': 'c1b22b2d-9717-465e-bcf5-f44e5221095e'
     };
 
     try {

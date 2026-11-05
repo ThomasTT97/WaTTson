@@ -1,8 +1,33 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+
+// Helper to dynamically read fresh GEMINI_API_KEY from .env (overriding stale container env)
+const getGeminiApiKey = (): string | undefined => {
+  try {
+    const envPath = path.resolve(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf-8');
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+          const idx = trimmed.indexOf('=');
+          if (idx !== -1) {
+            const key = trimmed.slice(0, idx).trim();
+            const val = trimmed.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
+            if (key === 'GEMINI_API_KEY' && val) {
+              return val;
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+  return process.env.GEMINI_API_KEY || process.env.API_KEY;
+};
 
 const app = express();
 app.set('trust proxy', 1); // Trust first proxy (Cloud Run / AI Studio)
@@ -40,13 +65,49 @@ const proxyLimiter = rateLimit({
   message: { error: 'Intervals.icu proxy rate limit exceeded. Please wait a moment.' }
 });
 
+// Security origin verification helper
+const isAllowedOrigin = (req: express.Request): boolean => {
+  const origin = req.headers.origin || req.headers.referer;
+  const host = req.headers.host;
+  
+  // If an Origin or Referer header is present, strictly validate it
+  if (origin) {
+    try {
+      const parsed = new URL(origin);
+      const isAllowedHost = 
+        parsed.hostname === 'localhost' || 
+        parsed.hostname === '127.0.0.1' || 
+        parsed.hostname.endsWith('.run.app') || 
+        parsed.hostname.endsWith('.pages.dev');
+      return isAllowedHost;
+    } catch {
+      return false;
+    }
+  }
+
+  // Only allow missing Origin/Referer for local development test requests, never for public hosts
+  if (host && (host.startsWith('localhost') || host.startsWith('127.0.0.1'))) {
+    return true;
+  }
+
+  return false;
+};
+
+const EXPECTED_APP_ID = 'c1b22b2d-9717-465e-bcf5-f44e5221095e';
+
 // Server-side Gemini API endpoint
 app.post('/api/gemini/generate', aiLimiter, async (req, res) => {
   try {
-    // Basic client validation
+    // 1. Origin and Host verification to block third-party bot scanners
+    if (!isAllowedOrigin(req)) {
+      return res.status(403).json({ error: 'Access denied: Invalid request origin.' });
+    }
+
+    // 2. Client & App verification (blocks unauthorized API scrapers)
     const clientHeader = req.headers['x-wattson-client'];
+    const appIdHeader = req.headers['x-wattson-app-id'];
     const authHeader = req.headers['authorization'];
-    if (!clientHeader && !authHeader) {
+    if ((!clientHeader || appIdHeader !== EXPECTED_APP_ID) && !authHeader) {
       return res.status(403).json({ error: 'Direct access forbidden. Requests must originate from the waTTson client.' });
     }
 
@@ -55,13 +116,13 @@ app.post('/api/gemini/generate', aiLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Invalid request: "params" object is required.' });
     }
 
-    // Guard against oversized prompt payloads
+    // 3. Guard against oversized payloads (limit to 120kb)
     const payloadStr = JSON.stringify(params);
-    if (payloadStr.length > 500000) {
+    if (payloadStr.length > 120000) {
       return res.status(413).json({ error: 'Payload too large. Prompt context exceeds allowable limit.' });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       return res.status(500).json({ error: 'Server configuration error: GEMINI_API_KEY is not set.' });
     }
@@ -75,12 +136,15 @@ app.post('/api/gemini/generate', aiLimiter, async (req, res) => {
       }
     });
 
+    // Whitelist only safe, lightweight coaching models
+    const allowedModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'];
     const models = options?.preferFlashLite === false
-      ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest']
-      : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+      ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash']
+      : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'];
 
     let lastError: any = null;
     for (const model of models) {
+      if (!allowedModels.includes(model)) continue;
       try {
         const thinkingLevel = model === 'gemini-3.1-flash-lite'
           ? ThinkingLevel.MINIMAL
@@ -118,9 +182,14 @@ app.post('/api/gemini/generate', aiLimiter, async (req, res) => {
 // Server-side Gemini Streaming API endpoint (SSE)
 app.post('/api/gemini/stream', aiLimiter, async (req, res) => {
   try {
+    if (!isAllowedOrigin(req)) {
+      return res.status(403).json({ error: 'Access denied: Invalid request origin.' });
+    }
+
     const clientHeader = req.headers['x-wattson-client'];
+    const appIdHeader = req.headers['x-wattson-app-id'];
     const authHeader = req.headers['authorization'];
-    if (!clientHeader && !authHeader) {
+    if ((!clientHeader || appIdHeader !== EXPECTED_APP_ID) && !authHeader) {
       return res.status(403).json({ error: 'Direct access forbidden. Requests must originate from the waTTson client.' });
     }
 
@@ -130,11 +199,11 @@ app.post('/api/gemini/stream', aiLimiter, async (req, res) => {
     }
 
     const payloadStr = JSON.stringify(params);
-    if (payloadStr.length > 500000) {
+    if (payloadStr.length > 120000) {
       return res.status(413).json({ error: 'Payload too large. Prompt context exceeds allowable limit.' });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       return res.status(500).json({ error: 'Server configuration error: GEMINI_API_KEY is not set.' });
     }
@@ -148,9 +217,10 @@ app.post('/api/gemini/stream', aiLimiter, async (req, res) => {
       }
     });
 
+    const allowedModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'];
     const models = options?.preferFlashLite === false
-      ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest']
-      : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+      ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash']
+      : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'];
 
     // Setup Server-Sent Events headers
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');

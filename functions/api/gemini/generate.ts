@@ -8,10 +8,31 @@ interface PagesContext {
 
 export async function onRequestPost(context: PagesContext): Promise<Response> {
   try {
+    // Origin verification
+    const origin = context.request.headers.get('origin') || context.request.headers.get('referer');
+    if (origin) {
+      try {
+        const parsed = new URL(origin);
+        if (!parsed.hostname.endsWith('.pages.dev') && !parsed.hostname.endsWith('.run.app') && parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') {
+          return new Response(
+            JSON.stringify({ error: 'Access denied: Invalid request origin.' }),
+            { status: 403, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+      } catch {
+        return new Response(
+          JSON.stringify({ error: 'Access denied: Malformed origin header.' }),
+          { status: 403, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
     // Client signature verification
     const clientHeader = context.request.headers.get('x-wattson-client');
+    const appIdHeader = context.request.headers.get('x-wattson-app-id');
     const authHeader = context.request.headers.get('authorization');
-    if (!clientHeader && !authHeader) {
+    const EXPECTED_APP_ID = 'c1b22b2d-9717-465e-bcf5-f44e5221095e';
+    if ((!clientHeader || appIdHeader !== EXPECTED_APP_ID) && !authHeader) {
       return new Response(
         JSON.stringify({ error: 'Direct access forbidden. Requests must originate from the waTTson client.' }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
@@ -30,7 +51,7 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
 
     // Guard against oversized prompt payloads
     const payloadStr = JSON.stringify(params);
-    if (payloadStr.length > 500000) {
+    if (payloadStr.length > 120000) {
       return new Response(
         JSON.stringify({ error: 'Payload too large. Prompt context exceeds allowable limit.' }),
         { status: 413, headers: { 'Content-Type': 'application/json' } }
@@ -56,9 +77,10 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
       }
     });
 
+    const allowedModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'];
     const models = options?.preferFlashLite === false
-      ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-2.0-flash', 'gemini-flash-latest']
-      : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+      ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash']
+      : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'];
 
     let lastError: any = null;
     for (const model of models) {
