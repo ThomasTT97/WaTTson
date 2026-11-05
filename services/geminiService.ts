@@ -147,6 +147,10 @@ export const sanitizeWorkoutSteps = (steps: any[] | undefined, ftp?: number): an
       }
     }
 
+    // Clean up hallucinated interval patterns from labels, e.g., "4x4m" or "4x4"
+    const cleanedLabel = label.replace(/\d+x\d+m?/, '').trim();
+    const stepWithCleanLabel = { ...step, label: cleanedLabel };
+
     // Identify the zone of this step and check if it violates maximum continuous limits
     const isVo2Max = targetPct >= 1.05 || labelLower.includes('vo2') || labelLower.includes('aerobic capacity') || labelLower.includes('anaerobic');
     const isThreshold = !isVo2Max && (targetPct >= 0.90 || labelLower.includes('threshold') || labelLower.includes('lthr'));
@@ -158,12 +162,12 @@ export const sanitizeWorkoutSteps = (steps: any[] | undefined, ftp?: number): an
       const repDuration = Math.round(duration / reps);
       const recoveryDuration = Math.max(2, Math.min(3, repDuration));
       
-      const workLabel = updateLabelDuration(label, repDuration);
+      const workLabel = updateLabelDuration(cleanedLabel, repDuration);
       const recoveryLabel = `${recoveryDuration} min Recovery ${Math.round(0.55 * effectiveFtp)}w`;
-
+      
       for (let r = 0; r < reps; r++) {
         const newStep = {
-          ...step,
+          ...stepWithCleanLabel,
           duration: repDuration,
           label: workLabel
         };
@@ -179,17 +183,17 @@ export const sanitizeWorkoutSteps = (steps: any[] | undefined, ftp?: number): an
         }
       }
     } else if (isThreshold && duration > 20) {
-      // Decompose long Threshold efforts (typically anything > 20 minutes continuous)
+      // ... Threshold logic ...
       const reps = Math.max(2, Math.round(duration / 10));
       const repDuration = Math.round(duration / reps);
       const recoveryDuration = Math.max(3, Math.round(repDuration / 3));
 
-      const workLabel = updateLabelDuration(label, repDuration);
+      const workLabel = updateLabelDuration(cleanedLabel, repDuration);
       const recoveryLabel = `${recoveryDuration} min Recovery ${Math.round(0.55 * effectiveFtp)}w`;
 
       for (let r = 0; r < reps; r++) {
         const newStep = {
-          ...step,
+          ...stepWithCleanLabel,
           duration: repDuration,
           label: workLabel
         };
@@ -205,17 +209,17 @@ export const sanitizeWorkoutSteps = (steps: any[] | undefined, ftp?: number): an
         }
       }
     } else if (isSweetSpotOrTempo && duration > 30) {
-      // Decompose long Sweet Spot or Tempo efforts (typically anything > 30 minutes continuous)
+      // ... Sweet Spot logic ...
       const reps = Math.max(2, Math.round(duration / 15));
       const repDuration = Math.round(duration / reps);
       const recoveryDuration = Math.max(3, Math.round(repDuration / 4));
 
-      const workLabel = updateLabelDuration(label, repDuration);
+      const workLabel = updateLabelDuration(cleanedLabel, repDuration);
       const recoveryLabel = `${recoveryDuration} min Recovery ${Math.round(0.55 * effectiveFtp)}w`;
 
       for (let r = 0; r < reps; r++) {
         const newStep = {
-          ...step,
+          ...stepWithCleanLabel,
           duration: repDuration,
           label: workLabel
         };
@@ -231,7 +235,7 @@ export const sanitizeWorkoutSteps = (steps: any[] | undefined, ftp?: number): an
         }
       }
     } else {
-      sanitized.push(step);
+      sanitized.push(stepWithCleanLabel);
     }
   }
 

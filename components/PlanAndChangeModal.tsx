@@ -323,6 +323,13 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
   const restDaysCount = 7 - trainingDaysCount;
 
   const handleApply = () => {
+    // Enforce minimum 30 min duration for any day that isn't a Rest day
+    const invalidDays = days.filter(d => d.durationMins > 0 && d.durationMins < 30);
+    if (invalidDays.length > 0) {
+      alert("Please set workout duration to at least 30 minutes, or set as 'Rest'.");
+      return;
+    }
+
     const parts = days.map(d => {
       const formatted = formatDurationDisplay(d.durationMins);
       return `${d.dayShort}: ${formatted}`;
