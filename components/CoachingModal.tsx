@@ -8,7 +8,8 @@ import {
   X, 
   TrendingUp,
   Target,
-  Loader2
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 
 interface CoachingModalProps {
@@ -117,12 +118,23 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
               {rideTitle}
             </h2>
           </div>
-          <button 
-            onClick={onClose} 
-            className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/[0.04] transition-colors shrink-0 cursor-pointer"
-          >
-            <X size={16} />
-          </button>
+          <div className="flex items-center gap-1">
+            {feedback && !loading && (
+              <button 
+                onClick={handleRunAnalysis}
+                className="text-slate-500 hover:text-white p-2 rounded-xl hover:bg-white/[0.04] transition-colors cursor-pointer"
+                title="Regenerate Analysis"
+              >
+                <RefreshCw size={14} />
+              </button>
+            )}
+            <button 
+              onClick={onClose} 
+              className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/[0.04] transition-colors shrink-0 cursor-pointer"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {/* Minimalist Metrics Strip */}
@@ -145,7 +157,13 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
           </div>
           <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
             <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Cadence</span>
-            <span className="text-xs font-bold text-slate-400 font-mono">{typeof activity.average_cadence === 'number' ? `${Math.round(activity.average_cadence)} rpm` : '--'}</span>
+            <span className="text-xs font-bold text-slate-400 font-mono">
+              {typeof activity.average_cadence === 'number' && activity.average_cadence > 0 
+                ? `${Math.round(activity.average_cadence)} rpm` 
+                : typeof (activity as any).icu_average_cadence === 'number' && (activity as any).icu_average_cadence > 0
+                  ? `${Math.round((activity as any).icu_average_cadence)} rpm`
+                  : '--'}
+            </span>
           </div>
           <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
             <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">TSS</span>
