@@ -143,11 +143,11 @@ export const getDailySuggestionPrompt = (p: DailySuggestionParams): string => {
   const isHrBased = p.hasPowerOnMostRides === false;
 
   const methodologyText = p.methodology === 'polarized'
-    ? `METHODOLOGY REQUIREMENT: POLARIZED TRAINING MODEL. Prioritize ~80% Zone 1/2 low-intensity volume and ~20% high-intensity (VO2max / hard intervals). Avoid middle Zone 3/4 threshold unless specified.`
+    ? `METHODOLOGY REQUIREMENT: POLARIZED TRAINING MODEL. Scientific rationale: Separates low-intensity (Zone 1/2) and high-intensity (VO2max/hard anaerobic) sessions to maximize aerobic adaptation while minimizing plateauing from middle-intensity (Zone 3/4) "gray zone" training. Prioritize ~80% easy volume and ~20% hard intervals.`
     : p.methodology === 'pyramidal'
-    ? `METHODOLOGY REQUIREMENT: PYRAMIDAL TRAINING MODEL. Structure volume pyramid: largest in Zone 1/2, moderate in Tempo/Sweetspot/Threshold, smallest in VO2max.`
+    ? `METHODOLOGY REQUIREMENT: PYRAMIDAL TRAINING MODEL. Scientific rationale: Builds a broad aerobic base through high-volume Zone 1/2, supported by a moderate volume of higher-intensity (Threshold/Sweetspot) work, with the smallest proportion dedicated to maximal VO2max bursts. This mimics the physiological demands of long-distance cycling events.`
     : p.methodology === 'norwegian'
-    ? `METHODOLOGY REQUIREMENT: NORWEGIAN MODEL (Double Threshold). Emphasize sub-threshold controlled interval work (Sweetspot/Threshold) with strict lactate control paired with heavy Zone 2 base.`
+    ? `METHODOLOGY REQUIREMENT: NORWEGIAN MODEL. Scientific rationale: Based on "Double Threshold" concepts—utilizing controlled sub-threshold efforts (Sweetspot/Threshold) to drive mitochondrial density improvements, paired with high-volume Zone 2 base to enhance fat oxidation and capillary density, enabling higher threshold power.`
     : ``;
 
   const ftpText = p.ftp 
@@ -190,9 +190,10 @@ export const getDailySuggestionPrompt = (p: DailySuggestionParams): string => {
     2. "workout_steps" MUST be an array of objects with {duration: number, target_watts: number, label: string}.
     3. Estimate "tss" (Training Stress Score) as a number for each workout.
     4. WORKOUT DURATION GUIDELINES:
-       - Default daily workouts MUST be realistic training sessions between 45 and 75 minutes (e.g. 45m, 60m, 75m, max 90m).
+       - Default daily workouts MUST be realistic training sessions between 45 and 90 minutes.
        - NEVER suggest a 3-hour or 4-hour (240m) ride as a standard daily suggestion unless the user explicitly requested ultra-endurance volume in their goal or custom directives.
-       - "duration_minutes" MUST be in MINUTES (e.g., 45, 60, 75, 90).
+       - "duration_minutes" MUST be in MINUTES.
+       - MANDATORY: ALWAYS round the total workout "duration_minutes" to the nearest 15-minute block (e.g., 45, 60, 75, 90, 105, 120).
     5. NO CONSECUTIVE RECOVERY RIDES OR CONSECUTIVE REST DAYS:
        - Never suggest 2 recovery rides or active recovery sessions in a row.
        - NO UNREQUESTED CONSECUTIVE REST DAYS: If yesterday was already a Rest Day (0 TSS / no activity logged), do NOT recommend another Rest Day today unless the athlete has explicitly requested it or Form (TSB) is in severe overreaching (< -30). If fatigue is still elevated from a prior weekend block, suggest a 30-45 min Zone 1 Active Recovery spin or an easy 45-60 min Zone 2 Aerobic Endurance ride to maintain neuromuscular tone, promote circulation, and prevent sluggish legs.

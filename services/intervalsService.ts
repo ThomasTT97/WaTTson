@@ -432,9 +432,9 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
         ? l.max_heartrate
         : ((typeof l.max_hr === 'number' && l.max_hr > 0) ? l.max_hr : undefined);
 
-      const avgCadence = (typeof l.average_cadence === 'number' && l.average_cadence > 0)
+      const avgCadence = (typeof l.average_cadence === 'number')
         ? l.average_cadence
-        : ((typeof l.avg_cadence === 'number' && l.avg_cadence > 0)
+        : ((typeof l.avg_cadence === 'number')
           ? l.avg_cadence
           : (typeof l.cadence === 'number' ? l.cadence : undefined));
       
@@ -520,7 +520,7 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
         max_watts: maxWatts ? Math.round(maxWatts) : undefined,
         average_heartrate: Math.round(avgHr),
         max_heartrate: maxHr ? Math.round(maxHr) : undefined,
-        average_cadence: avgCadence ? Math.round(avgCadence) : undefined,
+        average_cadence: (typeof avgCadence === 'number') ? Math.round(avgCadence) : undefined,
         moving_time: Math.round(movingTime),
         distance: typeof l.distance === 'number' ? Math.round(l.distance) : undefined,
         type,

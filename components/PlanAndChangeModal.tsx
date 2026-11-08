@@ -179,36 +179,42 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
   const [days, setDays] = useState<DayDurationItem[]>([]);
 
   const loadSavedAvailability = useCallback((): SavedAvailabilityRecord | null => {
+    let record: SavedAvailabilityRecord | null = null;
     try {
       const stored = localStorage.getItem(AVAILABILITY_STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed && Array.isArray(parsed.days) && parsed.days.length > 0) {
-          return parsed;
+          record = parsed;
         }
       }
     } catch (e) {
       console.warn('Failed to parse wattson_last_saved_availability from localStorage', e);
     }
 
-    if (planContext) {
+    if (!record && planContext) {
       try {
         const directives = parsePlanDirectives(planContext);
         const schedDir = [...directives].reverse().find(d => 
           d.text.toLowerCase().includes('weekly schedule')
         );
         if (schedDir) {
-          const parsedFromDir = parseScheduleDirective(schedDir.text, schedDir.requestedAt);
-          if (parsedFromDir) {
-            return parsedFromDir;
-          }
+          record = parseScheduleDirective(schedDir.text, schedDir.requestedAt);
         }
       } catch (e) {
         console.warn('Failed to parse availability from planContext', e);
       }
     }
 
-    return null;
+    if (record) {
+      // Sanitize: force any duration < 30m (but > 0) to 0 (Rest)
+      record.days = record.days.map((d: any) => ({
+        ...d,
+        durationMins: (d.durationMins > 0 && d.durationMins < 30) ? 0 : d.durationMins
+      }));
+    }
+
+    return record;
   }, [planContext]);
 
   // Initialize and prefill days: previously set availability is prioritized and preserved

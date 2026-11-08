@@ -406,9 +406,9 @@ export const getRideFeedback = async (
         const maxH = typeof l.max_heartrate === 'number' && l.max_heartrate > 0
           ? l.max_heartrate
           : (l.max_hr || undefined);
-        const cad = typeof l.average_cadence === 'number' && l.average_cadence > 0
+        const cad = typeof l.average_cadence === 'number'
           ? l.average_cadence
-          : (l.cadence || undefined);
+          : (typeof l.cadence === 'number' ? l.cadence : undefined);
         return { ...l, dur, watts, maxW, hr, maxH, cad };
       })
       .filter(l => l.dur >= 5) // include short sprint efforts down to 5s
@@ -613,12 +613,15 @@ export const getDailySuggestion = async (
   });
   const parsed = safeParseJSON(response.text);
   const result = { ...parsed, date: targetStr };
+  
+  const roundTo15 = (n: number) => Math.round(n / 15) * 15;
+
   if (result) {
     if (result.primary && result.primary.intensity !== 'Rest') {
       const matched = matchWorkoutToLibrary(result.primary.title || result.primary.description || '', result.primary.duration_minutes || 45, result.primary.intensity || 'Medium');
       if (matched) {
         const matchedDuration = matched.duration_minutes || 60;
-        const targetDuration = result.primary.duration_minutes || matchedDuration;
+        const targetDuration = roundTo15(result.primary.duration_minutes || matchedDuration);
 
         // Intelligent scaling: Preserve Work, scale Filler
         const isWorkStep = (s: any) => {
@@ -670,7 +673,7 @@ export const getDailySuggestion = async (
       const matched = matchWorkoutToLibrary(result.alternative.title || result.alternative.description || '', result.alternative.duration_minutes || 45, result.alternative.intensity || 'Medium');
       if (matched) {
         const matchedDuration = matched.duration_minutes || 60;
-        const targetDuration = result.alternative.duration_minutes || matchedDuration;
+        const targetDuration = roundTo15(result.alternative.duration_minutes || matchedDuration);
 
         // Intelligent scaling: Preserve Work, scale Filler
         const isWorkStep = (s: any) => {
@@ -753,6 +756,11 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
     if (typeof targetDuration === 'number' && targetDuration > 0 && targetDuration <= 6) {
       targetDuration = Math.round(targetDuration * 60);
     }
+    
+    // Round to nearest 15-minute block
+    if (targetDuration > 0) {
+      targetDuration = Math.round(targetDuration / 15) * 15;
+    }
 
     if (customRule) {
       if (customRule.isRest) {
@@ -781,8 +789,8 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
 
       // Weekday rides shouldn't default to marathon 4h (240m) or 3h (180m) sessions unless weekend
       if (!isRest && !isWeekend && targetDuration > 120) {
-        // Normal weekday session should be 60-90m
-        targetDuration = 75;
+        // Normal weekday session should be capped at 120m
+        targetDuration = 120;
       }
     }
 

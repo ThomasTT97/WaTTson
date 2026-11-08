@@ -33,6 +33,7 @@ import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
 import { ChatWindow } from './components/ChatWindow';
 import { WorkoutLibrary } from './components/WorkoutLibrary';
+import { MethodologyInfo } from './components/MethodologyInfo';
 import { 
   PlanAndChangeModal, 
   DayDurationItem, 
@@ -552,7 +553,8 @@ const App: React.FC = () => {
 
     // For week 1 (offsets 0 to 6), map directly from updatedDays
     updatedDays.forEach((dayItem, i) => {
-      const requestedMins = dayItem.durationMins;
+      // Force 1-29 min to 0 min (Rest)
+      const requestedMins = (dayItem.durationMins > 0 && dayItem.durationMins < 30) ? 0 : dayItem.durationMins;
       const isRest = requestedMins <= 0;
 
       // Find any existing day matching offset i
@@ -3307,6 +3309,7 @@ const App: React.FC = () => {
                           })}
                         </div>
                       </div>
+                      <MethodologyInfo />
                     </div>
                   </div>
                 )}

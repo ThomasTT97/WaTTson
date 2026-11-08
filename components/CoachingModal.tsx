@@ -126,7 +126,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
         </div>
 
         {/* Minimalist Metrics Strip */}
-        <div className="grid grid-cols-4 gap-2 p-3 bg-white/[0.02] border border-white/[0.06] rounded-2xl shrink-0 mb-4">
+        <div className="grid grid-cols-5 gap-2 p-3 bg-white/[0.02] border border-white/[0.06] rounded-2xl shrink-0 mb-4">
           <div className="flex flex-col items-center justify-center text-center">
             <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Time</span>
             <span className="text-xs font-bold text-white font-mono">{duration}</span>
@@ -142,6 +142,10 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
           <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
             <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Heart Rate</span>
             <span className="text-xs font-bold text-rose-400 font-mono">{avgHr > 0 ? `${avgHr} bpm` : '--'}</span>
+          </div>
+          <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
+            <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Cadence</span>
+            <span className="text-xs font-bold text-slate-400 font-mono">{typeof activity.average_cadence === 'number' ? `${Math.round(activity.average_cadence)} rpm` : '--'}</span>
           </div>
           <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
             <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">TSS</span>
