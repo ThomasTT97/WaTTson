@@ -5,28 +5,32 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 
-// Helper to dynamically read fresh GEMINI_API_KEY from .env (overriding stale container env)
+// Helper to dynamically read fresh GEMINI_API_KEY from .env / .env.local (overriding stale container env)
 const getGeminiApiKey = (): string | undefined => {
-  try {
-    const envPath = path.resolve(process.cwd(), '.env');
-    if (fs.existsSync(envPath)) {
-      const content = fs.readFileSync(envPath, 'utf-8');
-      for (const line of content.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed && !trimmed.startsWith('#')) {
-          const idx = trimmed.indexOf('=');
-          if (idx !== -1) {
-            const key = trimmed.slice(0, idx).trim();
-            const val = trimmed.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
-            if (key === 'GEMINI_API_KEY' && val) {
-              return val;
+  const envFiles = ['.env', '.env.local'];
+  for (const file of envFiles) {
+    try {
+      const envPath = path.resolve(process.cwd(), file);
+      if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, 'utf-8');
+        for (const line of content.split('\n')) {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith('#')) {
+            const idx = trimmed.indexOf('=');
+            if (idx !== -1) {
+              const key = trimmed.slice(0, idx).trim();
+              const val = trimmed.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
+              if ((key === 'GEMINI_API_KEY' || key === 'API_KEY') && val) {
+                return val;
+              }
             }
           }
         }
       }
-    }
-  } catch {}
-  return process.env.GEMINI_API_KEY || process.env.API_KEY;
+    } catch {}
+  }
+  const envVal = process.env.GEMINI_API_KEY || process.env.API_KEY;
+  return envVal ? envVal.trim() : undefined;
 };
 
 const app = express();
@@ -95,6 +99,56 @@ const isAllowedOrigin = (req: express.Request): boolean => {
 
 const EXPECTED_APP_ID = 'c1b22b2d-9717-465e-bcf5-f44e5221095e';
 
+// Helper to parse and classify Gemini API errors
+const parseGeminiError = (err: any): { status: number; message: string; isAuthError: boolean } => {
+  let status = typeof err?.status === 'number' ? err.status : (typeof err?.code === 'number' ? err.code : 500);
+  let rawMessage = err?.message || 'Gemini model request failed.';
+  let cleanMessage = rawMessage;
+  let isAuthError = false;
+
+  if (typeof rawMessage === 'string') {
+    try {
+      const parsed = JSON.parse(rawMessage);
+      const apiErr = parsed?.error || parsed;
+      const apiMessage = apiErr?.message || '';
+      const apiStatus = apiErr?.status;
+      const details = Array.isArray(apiErr?.details) ? apiErr.details : [];
+      const reason = details.find((d: any) => d?.reason)?.reason || '';
+
+      if (
+        reason === 'API_KEY_INVALID' ||
+        apiMessage.includes('API key not valid') ||
+        apiMessage.includes('API_KEY_INVALID')
+      ) {
+        status = 400;
+        cleanMessage = 'The Gemini API key is invalid. Please select or verify a valid API key in Settings > Secrets.';
+        isAuthError = true;
+      } else if (apiStatus === 'PERMISSION_DENIED' || status === 403) {
+        status = 403;
+        cleanMessage = 'Gemini API permission denied. Please verify your API key in Settings > Secrets.';
+        isAuthError = true;
+      } else if (apiStatus === 'RESOURCE_EXHAUSTED' || status === 429) {
+        status = 429;
+        cleanMessage = 'Gemini API quota exceeded. Please select a billing-enabled API key in Settings > Secrets or try again later.';
+      } else if (apiMessage) {
+        cleanMessage = apiMessage;
+      }
+    } catch {
+      if (rawMessage.includes('API key not valid') || rawMessage.includes('API_KEY_INVALID')) {
+        status = 400;
+        cleanMessage = 'The Gemini API key is invalid. Please select or verify a valid API key in Settings > Secrets.';
+        isAuthError = true;
+      } else if (rawMessage.includes('PERMISSION_DENIED')) {
+        status = 403;
+        cleanMessage = 'Gemini API permission denied. Please verify your API key in Settings > Secrets.';
+        isAuthError = true;
+      }
+    }
+  }
+
+  return { status, message: cleanMessage, isAuthError };
+};
+
 // Server-side Gemini API endpoint
 app.post('/api/gemini/generate', aiLimiter, async (req, res) => {
   try {
@@ -143,35 +197,51 @@ app.post('/api/gemini/generate', aiLimiter, async (req, res) => {
       : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'];
 
     let lastError: any = null;
+    let lastParsedError: { status: number; message: string; isAuthError: boolean } | null = null;
+
     for (const model of models) {
       if (!allowedModels.includes(model)) continue;
       try {
+        const userThinkingLevel = params?.config?.thinkingConfig?.thinkingLevel;
         const thinkingLevel = model === 'gemini-3.1-flash-lite'
-          ? ThinkingLevel.MINIMAL
-          : (options?.thinkingLevel || ThinkingLevel.LOW);
+          ? (userThinkingLevel || ThinkingLevel.MINIMAL)
+          : ((userThinkingLevel && userThinkingLevel !== ThinkingLevel.MINIMAL) ? userThinkingLevel : (options?.thinkingLevel || ThinkingLevel.LOW));
 
-        const mergedConfig = {
+        const safeConfig: Record<string, any> = {
           ...(params?.config || {}),
-          thinkingConfig: params?.config?.thinkingConfig || { thinkingLevel }
+          thinkingConfig: { thinkingLevel }
         };
+
+        if (model.startsWith('gemini-3.8') || model.startsWith('gemini-4')) {
+          delete safeConfig.temperature;
+          delete safeConfig.topP;
+          delete safeConfig.topK;
+          delete safeConfig.candidateCount;
+        }
 
         const response = await ai.models.generateContent({
           ...(params || {}),
           model,
-          config: mergedConfig
+          config: safeConfig
         });
 
         return res.json({ text: response.text });
       } catch (err: any) {
-        console.warn(`[Gemini Server] Model ${model} failed, attempting next fallback...`, err?.message || err);
         lastError = err;
+        lastParsedError = parseGeminiError(err);
+        if (lastParsedError.isAuthError) {
+          console.warn(`[Gemini Server] Authentication failed on model ${model}: ${lastParsedError.message}`);
+          break;
+        }
+        console.warn(`[Gemini Server] Model ${model} failed, attempting next fallback...`, err?.message || err);
         continue;
       }
     }
 
-    const statusCode = lastError?.status || lastError?.code || 500;
-    return res.status(typeof statusCode === 'number' && statusCode >= 400 && statusCode < 600 ? statusCode : 500).json({
-      error: lastError?.message || 'All Gemini models failed.'
+    const finalStatus = lastParsedError?.status || (typeof lastError?.status === 'number' && lastError.status >= 400 && lastError.status < 600 ? lastError.status : 500);
+    const finalMessage = lastParsedError?.message || lastError?.message || 'All Gemini models failed.';
+    return res.status(finalStatus).json({
+      error: finalMessage
     });
   } catch (error: any) {
     console.error('[Gemini Server] Unexpected error:', error);
@@ -238,23 +308,32 @@ app.post('/api/gemini/stream', aiLimiter, async (req, res) => {
 
     let streamStarted = false;
     let lastError: any = null;
+    let lastParsedError: { status: number; message: string; isAuthError: boolean } | null = null;
 
     for (const model of models) {
       if (!isClientConnected) break;
       try {
+        const userThinkingLevel = params?.config?.thinkingConfig?.thinkingLevel;
         const thinkingLevel = model === 'gemini-3.1-flash-lite'
-          ? ThinkingLevel.MINIMAL
-          : (options?.thinkingLevel || ThinkingLevel.LOW);
+          ? (userThinkingLevel || ThinkingLevel.MINIMAL)
+          : ((userThinkingLevel && userThinkingLevel !== ThinkingLevel.MINIMAL) ? userThinkingLevel : (options?.thinkingLevel || ThinkingLevel.LOW));
 
-        const mergedConfig = {
+        const safeConfig: Record<string, any> = {
           ...(params?.config || {}),
-          thinkingConfig: params?.config?.thinkingConfig || { thinkingLevel }
+          thinkingConfig: { thinkingLevel }
         };
+
+        if (model.startsWith('gemini-3.8') || model.startsWith('gemini-4')) {
+          delete safeConfig.temperature;
+          delete safeConfig.topP;
+          delete safeConfig.topK;
+          delete safeConfig.candidateCount;
+        }
 
         const responseStream = await ai.models.generateContentStream({
           ...(params || {}),
           model,
-          config: mergedConfig
+          config: safeConfig
         });
 
         for await (const chunk of responseStream) {
@@ -272,27 +351,34 @@ app.post('/api/gemini/stream', aiLimiter, async (req, res) => {
         }
         return;
       } catch (err: any) {
-        console.warn(`[Gemini Stream] Model ${model} failed:`, err?.message || err);
         lastError = err;
+        lastParsedError = parseGeminiError(err);
         if (streamStarted) {
           if (isClientConnected) {
-            res.write(`data: ${JSON.stringify({ error: err?.message || 'Stream interrupted.' })}\n\n`);
+            res.write(`data: ${JSON.stringify({ error: lastParsedError.message })}\n\n`);
             res.end();
           }
           return;
         }
+        if (lastParsedError.isAuthError) {
+          console.warn(`[Gemini Stream] Authentication failed on model ${model}: ${lastParsedError.message}`);
+          break;
+        }
+        console.warn(`[Gemini Stream] Model ${model} failed:`, err?.message || err);
         continue;
       }
     }
 
     if (!streamStarted && isClientConnected) {
-      res.write(`data: ${JSON.stringify({ error: lastError?.message || 'All Gemini models failed.' })}\n\n`);
+      const finalMessage = lastParsedError?.message || lastError?.message || 'All Gemini models failed.';
+      res.write(`data: ${JSON.stringify({ error: finalMessage })}\n\n`);
       res.end();
     }
   } catch (error: any) {
     console.error('[Gemini Stream] Unexpected error:', error);
     if (!res.headersSent) {
-      return res.status(500).json({ error: error?.message || 'Internal server error' });
+      const parsed = parseGeminiError(error);
+      return res.status(parsed.status).json({ error: parsed.message });
     } else {
       res.write(`data: ${JSON.stringify({ error: error?.message || 'Internal server error' })}\n\n`);
       res.end();

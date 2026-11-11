@@ -1,3 +1,5 @@
+import { WeeklyBriefing, formatDuration } from '../types';
+
 export interface PlanDirective {
   id: string;
   text: string;
@@ -85,29 +87,131 @@ const MONTHS: Record<string, number> = {
  * Parses daily duration and rest constraints from a weekly schedule directive string,
  * e.g. "Adjusted weekly schedule: MON: 1h, TUE: 1h, WED: 2h, THU: Rest, FRI: 1h, SAT: Rest, SUN: 1h (Total: 5h)"
  */
-export function parseScheduleDurationsFromDirective(directiveText: string): Record<string, { durationMins: number; isRest: boolean }> | null {
-  if (!directiveText || (!directiveText.toLowerCase().includes('weekly schedule') && !directiveText.includes(':'))) {
-    return null;
+/**
+ * Parses daily duration and rest constraints from a weekly schedule directive string or availability record.
+ * Handles:
+ * - Directives like "Adjusted weekly schedule: WED: 3h, THU: Rest, FRI: 1h, SAT: 3h, SUN: 2h, MON: 1h, TUE: Rest (Total: 10h)"
+ * - JSON serialized PlanDirective[] arrays
+ * - JSON SavedAvailabilityRecord objects
+ * - Multilingual weekday names (English and Dutch, short and full)
+ */
+export function parseScheduleDurationsFromDirective(directiveText: string | null | undefined): Record<string, { durationMins: number; isRest: boolean }> | null {
+  const daysMap: Record<string, { durationMins: number; isRest: boolean }> = {};
+
+  // 1. Try parsing direct JSON (either SavedAvailabilityRecord or PlanDirective[])
+  if (directiveText && typeof directiveText === 'string') {
+    const trimmed = directiveText.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        
+        // Format A: SavedAvailabilityRecord with days array
+        if (parsed && Array.isArray(parsed.days) && parsed.days.length > 0) {
+          parsed.days.forEach((d: any) => {
+            const short = (d.dayShort || '').toLowerCase().substring(0, 3);
+            const token = normalizeWeekdayToken(short || d.dayName);
+            if (token) {
+              const mins = typeof d.durationMins === 'number' ? d.durationMins : 0;
+              daysMap[token] = {
+                durationMins: mins,
+                isRest: mins <= 0
+              };
+            }
+          });
+          if (Object.keys(daysMap).length > 0) return daysMap;
+        }
+
+        // Format B: Array of PlanDirectives
+        if (Array.isArray(parsed)) {
+          const schedDir = [...parsed].reverse().find(d => 
+            d && typeof d.text === 'string' && d.text.toLowerCase().includes('weekly schedule')
+          );
+          if (schedDir) {
+            return parseScheduleDurationsFromDirective(schedDir.text);
+          }
+        }
+      } catch {
+        // Fall through to regex parsing
+      }
+    }
   }
 
-  const daysMap: Record<string, { durationMins: number; isRest: boolean }> = {};
+  // 2. If no valid directiveText provided, try loading from localStorage in browser environment
+  let textToParse = (directiveText || '').trim();
+  if (!textToParse || !textToParse.toLowerCase().includes('weekly schedule')) {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('wattson_last_saved_availability');
+        if (stored) {
+          const parsedStored = JSON.parse(stored);
+          if (parsedStored && Array.isArray(parsedStored.days) && parsedStored.days.length > 0) {
+            parsedStored.days.forEach((d: any) => {
+              const short = (d.dayShort || '').toLowerCase().substring(0, 3);
+              const token = normalizeWeekdayToken(short || d.dayName);
+              if (token) {
+                const mins = typeof d.durationMins === 'number' ? d.durationMins : 0;
+                daysMap[token] = {
+                  durationMins: mins,
+                  isRest: mins <= 0
+                };
+              }
+            });
+            if (Object.keys(daysMap).length > 0) return daysMap;
+          }
+          if (parsedStored && parsedStored.directiveText) {
+            textToParse = parsedStored.directiveText;
+          }
+        }
+      } catch {
+        // Fall through
+      }
+    }
+  }
+
+  if (!textToParse) return null;
+
   const dayTokens = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
   dayTokens.forEach(day => {
-    // English abbreviations
-    const engRegex = new RegExp(`\\b${day}:?\\s*([0-9.]+\\s*(?:h|m|hours|mins)?|rest)\\b`, 'i');
-    
-    // Dutch abbreviations
-    const dutchAbbr: Record<string, string> = {
-      'mon': 'ma', 'tue': 'di', 'wed': 'wo', 'thu': 'do', 'fri': 'vr', 'sat': 'za', 'sun': 'zo'
+    // English abbreviations & full names
+    const engNames: Record<string, string[]> = {
+      mon: ['mon', 'monday'],
+      tue: ['tue', 'tues', 'tuesday'],
+      wed: ['wed', 'wednesday'],
+      thu: ['thu', 'thur', 'thurs', 'thursday'],
+      fri: ['fri', 'friday'],
+      sat: ['sat', 'saturday'],
+      sun: ['sun', 'sunday']
     };
-    const dutchRegex = new RegExp(`\\b${dutchAbbr[day]}:?\\s*([0-9.]+\\s*(?:u|m|uur|min)?|rust)\\b`, 'i');
 
-    const match = directiveText.match(engRegex) || directiveText.match(dutchRegex);
+    // Dutch abbreviations & full names
+    const dutchNames: Record<string, string[]> = {
+      mon: ['ma', 'maandag'],
+      tue: ['di', 'dinsdag'],
+      wed: ['wo', 'woensdag'],
+      thu: ['do', 'donderdag'],
+      fri: ['vr', 'vrijdag'],
+      sat: ['za', 'zaterdag'],
+      sun: ['zo', 'zondag']
+    };
+
+    const allAliases = [...(engNames[day] || [day]), ...(dutchNames[day] || [])];
+    const aliasPattern = allAliases.join('|');
+
+    const regex = new RegExp(`(?:\\b|\\s)(${aliasPattern}):?\\s*([0-9.]+\\s*(?:h|m|hours|mins|u|uur|min)?(?:[0-9.]+\\s*(?:m|min))?|rest|rust)\\b`, 'i');
+
+    const match = textToParse.match(regex);
     if (match) {
-      const val = match[1].trim().toLowerCase();
+      const val = match[2].trim().toLowerCase();
       if (val === 'rest' || val === 'rust' || val === '0' || val === '0h' || val === '0u' || val === '0m') {
         daysMap[day] = { durationMins: 0, isRest: true };
+      } else if (val.includes('h') && val.includes('m')) {
+        // e.g. 1h30m or 1h30
+        const hmMatch = val.match(/^(\d+)h\s*(\d+)m?$/);
+        if (hmMatch) {
+          const mins = parseInt(hmMatch[1], 10) * 60 + parseInt(hmMatch[2], 10);
+          daysMap[day] = { durationMins: mins, isRest: false };
+        }
       } else if (val.endsWith('h') || val.endsWith('hours') || val.endsWith('u') || val.endsWith('uur')) {
         const num = parseFloat(val);
         daysMap[day] = { durationMins: Math.round(num * 60), isRest: false };
@@ -126,6 +230,242 @@ export function parseScheduleDurationsFromDirective(directiveText: string): Reco
 
   return Object.keys(daysMap).length > 0 ? daysMap : null;
 }
+
+/**
+ * Normalizes any weekday string (short or full, English or Dutch) to 'mon', 'tue', etc.
+ */
+export function normalizeWeekdayToken(dayStr: string | null | undefined): string | null {
+  if (!dayStr) return null;
+  const s = dayStr.trim().toLowerCase();
+
+  const directMap: Record<string, string> = {
+    mon: 'mon', monday: 'mon', ma: 'mon', maandag: 'mon',
+    tue: 'tue', tues: 'tue', tuesday: 'tue', di: 'tue', dinsdag: 'tue',
+    wed: 'wed', wednesday: 'wed', wo: 'wed', woensdag: 'wed',
+    thu: 'thu', thur: 'thu', thurs: 'thu', thursday: 'thu', do: 'thu', donderdag: 'thu',
+    fri: 'fri', friday: 'fri', vr: 'fri', vrijdag: 'fri',
+    sat: 'sat', saturday: 'sat', za: 'sat', zaterdag: 'sat',
+    sun: 'sun', sunday: 'sun', zo: 'sun', zondag: 'sun'
+  };
+
+  if (directMap[s]) return directMap[s];
+
+  // Try matching with word boundaries so we don't match accidental substrings inside longer words
+  // First match 3+ letter words
+  for (const [key, val] of Object.entries(directMap)) {
+    if (key.length >= 3) {
+      const reg = new RegExp(`(^|\\b|\\s)${key}(\\b|\\s|\\(|\\d|$)`, 'i');
+      if (reg.test(s)) return val;
+    }
+  }
+
+  // Then match 2-letter aliases (ma, di, wo, do, vr, za, zo) strictly with word boundaries
+  for (const [key, val] of Object.entries(directMap)) {
+    if (key.length === 2) {
+      const reg = new RegExp(`(^|\\b|\\s)${key}(\\b|\\s|\\(|\\d|$)`, 'i');
+      if (reg.test(s)) return val;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Harmonizes a WeeklyBriefing with the user's active availability schedule.
+ * Guarantees 100% synchronization:
+ * - Days[0] is strictly Today (calendar date today), Days[1] is Tomorrow, etc.
+ * - Every day strictly obeys the user's requested duration (in minutes) and Rest days.
+ * - Rest days have duration_target = 0, intensity = 'Rest', load_target = 0, workout_steps = [].
+ * - Workouts have duration_target = requested duration, load_target > 0, structured workout_steps.
+ */
+export function harmonizeBriefingWithAvailability(
+  briefing: WeeklyBriefing | null | undefined,
+  planContext?: string | null,
+  userFtp: number = 250
+): WeeklyBriefing {
+  let scheduleMap = planContext ? parseScheduleDurationsFromDirective(planContext) : null;
+  if (!scheduleMap && typeof window !== 'undefined') {
+    scheduleMap = parseScheduleDurationsFromDirective('');
+  }
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const base: WeeklyBriefing = briefing ? { ...briefing } : {
+    phase: 'Build / Aerobic Base',
+    focus: 'Custom Training Schedule',
+    outlook_summary: 'Personalized training week aligned with your availability.',
+    ftp: userFtp,
+    days: []
+  };
+
+  const existingDays = base.days || [];
+
+  // If no custom schedule is set anywhere, ensure existing days at least have consistent dates from today
+  if (!scheduleMap || Object.keys(scheduleMap).length === 0) {
+    if (existingDays.length === 0) {
+      return base;
+    }
+    return base;
+  }
+
+  const harmonizedWeek1Days: WeeklyBriefing['days'] = [];
+
+  for (let i = 0; i < 7; i++) {
+    const targetDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+    const weekdayShort = targetDate.toLocaleDateString('en-US', { weekday: 'short' });
+    const monthDay = targetDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const dayName = `${weekdayShort} (${monthDay})`;
+    const token = normalizeWeekdayToken(weekdayShort);
+    const rule = token && scheduleMap ? scheduleMap[token] : null;
+
+    const existingDay = existingDays[i] || existingDays.find(d => normalizeWeekdayToken(d.day) === token);
+
+    if (rule) {
+      if (rule.isRest || rule.durationMins <= 0) {
+        // Rest Day
+        harmonizedWeek1Days.push({
+          day: dayName,
+          focus: 'Rest Day',
+          intensity: 'Rest',
+          duration_target: 0,
+          load_target: 0,
+          why: 'Halts acute fatigue & restores muscle glycogen.',
+          workout_steps: []
+        });
+      } else {
+        // Active workout of exact duration rule.durationMins
+        const requestedMins = rule.durationMins;
+        const hadWorkout = existingDay && 
+          existingDay.intensity !== 'Rest' && 
+          !existingDay.focus.toLowerCase().includes('rest') && 
+          (existingDay.duration_target || 0) > 0;
+
+        if (hadWorkout && existingDay) {
+          const oldDur = existingDay.duration_target || 60;
+          const isWorkStep = (s: any) => {
+            const pct = s.target_pct || (s.target_watts && userFtp ? s.target_watts / userFtp : 0);
+            if (pct > 0.75) return true;
+            const label = (s.label || '').toLowerCase();
+            return /interval|rep|set|threshold|vo2|sweet|tempo|under|over/i.test(label) && !/recovery|rest|spin|easy/i.test(label);
+          };
+
+          const fillerSteps = (existingDay.workout_steps || []).filter(s => !isWorkStep(s));
+          const fillerDuration = fillerSteps.reduce((sum, s) => sum + (s.duration || 0), 0);
+          const diff = requestedMins - oldDur;
+
+          let scaledSteps;
+          if (existingDay.workout_steps && existingDay.workout_steps.length > 0) {
+            if (fillerDuration > 0 && (diff > 0 || fillerDuration > Math.abs(diff))) {
+              const fillerScale = (fillerDuration + diff) / fillerDuration;
+              scaledSteps = existingDay.workout_steps.map(step => {
+                if (isWorkStep(step)) return { ...step };
+                const newDur = Math.max(1, Math.round(step.duration * fillerScale));
+                return {
+                  ...step,
+                  duration: newDur,
+                  label: step.label ? step.label.replace(/^\d+m\s*/, `${newDur}m `) : `${newDur}m Step`
+                };
+              });
+            } else {
+              const scale = requestedMins / oldDur;
+              scaledSteps = existingDay.workout_steps.map(step => {
+                const newDur = Math.max(1, Math.round(step.duration * scale));
+                return {
+                  ...step,
+                  duration: newDur,
+                  label: step.label ? step.label.replace(/^\d+m\s*/, `${newDur}m `) : `${newDur}m Step`
+                };
+              });
+            }
+          } else {
+            const warmMins = Math.max(5, Math.round(requestedMins * 0.15));
+            const coolMins = Math.max(5, Math.round(requestedMins * 0.12));
+            const mainMins = requestedMins - warmMins - coolMins;
+            scaledSteps = [
+              { duration: warmMins, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${warmMins}m Warm-up (55% FTP)` },
+              { duration: mainMins, target_pct: 0.68, target_watts: Math.round(userFtp * 0.68), label: `${mainMins}m Aerobic Pace (68% FTP)` },
+              { duration: coolMins, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${coolMins}m Cool-down (55% FTP)` }
+            ];
+          }
+
+          const sumStepDur = scaledSteps.reduce((sum, s) => sum + s.duration, 0);
+          if (sumStepDur !== requestedMins && scaledSteps.length > 0) {
+            const lastFillerIdx = [...scaledSteps].reverse().findIndex(s => !isWorkStep(s));
+            const idx = lastFillerIdx !== -1 ? scaledSteps.length - 1 - lastFillerIdx : scaledSteps.length - 1;
+            scaledSteps[idx].duration += (requestedMins - sumStepDur);
+            scaledSteps[idx].label = scaledSteps[idx].label.replace(/^\d+m/, `${scaledSteps[idx].duration}m`);
+          }
+
+          harmonizedWeek1Days.push({
+            ...existingDay,
+            day: dayName,
+            duration_target: requestedMins,
+            load_target: Math.round((existingDay.load_target || Math.round(oldDur * 0.7)) * (requestedMins / oldDur)),
+            workout_steps: scaledSteps,
+            why: existingDay.why || 'Targeted aerobic development and progression.'
+          });
+        } else {
+          // New structured Endurance / Aerobic Ride
+          const defaultIntensity: 'Medium' | 'Easy' = requestedMins >= 75 ? 'Medium' : 'Easy';
+          const defaultFocus = requestedMins >= 180 ? `Endurance Ride (${formatDuration(requestedMins)})` :
+                               requestedMins >= 120 ? `Endurance Ride (${formatDuration(requestedMins)})` :
+                               requestedMins >= 60 ? `Endurance Ride (${formatDuration(requestedMins)})` :
+                               `Recovery Spin (${formatDuration(requestedMins)})`;
+
+          const warmMins = Math.max(5, Math.round(requestedMins * 0.15));
+          const coolMins = Math.max(5, Math.round(requestedMins * 0.12));
+          const mainMins = requestedMins - warmMins - coolMins;
+
+          const steps = [
+            { duration: warmMins, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${warmMins}m Warm-up (55% FTP)` },
+            { duration: mainMins, target_pct: 0.68, target_watts: Math.round(userFtp * 0.68), label: `${mainMins}m Aerobic Pace (68% FTP)` },
+            { duration: coolMins, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${coolMins}m Cool-down (55% FTP)` }
+          ];
+
+          harmonizedWeek1Days.push({
+            day: dayName,
+            focus: defaultFocus,
+            intensity: defaultIntensity,
+            duration_target: requestedMins,
+            load_target: Math.round(requestedMins * (defaultIntensity === 'Medium' ? 0.72 : 0.62)),
+            why: 'Builds mitochondrial density and steady aerobic endurance.',
+            workout_steps: steps
+          });
+        }
+      }
+    } else {
+      // No rule for this day, preserve or provide default 60m ride
+      if (existingDay) {
+        harmonizedWeek1Days.push({ ...existingDay, day: dayName });
+      } else {
+        harmonizedWeek1Days.push({
+          day: dayName,
+          focus: 'Endurance Ride (1h)',
+          intensity: 'Medium',
+          duration_target: 60,
+          load_target: 42,
+          why: 'Aerobic base maintenance.',
+          workout_steps: [
+            { duration: 10, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: '10m Warm-up (55% FTP)' },
+            { duration: 40, target_pct: 0.68, target_watts: Math.round(userFtp * 0.68), label: '40m Aerobic Pace (68% FTP)' },
+            { duration: 10, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: '10m Cool-down (55% FTP)' }
+          ]
+        });
+      }
+    }
+  }
+
+  // Preserve any days from weeks 2, 3, 4 if they exist
+  const remainingDays = existingDays.slice(7);
+
+  return {
+    ...base,
+    ftp: userFtp,
+    days: [...harmonizedWeek1Days, ...remainingDays]
+  };
+}
+
 
 function getTargetOffsetForWeekday(reqDateStr: string, textLower: string): number | null {
   // If this directive represents a multi-day weekly schedule, it's not a single-day offset!

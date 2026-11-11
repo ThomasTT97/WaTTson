@@ -23,7 +23,9 @@ import {
   serializePlanDirectives, 
   getDirectivesTextList, 
   pruneExpiredDirectives, 
-  getTodayDateString 
+  getTodayDateString,
+  normalizeWeekdayToken,
+  harmonizeBriefingWithAvailability
 } from './services/directiveService';
 import { ActivityCard } from './components/ActivityCard';
 import { RiderPowerCurve } from './components/RiderPowerCurve';
@@ -248,7 +250,17 @@ const App: React.FC = () => {
   const [weeklyBriefing, setWeeklyBriefing] = useState<WeeklyBriefing | null>(() => {
     try {
       const saved = localStorage.getItem('wattson_saved_weekly_briefing');
-      if (saved) return normalizeBriefingDays(JSON.parse(saved));
+      const savedCtx = localStorage.getItem('wattson_plan_context');
+      const userFtp = Number(localStorage.getItem('wattson_ftp')) || 250;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return harmonizeBriefingWithAvailability(normalizeBriefingDays(parsed, savedCtx), savedCtx, userFtp);
+      } else {
+        const storedAvail = localStorage.getItem(AVAILABILITY_STORAGE_KEY);
+        if (storedAvail) {
+          return harmonizeBriefingWithAvailability(null, savedCtx, userFtp);
+        }
+      }
     } catch {}
     return null;
   });
@@ -532,7 +544,9 @@ const App: React.FC = () => {
     };
 
     const existingDays = base.days || [];
-    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
     // Compute day offsets for existing days
     const dayOffsets: number[] = [];
     let currentOffset = 0;
@@ -557,11 +571,16 @@ const App: React.FC = () => {
       const requestedMins = (dayItem.durationMins > 0 && dayItem.durationMins < 30) ? 0 : dayItem.durationMins;
       const isRest = requestedMins <= 0;
 
-      // Find any existing day matching offset i
-      const existingIdx = dayOffsets.findIndex(offset => offset === i);
-      const existingDay = existingIdx !== -1 ? existingDays[existingIdx] : undefined;
+      // Deterministic calendar day label from today + i e.g. "Wed (Nov 11)"
+      const targetDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+      const weekday = targetDate.toLocaleDateString('en-US', { weekday: 'short' });
+      const monthDay = targetDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const dayName = `${weekday} (${monthDay})`;
 
-      const dayName = existingDay?.day || `${dayItem.dayShort} (${dayItem.dateStr})`;
+      // Find any existing day matching this weekday token or offset i
+      const token = dayItem.dayShort.toLowerCase();
+      const existingDay = existingDays.find(d => normalizeWeekdayToken(d.day) === token) || 
+                          (dayOffsets.findIndex(offset => offset === i) !== -1 ? existingDays[dayOffsets.findIndex(offset => offset === i)] : undefined);
 
       if (isRest) {
         const restRationale = generateDataDrivenRestRationale({
@@ -660,8 +679,14 @@ const App: React.FC = () => {
             why: existingDay.why || 'Targeted aerobic development and progression.'
           });
         } else {
-          const defaultFocus = requestedMins >= 120 ? 'Endurance Ride' : (requestedMins >= 75 ? 'Aerobic Foundation' : 'Endurance Spin');
-          const defaultIntensity = requestedMins >= 90 ? 'Medium' : 'Easy';
+          let defaultFocus = `Endurance Ride (${formatDuration(requestedMins)})`;
+          if (requestedMins >= 180) defaultFocus = `Endurance Ride (${formatDuration(requestedMins)})`;
+          else if (requestedMins >= 120) defaultFocus = `Endurance Ride (${formatDuration(requestedMins)})`;
+          else if (requestedMins >= 90) defaultFocus = `Endurance Ride (${formatDuration(requestedMins)})`;
+          else if (requestedMins >= 60) defaultFocus = `Endurance Ride (${formatDuration(requestedMins)})`;
+          else defaultFocus = `Recovery Spin (${formatDuration(requestedMins)})`;
+
+          const defaultIntensity = requestedMins >= 75 ? 'Medium' : 'Easy';
           const warmMins = Math.max(5, Math.round(requestedMins * 0.15));
           const coolMins = Math.max(5, Math.round(requestedMins * 0.12));
           const mainMins = requestedMins - warmMins - coolMins;
@@ -671,12 +696,12 @@ const App: React.FC = () => {
             focus: defaultFocus,
             intensity: defaultIntensity as any,
             duration_target: requestedMins,
-            load_target: Math.round(requestedMins * (defaultIntensity === 'Medium' ? 0.75 : 0.62)),
+            load_target: Math.round(requestedMins * (defaultIntensity === 'Medium' ? 0.72 : 0.62)),
             why: 'Aerobic base development and cardiovascular adaptation.',
             workout_steps: [
               { duration: warmMins, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${warmMins}m Progressive Warm-up (55% FTP)` },
-              { duration: mainMins, target_pct: 0.68, target_watts: Math.round(userFtp * 0.68), label: `${mainMins}m Steady Zone 2 (68% FTP)` },
-              { duration: coolMins, target_pct: 0.52, target_watts: Math.round(userFtp * 0.52), label: `${coolMins}m Easy Spin Cool-down (52% FTP)` }
+              { duration: mainMins, target_pct: 0.68, target_watts: Math.round(userFtp * 0.68), label: `${mainMins}m Steady Zone 2 (${Math.round(userFtp * 0.68)}W)` },
+              { duration: coolMins, target_pct: 0.50, target_watts: Math.round(userFtp * 0.50), label: `${coolMins}m Easy Spin Cool-down (${Math.round(userFtp * 0.50)}W)` }
             ]
           });
         }
@@ -752,13 +777,14 @@ const App: React.FC = () => {
       setActiveTab('rides');
     }
 
-    // 1. Immediately adapt existing weeklyBriefing to reflect user's requested durations and rest days!
+    // 1. Immediately adapt and harmonize weeklyBriefing to reflect user's requested durations and rest days!
     if (updatedDays && updatedDays.length > 0) {
       const adapted = adaptBriefingWithSchedule(weeklyBriefing, updatedDays, ftp || 250, stats, activities, wellnessData);
-      setWeeklyBriefing(adapted);
-      safeSetItem('wattson_saved_weekly_briefing', JSON.stringify(adapted));
+      const harmonized = harmonizeBriefingWithAvailability(adapted, newContext, ftp || 250);
+      setWeeklyBriefing(harmonized);
+      safeSetItem('wattson_saved_weekly_briefing', JSON.stringify(harmonized));
       if (currentUserRef.current) {
-        syncToCloud({ weeklyBriefingJson: JSON.stringify(adapted) });
+        syncToCloud({ weeklyBriefingJson: JSON.stringify(harmonized) });
       }
 
       // Persist last saved availability so when the screen is opened again, previous settings are remembered
@@ -1090,11 +1116,18 @@ const App: React.FC = () => {
       // 4. Training plan & briefing sync
       if (profile.weeklyBriefingJson) {
         try {
-          const parsed = normalizeBriefingDays(JSON.parse(profile.weeklyBriefingJson));
+          const parsed = JSON.parse(profile.weeklyBriefingJson);
+          const effectivePlanContext = profile.planContext || planContextRef.current;
+          const harmonized = harmonizeBriefingWithAvailability(
+            normalizeBriefingDays(parsed, effectivePlanContext),
+            effectivePlanContext,
+            profile.ftp || ftpRef.current || 250
+          );
           const currentBriefingStr = weeklyBriefingRef.current ? JSON.stringify(weeklyBriefingRef.current) : '';
-          if (currentBriefingStr !== profile.weeklyBriefingJson) {
-            setWeeklyBriefing(parsed);
-            safeSetItem('wattson_saved_weekly_briefing', profile.weeklyBriefingJson);
+          const harmonizedStr = JSON.stringify(harmonized);
+          if (currentBriefingStr !== harmonizedStr) {
+            setWeeklyBriefing(harmonized);
+            safeSetItem('wattson_saved_weekly_briefing', harmonizedStr);
           }
         } catch (e) {
           console.error("Error parsing cloud weekly briefing:", e);
@@ -1571,8 +1604,9 @@ const App: React.FC = () => {
       const activeTrainingMode = trainingModeArg || trainingMode;
 
       const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode, activeTrainingMode, weekIndex, trainingMethodology, weeklyBriefing);
+      const harmonizedData = harmonizeBriefingWithAvailability(data, ctxToUse, ftp || 250);
       setWeeklyBriefing(prev => {
-        if (!prev) return data;
+        if (!prev) return harmonizedData;
         
         if (weekIndex) {
           const week1Length = 7;
@@ -1606,11 +1640,11 @@ const App: React.FC = () => {
           const daysBefore = prev.days.filter((_, i) => prevDayOffsets[i] < range.start);
           const daysAfter = prev.days.filter((_, i) => prevDayOffsets[i] >= range.end);
           
-          const newDays = [...daysBefore, ...data.days, ...daysAfter];
+          const newDays = [...daysBefore, ...harmonizedData.days, ...daysAfter];
           
-          return { ...prev, days: newDays };
+          return harmonizeBriefingWithAvailability({ ...prev, days: newDays }, ctxToUse, ftp || 250);
         }
-        return data;
+        return harmonizedData;
       });
       if (weekIndex) {
         setGeneratedWeeks(prev => [...new Set([...prev, weekIndex])]);
@@ -1632,6 +1666,27 @@ const App: React.FC = () => {
       }
     }
   }, [activities, wellnessData, userGoal, suggestion, ftp, powerCurves, planContext, planMode, trainingMode]);
+
+  // Immediate consistency check on startup: harmonize weeklyBriefing with saved availability
+  useEffect(() => {
+    const storedAvail = localStorage.getItem(AVAILABILITY_STORAGE_KEY);
+    const savedCtx = localStorage.getItem('wattson_plan_context');
+    if (storedAvail || savedCtx || planContext) {
+      setWeeklyBriefing(prev => {
+        const harmonized = harmonizeBriefingWithAvailability(prev, savedCtx || planContext, ftp || 250);
+        const prevStr = prev ? JSON.stringify(prev) : '';
+        const harmonizedStr = JSON.stringify(harmonized);
+        if (prevStr !== harmonizedStr) {
+          safeSetItem('wattson_saved_weekly_briefing', harmonizedStr);
+          if (currentUserRef.current) {
+            syncToCloud({ weeklyBriefingJson: harmonizedStr });
+          }
+          return harmonized;
+        }
+        return prev;
+      });
+    }
+  }, []);
 
   const hasInitiallyCheckedPlan = useRef(false);
   useEffect(() => {
@@ -2516,6 +2571,7 @@ const App: React.FC = () => {
                   return (
                     <SuggestedWorkoutCard 
                       day={nextRideFromPlan.day}
+                      date={nextRideFromPlan.date}
                       absoluteIndex={nextRideFromPlan.absoluteIndex ?? 0}
                       onClick={(day) => {
                         setSelectedSuggestedDay(day);
@@ -2621,7 +2677,7 @@ const App: React.FC = () => {
                     {isOtherFutureExpanded && ridesSections.sortedFutureItems.length > 0 && (
                       <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-2 overflow-hidden">
                         {ridesSections.sortedFutureItems.map((item) => (
-                          <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} onClick={(day) => setSelectedSuggestedDay(day)} isToday={false} />
+                          <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} date={item.date} onClick={(day) => setSelectedSuggestedDay(day)} isToday={false} />
                         ))}
                       </motion.div>
                     )}
@@ -2631,7 +2687,7 @@ const App: React.FC = () => {
                     {ridesSections.sortedTomorrowItems.length > 0 && (
                       <div className="space-y-2 pt-0.5">
                         {ridesSections.sortedTomorrowItems.map((item) => (
-                          <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} onClick={(day) => setSelectedSuggestedDay(day)} isToday={false} />
+                          <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} date={item.date} onClick={(day) => setSelectedSuggestedDay(day)} isToday={false} />
                         ))}
                       </div>
                     )}
@@ -2660,6 +2716,7 @@ const App: React.FC = () => {
                               key={item.key} 
                               day={item.dayData!} 
                               absoluteIndex={item.absoluteIndex ?? 0} 
+                              date={item.date}
                               onClick={(day) => setSelectedSuggestedDay(day)} 
                               isToday={true} 
                             />

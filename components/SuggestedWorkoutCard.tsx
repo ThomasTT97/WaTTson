@@ -98,7 +98,9 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
 
   const sport = getSportInfo(day.focus);
 
-  const isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || day.load_target === 0;
+  const isRest = day.intensity === 'Rest' || 
+                 (day.focus || '').toLowerCase().includes('rest') || 
+                 (day.duration_target !== undefined && day.duration_target <= 0);
 
   if (isRest) {
     return (

@@ -52,7 +52,9 @@ import {
   pruneExpiredDirectives,
   formatDirectivesForPrompt,
   serializePlanDirectives,
-  parseScheduleDurationsFromDirective
+  parseScheduleDurationsFromDirective,
+  normalizeWeekdayToken,
+  harmonizeBriefingWithAvailability
 } from "./directiveService";
 
 
@@ -274,8 +276,23 @@ const callGemini = async (params: any, options?: { preferFlashLite?: boolean; th
     let errorMsg = `Server error (${response.status})`;
     try {
       const errorJson = await response.json();
-      errorMsg = errorJson.error || errorJson.message || errorMsg;
+      const raw = errorJson.error || errorJson.message;
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          errorMsg = parsed?.error?.message || parsed?.message || raw;
+        } catch {
+          errorMsg = raw;
+        }
+      } else if (raw && typeof raw === 'object') {
+        errorMsg = raw.message || JSON.stringify(raw);
+      }
     } catch {}
+
+    if (errorMsg.includes('API key not valid') || errorMsg.includes('API_KEY_INVALID')) {
+      errorMsg = 'Gemini API key is invalid or not yet configured. Please select or verify your API key in Settings > Secrets.';
+    }
+
     throw new Error(errorMsg);
   }
 
@@ -335,7 +352,8 @@ export const getRideFeedback = async (
   plannedWorkout: PlannedWorkout | null,
   userGoal?: string,
   ftp?: number,
-  allActivities?: Activity[]
+  allActivities?: Activity[],
+  force?: boolean
 ): Promise<CoachingFeedback> => {
   const plannedWorkoutCtx = plannedWorkout 
     ? `Planned Workout: "${plannedWorkout.name}". Description: "${plannedWorkout.description}".`
@@ -358,7 +376,7 @@ export const getRideFeedback = async (
 
   // Version 9 cache key includes intervals length so newly fetched laps instantly trigger fresh AI analysis
   const cacheKey = `wattson_feedback_v9_${activity.id}_${effectiveIntervals.length}_${userGoal || 'default'}`;
-  const cached = getCache(cacheKey);
+  const cached = force ? null : getCache(cacheKey);
   if (cached) return cached;
 
   let lapsCtx = "No specific device laps recorded. Please analyze the overall session metrics (duration, power, NP, intensity, max power spikes) to deduce if there were structured efforts, power surges, or steady state riding.";
@@ -720,12 +738,56 @@ export const getDailySuggestion = async (
         result.alternative.duration_minutes = result.alternative.workout_steps ? result.alternative.workout_steps.reduce((sum: number, s: any) => sum + s.duration, 0) : result.alternative.duration_minutes;
       }
     }
+
+    // Align with weekly availability schedule if set
+    try {
+      const schedMap = parseScheduleDurationsFromDirective('');
+      const targetDayShort = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][targetDate.getDay()];
+      const customSchedRule = schedMap ? schedMap[targetDayShort] : null;
+
+      if (customSchedRule) {
+        if (customSchedRule.isRest) {
+          result.primary = {
+            title: "Rest Day",
+            description: "Scheduled rest day for complete muscular recovery and glycogen restoration.",
+            intensity: "Rest",
+            duration_minutes: 0,
+            type: "rest",
+            tss: 0,
+            workout_steps: []
+          };
+        } else if (customSchedRule.durationMins > 0) {
+          const dur = customSchedRule.durationMins;
+          const isCurrentlyRest = result.primary.intensity === 'Rest' || (result.primary.title || '').toLowerCase().includes('rest');
+          if (isCurrentlyRest || Math.abs((result.primary.duration_minutes || 0) - dur) > 15) {
+            const title = `Endurance Ride (${formatDuration(dur)})`;
+            const warmMins = Math.max(5, Math.round(dur * 0.15));
+            const coolMins = Math.max(5, Math.round(dur * 0.12));
+            const mainMins = dur - warmMins - coolMins;
+            const targetWatts = Math.round((ftp || 250) * 0.68);
+            result.primary = {
+              title,
+              description: `Scheduled ${formatDuration(dur)} aerobic endurance ride aligned with your availability.`,
+              intensity: dur >= 75 ? "Medium" : "Easy",
+              duration_minutes: dur,
+              type: "endurance",
+              tss: Math.round(dur * (dur >= 75 ? 0.72 : 0.62)),
+              workout_steps: [
+                { duration: warmMins, target_pct: 0.55, target_watts: Math.round((ftp || 250) * 0.55), label: `${warmMins}m Progressive Warm-up (55% FTP)` },
+                { duration: mainMins, target_pct: 0.68, target_watts: targetWatts, label: `${mainMins}m Steady Zone 2 (${targetWatts}W)` },
+                { duration: coolMins, target_pct: 0.50, target_watts: Math.round((ftp || 250) * 0.50), label: `${coolMins}m Easy Spin Cool-down (${Math.round((ftp || 250) * 0.50)}W)` }
+              ]
+            };
+          }
+        }
+      }
+    } catch {}
   }
   setCache(cacheKey, result);
   return result;
 };
 
-export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: string, trainingMode: TrainingMode = 'cycling'): WeeklyBriefing => {
+export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: string | null, trainingMode: TrainingMode = 'cycling'): WeeklyBriefing => {
   if (!briefing || !briefing.days) return briefing;
 
   let ftp = briefing.ftp;
@@ -734,13 +796,15 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
   }
   if (!ftp) ftp = 250;
 
-  // Check for active weekly schedule directive in planContext
-  const scheduleMap = planContext ? parseScheduleDurationsFromDirective(planContext) : null;
+  // Check for active weekly schedule directive in planContext or fallback to saved availability
+  let scheduleMap = planContext ? parseScheduleDurationsFromDirective(planContext) : null;
+  if (!scheduleMap && typeof window !== 'undefined') {
+    scheduleMap = parseScheduleDurationsFromDirective('');
+  }
 
-  // Helper to extract weekday short name e.g. "mon" from "Mon (Sep 21)" or "MON"
+  // Helper to extract weekday short name e.g. "mon" from "Mon (Sep 21)" or "MON" or "Woensdag"
   const extractWeekdayToken = (dayStr: string): string | null => {
-    const match = (dayStr || '').match(/\b(mon|tue|wed|thu|fri|sat|sun)\b/i);
-    return match ? match[1].toLowerCase() : null;
+    return normalizeWeekdayToken(dayStr);
   };
 
   // Pass 1: Normalize durations, units, and weekday vs weekend duration caps
@@ -750,7 +814,7 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
 
     let isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || (day.focus || '').toLowerCase().includes('off');
     const isCommute = (day.day || '').toLowerCase().includes('commute') || (day.focus || '').toLowerCase().includes('commute');
-    const isWeekend = /sat|sun/i.test(day.day || '');
+    const isWeekend = /sat|sun|za|zo/i.test(day.day || '');
     
     let targetDuration = day.duration_target;
     if (typeof targetDuration === 'number' && targetDuration > 0 && targetDuration <= 6) {
@@ -787,17 +851,40 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
         targetDuration = isRest ? 0 : 60;
       }
 
-      // Weekday rides shouldn't default to marathon 4h (240m) or 3h (180m) sessions unless weekend
+      // Weekday rides shouldn't default to marathon 4h (240m) or 3h (180m) sessions unless weekend or explicitly scheduled
       if (!isRest && !isWeekend && targetDuration > 120) {
-        // Normal weekday session should be capped at 120m
         targetDuration = 120;
+      }
+    }
+
+    // Determine appropriate focus title and intensity if transitioning from Rest Day to a Workout
+    let workoutFocus = day.focus || '';
+    let currentIntensity = isRest ? ('Rest' as const) : (day.intensity === 'Rest' ? ('Medium' as const) : day.intensity || ('Medium' as const));
+    
+    if (!isRest && (workoutFocus.toLowerCase().includes('rest') || workoutFocus.toLowerCase().includes('off') || !workoutFocus)) {
+      if (targetDuration >= 180) {
+        workoutFocus = `Endurance Ride (${formatDuration(targetDuration)})`;
+        currentIntensity = 'Medium';
+      } else if (targetDuration >= 120) {
+        workoutFocus = `Endurance Ride (${formatDuration(targetDuration)})`;
+        currentIntensity = 'Medium';
+      } else if (targetDuration >= 75) {
+        workoutFocus = `Endurance Ride (${formatDuration(targetDuration)})`;
+        currentIntensity = 'Medium';
+      } else if (targetDuration >= 45) {
+        workoutFocus = `Endurance Ride (${formatDuration(targetDuration)})`;
+        currentIntensity = 'Easy';
+      } else {
+        workoutFocus = `Recovery Spin (${formatDuration(targetDuration)})`;
+        currentIntensity = 'Easy';
       }
     }
 
     let currentDay = {
       ...day,
+      focus: workoutFocus,
       duration_target: targetDuration,
-      intensity: isRest ? ('Rest' as const) : (day.intensity === 'Rest' ? ('Easy' as const) : day.intensity || ('Medium' as const))
+      intensity: currentIntensity
     };
 
     if (!isRest && !isCommute) {
@@ -855,8 +942,28 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
           focus: matched.title,
           workout_steps: finalSteps,
           duration_target: targetDuration,
-          load_target: matched.tss ? Math.round(matched.tss * (targetDuration / matchedDuration)) : currentDay.load_target,
+          load_target: matched.tss ? Math.round(matched.tss * (targetDuration / matchedDuration)) : Math.round(targetDuration * 0.7),
           why: `${matched.category} focus: ${matched.description}`
+        };
+      } else {
+        // Fallback: Generate structured 3-part endurance steps if library matching didn't return a match
+        const warmMins = Math.max(5, Math.round(targetDuration * 0.15));
+        const coolMins = Math.max(5, Math.round(targetDuration * 0.12));
+        const mainMins = targetDuration - warmMins - coolMins;
+
+        const fallbackSteps = [
+          { duration: warmMins, target_pct: 0.55, target_watts: Math.round(ftp * 0.55), label: `${warmMins}m Progressive Warm-up (55% FTP)` },
+          { duration: mainMins, target_pct: 0.68, target_watts: Math.round(ftp * 0.68), label: `${mainMins}m Steady Zone 2 Endurance (${Math.round(ftp * 0.68)}W)` },
+          { duration: coolMins, target_pct: 0.50, target_watts: Math.round(ftp * 0.50), label: `${coolMins}m Easy Spin Cool-down (${Math.round(ftp * 0.50)}W)` }
+        ];
+
+        return {
+          ...currentDay,
+          focus: currentDay.focus || `Endurance Ride (${formatDuration(targetDuration)})`,
+          workout_steps: fallbackSteps,
+          duration_target: targetDuration,
+          load_target: Math.round(targetDuration * (currentIntensity === 'Medium' ? 0.72 : 0.62)),
+          why: 'Aerobic endurance base development and cardiovascular adaptation.'
         };
       }
     }
@@ -880,9 +987,12 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
     const next = normalizedDays[i + 1];
     if (!current || !next) continue;
 
+    const currentToken = extractWeekdayToken(current.day);
+    const hasCustomForCurrent = (currentToken && scheduleMap && scheduleMap[currentToken]);
     const nextToken = extractWeekdayToken(next.day);
     const hasCustomForNext = (nextToken && scheduleMap && scheduleMap[nextToken]);
-    if (hasCustomForNext) {
+    // Do not alter or downscale sessions that match user-defined availability schedule rules
+    if (hasCustomForCurrent || hasCustomForNext) {
       continue;
     }
 
@@ -1028,10 +1138,12 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
     }
   }
 
-  return {
+  const normalizedBriefing = {
     ...briefing,
     days: normalizedDays
   };
+
+  return harmonizeBriefingWithAvailability(normalizedBriefing, planContext, ftp);
 };
 
 /**
@@ -1221,7 +1333,6 @@ export const getWeeklyBriefing = async (
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
       responseMimeType: 'application/json',
-      temperature: 0.1,
       thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
       responseSchema: {
         type: Type.OBJECT,
@@ -1874,7 +1985,6 @@ POWER MILESTONES & SPIKES:
     contents,
     config: {
       systemInstruction,
-      temperature: 0.7,
     }
   };
 
@@ -1949,6 +2059,15 @@ POWER MILESTONES & SPIKES:
       throw new Error('Empty stream response.');
     } catch (streamErr: any) {
       if (signal?.aborted) {
+        throw streamErr;
+      }
+      const streamErrMsg = streamErr?.message || '';
+      if (
+        streamErrMsg.includes('Settings > Secrets') ||
+        streamErrMsg.includes('API key') ||
+        streamErrMsg.includes('API_KEY_INVALID') ||
+        streamErrMsg.includes('permission denied')
+      ) {
         throw streamErr;
       }
       console.warn('[Gemini Service] Streaming failed, falling back to standard generate:', streamErr?.message || streamErr);
@@ -2085,7 +2204,6 @@ export const analyzeThreeMonthReview = async (
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
       responseMimeType: 'application/json',
-      temperature: 0.2,
       responseSchema: {
         type: Type.OBJECT,
         properties: {

@@ -38,7 +38,8 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleRunAnalysis = useCallback(async () => {
+  const handleRunAnalysis = useCallback(async (forceOrEvent?: boolean | React.MouseEvent) => {
+    const force = typeof forceOrEvent === 'boolean' ? forceOrEvent : false;
     setLoading(true);
     setError(null);
     try {
@@ -57,7 +58,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
         (activity as any).icu_intervals = resolvedIntervals;
       }
 
-      const data = await getRideFeedback(activity, resolvedIntervals, plannedWorkout, userGoal, ftp, allActivities);
+      const data = await getRideFeedback(activity, resolvedIntervals, plannedWorkout, userGoal, ftp, allActivities, force);
       setFeedback(data);
     } catch (err: any) {
       setError(err.message || "Engine analysis failed.");
@@ -121,7 +122,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
           <div className="flex items-center gap-1">
             {feedback && !loading && (
               <button 
-                onClick={handleRunAnalysis}
+                onClick={() => handleRunAnalysis(true)}
                 className="text-slate-500 hover:text-white p-2 rounded-xl hover:bg-white/[0.04] transition-colors cursor-pointer"
                 title="Regenerate Analysis"
               >
@@ -217,7 +218,7 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
             <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-center">
               <span className="text-xs font-semibold text-rose-400 block mb-1">Analysis Unavailable</span>
               <p className="text-[11px] text-slate-400">{error}</p>
-              <button onClick={handleRunAnalysis} className="mt-3 text-[10px] text-emerald-400 font-bold underline">Retry Analysis</button>
+              <button onClick={() => handleRunAnalysis(true)} className="mt-3 text-[10px] text-emerald-400 font-bold underline">Retry Analysis</button>
             </div>
           ) : feedback && (
             <>

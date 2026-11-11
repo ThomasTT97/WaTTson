@@ -370,7 +370,36 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
     } catch (err: any) {
       if (controller.signal.aborted) return;
       console.error("Coaching stream error:", err);
-      targetTextRef.current = "I apologize, but I encountered a momentary connection interruption. Please ask your question again or clarify.";
+      const msg = err?.message || "";
+      if (msg.includes("Settings > Secrets") || msg.includes("API key") || msg.includes("API_KEY_INVALID") || msg.includes("quota exceeded")) {
+        const queryLower = text.trim().toLowerCase();
+        const isTodayQuery = queryLower.includes('today') || queryLower.includes('do now') || queryLower.includes('workout') || queryLower.includes('ride') || queryLower.includes('training') || queryLower.includes('plan');
+
+        let planSnippet = "";
+        const todayWorkout = suggestion?.primary || (weeklyBriefing?.days && weeklyBriefing.days[0]);
+        if (isTodayQuery && todayWorkout) {
+          const title = (todayWorkout as any).title || (todayWorkout as any).focus || 'Aerobic Ride';
+          const dur = (todayWorkout as any).duration_minutes || (todayWorkout as any).duration_target || 60;
+          const intensity = todayWorkout.intensity || 'Medium';
+          const tss = (todayWorkout as any).tss || (todayWorkout as any).load_target || 50;
+          const desc = (todayWorkout as any).description || (todayWorkout as any).why || 'Steady endurance riding.';
+
+          planSnippet = `### Today's Scheduled Session\n` +
+            `🚴 **${title}** (${dur} min • ${intensity} Intensity • ~${tss} TSS)\n` +
+            `${desc}\n\n` +
+            `*(Tip: You can also tap the workout card on your Dashboard or calendar to view step-by-step interval targets and push them to Intervals.icu.)*\n\n`;
+        }
+
+        targetTextRef.current = `${planSnippet}### Gemini API Key Setup Required\n` +
+          `The Gemini API key currently configured for this project in AI Studio is invalid or expired.\n\n` +
+          `**How to fix this in Google AI Studio:**\n` +
+          `1. In the AI Studio navigation bar (outside the preview frame), click **Settings** (⚙️).\n` +
+          `2. Go to **Secrets**.\n` +
+          `3. Under **GEMINI_API_KEY**, select or enter a valid Gemini API key from your Google account.\n` +
+          `4. Once saved, waTTson will immediately reconnect for dynamic coaching adjustments!`;
+      } else {
+        targetTextRef.current = "I apologize, but I encountered a momentary connection interruption. Please ask your question again or clarify.";
+      }
       isStreamCompleteRef.current = true;
     } finally {
       abortControllerRef.current = null;

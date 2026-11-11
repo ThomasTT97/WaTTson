@@ -85,22 +85,31 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
       async start(controller) {
         let streamStarted = false;
         let lastError: any = null;
+        let authErrorMessage: string | null = null;
 
         for (const model of models) {
           try {
+            const userThinkingLevel = params?.config?.thinkingConfig?.thinkingLevel;
             const thinkingLevel = model === 'gemini-3.1-flash-lite'
-              ? ThinkingLevel.MINIMAL
-              : (options?.thinkingLevel || ThinkingLevel.LOW);
+              ? (userThinkingLevel || ThinkingLevel.MINIMAL)
+              : ((userThinkingLevel && userThinkingLevel !== ThinkingLevel.MINIMAL) ? userThinkingLevel : (options?.thinkingLevel || ThinkingLevel.LOW));
 
-            const mergedConfig = {
+            const safeConfig: Record<string, any> = {
               ...(params?.config || {}),
-              thinkingConfig: params?.config?.thinkingConfig || { thinkingLevel }
+              thinkingConfig: { thinkingLevel }
             };
+
+            if (model.startsWith('gemini-3.8') || model.startsWith('gemini-4')) {
+              delete safeConfig.temperature;
+              delete safeConfig.topP;
+              delete safeConfig.topK;
+              delete safeConfig.candidateCount;
+            }
 
             const responseStream = await ai.models.generateContentStream({
               ...(params || {}),
               model,
-              config: mergedConfig
+              config: safeConfig
             });
 
             for await (const chunk of responseStream) {
@@ -116,6 +125,15 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
             return;
           } catch (err: any) {
             lastError = err;
+            const raw = err?.message || '';
+            if (raw.includes('API key not valid') || raw.includes('API_KEY_INVALID')) {
+              authErrorMessage = 'The Gemini API key is invalid. Please select or verify a valid API key in Settings > Secrets.';
+              break;
+            }
+            if (err?.status === 403 || raw.includes('PERMISSION_DENIED')) {
+              authErrorMessage = 'Gemini API permission denied. Please verify your API key in Settings > Secrets.';
+              break;
+            }
             if (streamStarted) {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err?.message || 'Stream interrupted.' })}\n\n`));
               controller.close();
@@ -125,7 +143,8 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
         }
 
         if (!streamStarted) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: lastError?.message || 'All Gemini models failed.' })}\n\n`));
+          const finalMsg = authErrorMessage || lastError?.message || 'All Gemini models failed.';
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: finalMsg })}\n\n`));
           controller.close();
         }
       }

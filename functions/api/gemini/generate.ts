@@ -58,7 +58,7 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
       );
     }
 
-    const apiKey = context.env.GEMINI_API_KEY || context.env.API_KEY;
+    const apiKey = (context.env.GEMINI_API_KEY || context.env.API_KEY || '').trim();
     if (!apiKey) {
       return new Response(
         JSON.stringify({
@@ -83,21 +83,30 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
       : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'];
 
     let lastError: any = null;
+    let authErrorMessage: string | null = null;
     for (const model of models) {
       try {
+        const userThinkingLevel = params?.config?.thinkingConfig?.thinkingLevel;
         const thinkingLevel = model === 'gemini-3.1-flash-lite'
-          ? ThinkingLevel.MINIMAL
-          : (options?.thinkingLevel || ThinkingLevel.LOW);
+          ? (userThinkingLevel || ThinkingLevel.MINIMAL)
+          : ((userThinkingLevel && userThinkingLevel !== ThinkingLevel.MINIMAL) ? userThinkingLevel : (options?.thinkingLevel || ThinkingLevel.LOW));
 
-        const mergedConfig = {
+        const safeConfig: Record<string, any> = {
           ...(params?.config || {}),
-          thinkingConfig: params?.config?.thinkingConfig || { thinkingLevel }
+          thinkingConfig: { thinkingLevel }
         };
+
+        if (model.startsWith('gemini-3.8') || model.startsWith('gemini-4')) {
+          delete safeConfig.temperature;
+          delete safeConfig.topP;
+          delete safeConfig.topK;
+          delete safeConfig.candidateCount;
+        }
 
         const response = await ai.models.generateContent({
           ...(params || {}),
           model,
-          config: mergedConfig
+          config: safeConfig
         });
 
         return new Response(
@@ -106,13 +115,23 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
         );
       } catch (err: any) {
         lastError = err;
+        const raw = err?.message || '';
+        if (raw.includes('API key not valid') || raw.includes('API_KEY_INVALID')) {
+          authErrorMessage = 'The Gemini API key is invalid. Please select or verify a valid API key in Settings > Secrets.';
+          break;
+        }
+        if (err?.status === 403 || raw.includes('PERMISSION_DENIED')) {
+          authErrorMessage = 'Gemini API permission denied. Please verify your API key in Settings > Secrets.';
+          break;
+        }
         continue;
       }
     }
 
-    const statusCode = lastError?.status || lastError?.code || 500;
+    const statusCode = authErrorMessage ? 400 : (lastError?.status || lastError?.code || 500);
+    const message = authErrorMessage || lastError?.message || 'All Gemini models failed.';
     return new Response(
-      JSON.stringify({ error: lastError?.message || 'All Gemini models failed.' }),
+      JSON.stringify({ error: message }),
       {
         status: typeof statusCode === 'number' && statusCode >= 400 && statusCode < 600 ? statusCode : 500,
         headers: { 'Content-Type': 'application/json' }

@@ -1,6 +1,0 @@
-{
-  "summary":  "Implementation plan for adding OAuth integration for Strava and Intervals.icu to allow users to connect their accounts instead of using API keys.",
-  "updatedAt":  "2026-10-04T19:27:44.393075896Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}
