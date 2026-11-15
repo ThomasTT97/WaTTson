@@ -376,7 +376,10 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
         const isTodayQuery = queryLower.includes('today') || queryLower.includes('do now') || queryLower.includes('workout') || queryLower.includes('ride') || queryLower.includes('training') || queryLower.includes('plan');
 
         let planSnippet = "";
-        const todayWorkout = suggestion?.primary || (weeklyBriefing?.days && weeklyBriefing.days[0]);
+        const now = new Date();
+        const todayLocalStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const todaySuggestionPrimary = suggestion?.date === todayLocalStr ? suggestion.primary : null;
+        const todayWorkout = todaySuggestionPrimary || (weeklyBriefing?.days && weeklyBriefing.days[0]);
         if (isTodayQuery && todayWorkout) {
           const title = (todayWorkout as any).title || (todayWorkout as any).focus || 'Aerobic Ride';
           const dur = (todayWorkout as any).duration_minutes || (todayWorkout as any).duration_target || 60;

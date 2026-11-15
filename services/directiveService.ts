@@ -69,7 +69,7 @@ function diffInCalendarDays(dateStr1: string, dateStr2: string): number {
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const WEEKDAYS_SHORT = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const MONTHS: Record<string, number> = {
-  jan: 0, january: 1, januari: 0,
+  jan: 0, january: 0, januari: 0,
   feb: 1, february: 1, februari: 1,
   mar: 2, march: 2, maart: 2,
   apr: 3, april: 3,
@@ -82,6 +82,69 @@ const MONTHS: Record<string, number> = {
   nov: 10, november: 10,
   dec: 11, december: 11
 };
+
+/**
+ * Parses a calendar date from a briefing day label like "Sun (Nov 15)", "Mon (Jan 2)", or "2026-11-15".
+ * Resolves year boundaries cleanly relative to referenceDate (default: today).
+ * Returns a Date at local midnight, or null if no calendar month+day can be parsed.
+ */
+export function parseBriefingDayDate(dayStr: string | null | undefined, referenceDate: Date = new Date()): Date | null {
+  if (!dayStr) return null;
+  const trimmed = dayStr.trim();
+
+  // ISO format YYYY-MM-DD
+  const isoMatch = trimmed.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if (isoMatch) {
+    const y = Number(isoMatch[1]);
+    const m = Number(isoMatch[2]) - 1;
+    const d = Number(isoMatch[3]);
+    const candidate = new Date(y, m, d, 0, 0, 0, 0);
+    if (!isNaN(candidate.getTime()) && candidate.getMonth() === m && candidate.getDate() === d) {
+      return candidate;
+    }
+  }
+
+  // Month Day format e.g. "Sun (Nov 15)" or "Nov 15"
+  const monthDayMatch = trimmed.match(/\b(jan|january|januari|feb|february|februari|mar|march|maart|apr|april|may|mei|jun|june|juni|jul|july|juli|aug|august|augustus|sep|sept|september|oct|october|oktober|nov|november|dec|december)\s+(\d{1,2})(?:st|nd|rd|th)?\b/i);
+  const dayMonthMatch = !monthDayMatch
+    ? trimmed.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(jan|january|januari|feb|february|februari|mar|march|maart|apr|april|may|mei|jun|june|juni|jul|july|juli|aug|august|augustus|sep|sept|september|oct|october|oktober|nov|november|dec|december)\b/i)
+    : null;
+
+  let monthIdx: number | undefined;
+  let dayNum: number | undefined;
+
+  if (monthDayMatch) {
+    monthIdx = MONTHS[monthDayMatch[1].toLowerCase()];
+    dayNum = Number(monthDayMatch[2]);
+  } else if (dayMonthMatch) {
+    dayNum = Number(dayMonthMatch[1]);
+    monthIdx = MONTHS[dayMonthMatch[2].toLowerCase()];
+  }
+
+  if (monthIdx === undefined || dayNum === undefined || dayNum < 1 || dayNum > 31) {
+    return null;
+  }
+
+  const refMidnight = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+  const refYear = refMidnight.getFullYear();
+
+  // Pick year among refYear - 1, refYear, refYear + 1 closest to referenceDate
+  let bestCandidate: Date | null = null;
+  let bestDiff = Infinity;
+  const candidateYears: number[] = [refYear - 1, refYear, refYear + 1];
+  for (const yr of candidateYears) {
+    const candidate: Date = new Date(yr, monthIdx, dayNum, 0, 0, 0, 0);
+    if (candidate.getMonth() === monthIdx && candidate.getDate() === dayNum) {
+      const diff = Math.abs(candidate.getTime() - refMidnight.getTime());
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestCandidate = candidate;
+      }
+    }
+  }
+
+  return bestCandidate;
+}
 
 /**
  * Parses daily duration and rest constraints from a weekly schedule directive string,
@@ -319,7 +382,17 @@ export function harmonizeBriefingWithAvailability(
     const token = normalizeWeekdayToken(weekdayShort);
     const rule = token && scheduleMap ? scheduleMap[token] : null;
 
-    const existingDay = existingDays[i] || existingDays.find(d => normalizeWeekdayToken(d.day) === token);
+    const existingDayByExactDate = existingDays.find(d => {
+      const parsed = parseBriefingDayDate(d.day, today);
+      return parsed &&
+        parsed.getFullYear() === targetDate.getFullYear() &&
+        parsed.getMonth() === targetDate.getMonth() &&
+        parsed.getDate() === targetDate.getDate();
+    });
+    const anyExistingHasDate = existingDays.some(d => parseBriefingDayDate(d.day, today) !== null);
+    const existingDay = existingDayByExactDate ||
+      existingDays.find(d => normalizeWeekdayToken(d.day) === token) ||
+      (!anyExistingHasDate ? existingDays[i] : undefined);
 
     if (rule) {
       if (rule.isRest || rule.durationMins <= 0) {

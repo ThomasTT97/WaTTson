@@ -54,7 +54,8 @@ import {
   serializePlanDirectives,
   parseScheduleDurationsFromDirective,
   normalizeWeekdayToken,
-  harmonizeBriefingWithAvailability
+  harmonizeBriefingWithAvailability,
+  parseBriefingDayDate
 } from "./directiveService";
 
 
@@ -1713,6 +1714,14 @@ POWER MILESTONES & SPIKES:
   const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
   const currentDateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const currentTimeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const timezoneStr = (() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      return undefined;
+    }
+  })();
 
   const tomorrow = new Date(now);
   tomorrow.setDate(now.getDate() + 1);
@@ -1762,6 +1771,10 @@ POWER MILESTONES & SPIKES:
   const briefing = context.weeklyBriefing;
   const dailySuggestion = context.suggestion;
 
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const suggestionIsForToday = Boolean(dailySuggestion?.primary && dailySuggestion.date === todayIso);
+  const suggestionIsForTomorrow = Boolean(dailySuggestion?.primary && dailySuggestion.date === tomorrowIso);
+
   if (briefing && briefing.days && briefing.days.length > 0) {
     const dayOffsets: number[] = [];
     let currentOffset = 0;
@@ -1783,11 +1796,26 @@ POWER MILESTONES & SPIKES:
     const futurePlannedDays: { day: typeof briefing.days[0]; offset: number; dateStr: string; iso: string }[] = [];
 
     briefing.days.forEach((day, idx) => {
-      const offset = dayOffsets[idx];
-      const planDate = new Date(now);
-      planDate.setDate(now.getDate() + offset);
+      const parsedDate = parseBriefingDayDate(day.day, now);
+      let planDate: Date;
+      let offset: number;
+
+      if (parsedDate) {
+        planDate = parsedDate;
+        offset = Math.round((planDate.getTime() - todayMidnight.getTime()) / 86400000);
+      } else {
+        offset = dayOffsets[idx];
+        planDate = new Date(todayMidnight);
+        planDate.setDate(todayMidnight.getDate() + offset);
+      }
+
       const planIso = `${planDate.getFullYear()}-${String(planDate.getMonth() + 1).padStart(2, '0')}-${String(planDate.getDate()).padStart(2, '0')}`;
-      
+
+      if (offset < 0) {
+        // Past day from an earlier briefing; do not mislabel as today or upcoming
+        return;
+      }
+
       if (offset === 0 || planIso === todayIso) {
         todayPlannedDays.push({ day, idx });
       } else if (offset === 1 || planIso === tomorrowIso) {
@@ -1822,10 +1850,12 @@ POWER MILESTONES & SPIKES:
       }
 
       todayPlannedSummary = `Training Plan for Today (${dayOfWeek}, ${todayIso})${statusNote}:\n${lines.join('\n')}`;
-    } else if (dailySuggestion && dailySuggestion.primary) {
+    } else if (suggestionIsForToday && dailySuggestion?.primary) {
       todayPlannedSummary = `Daily Suggestion for Today (${dayOfWeek}, ${todayIso}):\n- "${dailySuggestion.primary.title}" (${dailySuggestion.primary.duration_minutes}m, ${dailySuggestion.primary.intensity}, ~${dailySuggestion.primary.tss || 'N/A'} TSS). Description: "${dailySuggestion.primary.description}". Status: ${hasCompletedRideToday ? 'Ridden today' : 'Pending / on deck'}.`;
+    } else if (hasCompletedRideToday) {
+      todayPlannedSummary = `Today's training session has been completed (${todayActivities.length} ride logged today on ${dayOfWeek}, ${todayIso}).`;
     } else {
-      todayPlannedSummary = `No specific session mapped for today in the weekly briefing.`;
+      todayPlannedSummary = `No specific session mapped for today (${dayOfWeek}, ${todayIso}) in the weekly briefing.`;
     }
 
     const upcomingLines: string[] = [];
@@ -1842,6 +1872,9 @@ POWER MILESTONES & SPIKES:
           upcomingLines.push(`  • "${day.focus}" - Duration: ${day.duration_target}m, Planned TSS: ${day.load_target || 'N/A'}, Intensity: ${day.intensity}${stepsDesc}. Purpose: "${day.why}"`);
         }
       });
+    } else if (suggestionIsForTomorrow && dailySuggestion?.primary) {
+      upcomingLines.push(`TOMORROW (${tomorrowDateStr}, ${tomorrowIso}):`);
+      upcomingLines.push(`  • "${dailySuggestion.primary.title}" - Duration: ${dailySuggestion.primary.duration_minutes}m, Planned TSS: ${dailySuggestion.primary.tss || 'N/A'}, Intensity: ${dailySuggestion.primary.intensity}. Purpose: "${dailySuggestion.primary.description}"`);
     } else {
       upcomingLines.push(`TOMORROW (${tomorrowDateStr}, ${tomorrowIso}): No specific session scheduled; follow base recovery.`);
     }
@@ -1862,11 +1895,16 @@ POWER MILESTONES & SPIKES:
     }
 
     upcomingPlanSummary = upcomingLines.join('\n');
-  } else if (dailySuggestion && dailySuggestion.primary) {
+  } else if (suggestionIsForToday && dailySuggestion?.primary) {
     todayPlannedSummary = `Daily Suggestion for Today (${dayOfWeek}, ${todayIso}): "${dailySuggestion.primary.title}" (${dailySuggestion.primary.duration_minutes}m, ${dailySuggestion.primary.intensity}, ~${dailySuggestion.primary.tss || 'N/A'} TSS). Status: ${hasCompletedRideToday ? 'Rode today' : 'On deck'}.`;
     upcomingPlanSummary = `Weekly training plan initializing. Focus on today's target workout: "${dailySuggestion.primary.title}".`;
+  } else if (suggestionIsForTomorrow && dailySuggestion?.primary) {
+    todayPlannedSummary = hasCompletedRideToday
+      ? `Today's training is already logged (${todayActivities.length} session(s) completed on ${dayOfWeek}, ${todayIso}).`
+      : `No specific session mapped for today (${dayOfWeek}, ${todayIso}).`;
+    upcomingPlanSummary = `TOMORROW (${tomorrowDateStr}, ${tomorrowIso}):\n  • "${dailySuggestion.primary.title}" (${dailySuggestion.primary.duration_minutes}m, ${dailySuggestion.primary.intensity}, ~${dailySuggestion.primary.tss || 'N/A'} TSS). Description: "${dailySuggestion.primary.description}".`;
   } else {
-    todayPlannedSummary = `No scheduled session mapped for today.`;
+    todayPlannedSummary = `No scheduled session mapped for today (${dayOfWeek}, ${todayIso}).`;
     upcomingPlanSummary = `No upcoming training plan available yet.`;
   }
 
@@ -1947,6 +1985,8 @@ POWER MILESTONES & SPIKES:
     currentDateStr,
     todayIso,
     dayOfWeek,
+    currentTimeStr,
+    timezoneStr,
     tomorrowDateStr,
     yesterdayDateStr,
     goal: context.goal,
@@ -1971,14 +2011,32 @@ POWER MILESTONES & SPIKES:
     ftp: context.ftp
   });
 
-  const contents = history.map(m => ({
-    role: m.role,
-    parts: [{ text: m.text }]
-  }));
+  // Keep recent 24 messages and annotate turns from earlier calendar days so old dates never bleed into today
+  const recentHistory = history.slice(-24);
+  const contents = recentHistory.map(m => {
+    let text = m.text || '';
+    if (m.timestamp) {
+      const msgDate = new Date(m.timestamp);
+      if (!isNaN(msgDate.getTime())) {
+        const msgIso = `${msgDate.getFullYear()}-${String(msgDate.getMonth() + 1).padStart(2, '0')}-${String(msgDate.getDate()).padStart(2, '0')}`;
+        if (msgIso !== todayIso) {
+          const msgDateLabel = msgDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+          text = `[Past message from ${msgDateLabel} (${msgIso}) — any "today/tomorrow/yesterday" here refers to ${msgIso}]\n${text}`;
+        }
+      }
+    }
+    return {
+      role: m.role,
+      parts: [{ text }]
+    };
+  });
+
+  // Anchor the current user turn directly with today's exact local date and time
+  const anchoredUserMessage = `[Current Date: ${dayOfWeek}, ${currentDateStr} (${todayIso}), Local Time: ${currentTimeStr} | Tomorrow: ${tomorrowDateStr} | Yesterday: ${yesterdayDateStr}]\n${message}`;
 
   contents.push({
     role: 'user',
-    parts: [{ text: message }]
+    parts: [{ text: anchoredUserMessage }]
   });
 
   const geminiPayload = {
@@ -2169,7 +2227,7 @@ export const analyzeThreeMonthReview = async (
 
   const ninetyDaysAgo = new Date();
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-  const ninetyDaysStr = ninetyDaysAgo.toISOString().split('T')[0];
+  const ninetyDaysStr = `${ninetyDaysAgo.getFullYear()}-${String(ninetyDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(ninetyDaysAgo.getDate()).padStart(2, '0')}`;
 
   const recent90 = activities.filter(a => a.start_date_local && a.start_date_local.split('T')[0] >= ninetyDaysStr);
   const totalActivities = recent90.length;

@@ -56,6 +56,8 @@ export interface ChatMessageParams {
   currentDateStr: string;
   todayIso: string;
   dayOfWeek: string;
+  currentTimeStr?: string;
+  timezoneStr?: string;
   tomorrowDateStr: string;
   yesterdayDateStr: string;
   goal: string;
@@ -318,7 +320,7 @@ export const getChatMessagePrompt = (p: ChatMessageParams): string => {
     ========================================================
     CALENDAR & CURRENT DAY SYNCHRONIZATION (SOURCE OF TRUTH):
     ========================================================
-    - TODAY IS: ${p.currentDateStr} (ISO: ${p.todayIso}, Day of week: ${p.dayOfWeek}).
+    - TODAY IS: ${p.currentDateStr} (ISO: ${p.todayIso}, Day of week: ${p.dayOfWeek}${p.currentTimeStr ? `, Local time: ${p.currentTimeStr}` : ''}${p.timezoneStr ? `, Timezone: ${p.timezoneStr}` : ''}).
     - TOMORROW IS: ${p.tomorrowDateStr}.
     - YESTERDAY WAS: ${p.yesterdayDateStr}.
     
@@ -327,6 +329,8 @@ export const getChatMessagePrompt = (p: ChatMessageParams): string => {
     - When the user asks "what day is today?", "what day are we?", or refers to "today", "tonight", "this morning", or "now", it is ALWAYS ${p.dayOfWeek}, ${p.todayIso}.
     - When the user refers to "tomorrow", it is ${p.tomorrowDateStr}.
     - When the user refers to "yesterday", it is ${p.yesterdayDateStr}.
+    - Earlier turns in the conversation history may have occurred on PREVIOUS days (labeled with [Past message from ...]). Any mentions of "today", "tomorrow", or "yesterday" inside those earlier turns referred to THAT historical date, NEVER to ${p.todayIso}.
+    - NEVER repeat or echo internal bracketed metadata tags (such as [Current Date: ...] or [Past message from ...]) in your reply.
     - When the user asks about the "coming days", "upcoming days", or "what's planned", refer directly to the TRAINING PLAN FOR THE COMING DAYS below.
     - When the user asks "what did I do yesterday?", "did I train yesterday?", or "what have I done before?", refer directly to the YESTERDAY & PAST TRAINING HISTORY below.
 
@@ -449,7 +453,13 @@ export const getChatMessagePrompt = (p: ChatMessageParams): string => {
       - Dutch Example: "Schema aangepast! Ik heb een rustdag ingepland voor morgen. [UPDATE_PLAN: Schedule a rest day for tomorrow]"
     
     STEP 3: USER DECLINES OR REQUESTS MODIFICATION
-    - If the user says "no", "nee", "niet doen", declines, or asks for a different option, do NOT update the plan. Provide an alternative proposal and ask if they'd like to apply that one instead.`;
+    - If the user says "no", "nee", "niet doen", declines, or asks for a different option, do NOT update the plan. Provide an alternative proposal and ask if they'd like to apply that one instead.
+
+    ========================================================
+    FINAL TEMPORAL GROUNDING CHECK (MANDATORY):
+    ========================================================
+    - Current real-world date: TODAY is ${p.dayOfWeek}, ${p.currentDateStr} (${p.todayIso}). TOMORROW is ${p.tomorrowDateStr}. YESTERDAY was ${p.yesterdayDateStr}.
+    - Always ground relative dates ("today", "tomorrow", "yesterday", "this weekend", "next Tuesday") strictly to ${p.todayIso}, overriding any older dates mentioned in earlier chat turns.`;
 };
 
 export const getUserProfilePrompt = (p: UserProfileParams): string => {

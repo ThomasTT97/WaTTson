@@ -25,7 +25,8 @@ import {
   pruneExpiredDirectives, 
   getTodayDateString,
   normalizeWeekdayToken,
-  harmonizeBriefingWithAvailability
+  harmonizeBriefingWithAvailability,
+  parseBriefingDayDate
 } from './services/directiveService';
 import { ActivityCard } from './components/ActivityCard';
 import { RiderPowerCurve } from './components/RiderPowerCurve';
@@ -213,16 +214,46 @@ const App: React.FC = () => {
     return null;
   });
   
+  const [currentDateKey, setCurrentDateKey] = useState<string>(() => toLocalDateStr(new Date()));
+
+  useEffect(() => {
+    const syncDateKey = () => {
+      const latestKey = toLocalDateStr(new Date());
+      setCurrentDateKey(prev => (prev !== latestKey ? latestKey : prev));
+    };
+
+    // Schedule update just after local midnight so open tabs/PWAs stay synced across days
+    const now = new Date();
+    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1, 0);
+    const msUntilMidnight = Math.max(1000, nextMidnight.getTime() - now.getTime());
+    const midnightTimer = setTimeout(syncDateKey, msUntilMidnight);
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        syncDateKey();
+      }
+    };
+
+    window.addEventListener('focus', syncDateKey);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    return () => {
+      clearTimeout(midnightTimer);
+      window.removeEventListener('focus', syncDateKey);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    };
+  }, [currentDateKey]);
+
   const hasRideToday = useMemo(() => {
     if (!activities) return false;
-    const todayStr = toLocalDateStr(new Date());
+    const todayStr = currentDateKey;
     return activities.some(a => {
       if (!a.start_date_local.startsWith(todayStr)) return false;
       const dur = a.moving_time || a.elapsed_time || (a as any).time || (a as any).duration || (a as any).icu_recording_time || 0;
       const dist = a.distance || (a as any).icu_distance || 0;
       return dur >= 60 || dist >= 100;
     });
-  }, [activities]);
+  }, [activities, currentDateKey]);
 
   const [wellnessData, setWellnessData] = useState<Wellness[]>(() => {
     try {
@@ -833,12 +864,18 @@ const App: React.FC = () => {
     if (!creds) return;
     setSyncingDayInApp(day.day);
     try {
-      const todayStr = toLocalDateStr(new Date());
-      const hasActivityToday = (activities || []).some(a => a.start_date_local.startsWith(todayStr));
-      const offset = hasActivityToday ? 1 : 0;
-
-      const targetDate = new Date();
-      targetDate.setDate(targetDate.getDate() + absoluteIndex + offset);
+      const now = new Date();
+      const parsedDayDate = parseBriefingDayDate(day.day, now);
+      let targetDate: Date;
+      if (parsedDayDate) {
+        targetDate = parsedDayDate;
+      } else {
+        const todayStr = toLocalDateStr(now);
+        const hasActivityToday = (activities || []).some(a => a.start_date_local.startsWith(todayStr));
+        const offset = hasActivityToday ? 1 : 0;
+        targetDate = new Date(now);
+        targetDate.setDate(targetDate.getDate() + absoluteIndex + offset);
+      }
       const dateStr = toLocalDateStr(targetDate);
       
       const effOriginalFtp = weeklyBriefing?.ftp || 250;
@@ -1519,7 +1556,7 @@ const App: React.FC = () => {
           }
         }
         
-        const initialMsgs: ChatMessage[] = [{ role: 'model', text: introMsg }];
+        const initialMsgs: ChatMessage[] = [{ role: 'model', text: introMsg, timestamp: Date.now() }];
         setMessages(initialMsgs);
         safeSetItem(getChatStorageKey(activeUid), JSON.stringify(initialMsgs));
       }
@@ -1570,7 +1607,7 @@ const App: React.FC = () => {
       };
       fetchNewSuggestion();
     }
-  }, [activities, userGoal, hasRideToday, trainingMethodology]);
+  }, [activities, userGoal, hasRideToday, trainingMethodology, currentDateKey]);
 
   const fetchWeeklyBriefingData = useCallback(async (customPlanContext?: string, force = false, mode?: 'power' | 'hr', trainingModeArg?: TrainingMode, weekIndex?: number) => {
     if (!activities || activities.length === 0) return;
@@ -1834,7 +1871,7 @@ const App: React.FC = () => {
     const recoveryLabel = form < 0 ? `${Math.round(Math.abs(form) * 2.5)}h Recovery` : "Fully Primed";
 
     return { last7Days, total7DayLoad, total7DayTime, statusLabel, statusColor, statusBg, readiness, recoveryProgress, recoveryLabel, form: Math.round(form), ctl: Math.round(ctl), atl: Math.round(atl) };
-  }, [activities]);
+  }, [activities, currentDateKey]);
 
   const mainScrollRef = useRef<HTMLDivElement>(null);
 
@@ -1904,9 +1941,18 @@ const App: React.FC = () => {
       });
 
       weeklyBriefing.days.forEach((day, idx) => {
-        const dayOffset = dayOffsets[idx];
-        const targetDate = new Date(today);
-        targetDate.setDate(today.getDate() + dayOffset);
+        const parsedDate = parseBriefingDayDate(day.day, today);
+        let dayOffset: number;
+        let targetDate: Date;
+
+        if (parsedDate) {
+          targetDate = parsedDate;
+          dayOffset = Math.round((targetDate.getTime() - today.getTime()) / 86400000);
+        } else {
+          dayOffset = dayOffsets[idx];
+          targetDate = new Date(today);
+          targetDate.setDate(today.getDate() + dayOffset);
+        }
         
         const dateStr = toLocalDateStr(targetDate);
         const isTodayDay = dateStr === todayStr;
@@ -2052,7 +2098,7 @@ const App: React.FC = () => {
       ...todayActualList,
       ...pastList
     ];
-  }, [activities, weeklyBriefing]);
+  }, [activities, weeklyBriefing, currentDateKey]);
 
   const sortedTimelineItems = useMemo(() => {
     return [...timelineItems].sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -2066,13 +2112,12 @@ const App: React.FC = () => {
     const sevenDaysFromNow = new Date(todayDate);
     sevenDaysFromNow.setDate(todayDate.getDate() + 7);
     
-    const toDateStr = (d: Date) => d.toISOString().split('T')[0];
-    const todayDateStr = toDateStr(todayDate);
-    const tomorrowDateStr = toDateStr(tomorrowDate);
+    const todayDateStr = toLocalDateStr(todayDate);
+    const tomorrowDateStr = toLocalDateStr(tomorrowDate);
 
     // Filters
-    const isToday = (i: any) => (i.type === 'today_suggested' || i.type === 'today_actual') || (i.type === 'future_suggested' && toDateStr(i.date) === todayDateStr);
-    const isTomorrow = (i: any) => i.type === 'future_suggested' && toDateStr(i.date) === tomorrowDateStr;
+    const isToday = (i: any) => (i.type === 'today_suggested' || i.type === 'today_actual') || (i.type === 'future_suggested' && toLocalDateStr(i.date) === todayDateStr);
+    const isTomorrow = (i: any) => i.type === 'future_suggested' && toLocalDateStr(i.date) === tomorrowDateStr;
     const isFuture = (i: any) => i.type === 'future_suggested' && i.date > tomorrowDate && i.date <= sevenDaysFromNow;
 
     const todayItems = sortedTimelineItems.filter(isToday);
@@ -2212,7 +2257,7 @@ const App: React.FC = () => {
       todayText,
       tomorrowText
     };
-  }, [activities, ridesSections]);
+  }, [activities, ridesSections, currentDateKey]);
 
 
   const currentWorkout = suggestion ? (showAlternative ? suggestion.alternative : suggestion.primary) : null;
@@ -3621,8 +3666,9 @@ const App: React.FC = () => {
           const today = new Date();
           today.setHours(0, 0, 0, 0);
           const todayStr = toLocalDateStr(today);
-          const targetDate = new Date(today);
-          if (index !== -1) {
+          const parsedSelectedDate = parseBriefingDayDate(selectedSuggestedDay.day, today);
+          const targetDate = parsedSelectedDate || new Date(today);
+          if (!parsedSelectedDate && index !== -1) {
             targetDate.setDate(today.getDate() + index);
           }
           const weekday = targetDate.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase();
