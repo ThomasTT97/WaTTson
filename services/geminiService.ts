@@ -375,8 +375,11 @@ export const getRideFeedback = async (
     effectiveIntervals = (activity as any).intervals;
   }
 
-  // Version 9 cache key includes intervals length so newly fetched laps instantly trigger fresh AI analysis
-  const cacheKey = `wattson_feedback_v9_${activity.id}_${effectiveIntervals.length}_${userGoal || 'default'}`;
+  const rawCadence = activity.average_cadence ?? (activity as any).icu_average_cadence ?? (activity as any).avg_cadence ?? 0;
+  const avgCadence = typeof rawCadence === 'number' && rawCadence > 0 ? Math.round(rawCadence) : 0;
+
+  // Version 11 cache key includes avgCadence so resolved non-zero cadence invalidates stale caches
+  const cacheKey = `wattson_feedback_v11_${activity.id}_${effectiveIntervals.length}_${avgCadence}_${userGoal || 'default'}`;
   const cached = force ? null : getCache(cacheKey);
   if (cached) return cached;
 
@@ -384,17 +387,37 @@ export const getRideFeedback = async (
 
   const detectedRideType = detectIntervalsFromLaps(activity, effectiveIntervals) || undefined;
 
-  // Detect power spikes and surge dynamics
-  const maxWatts = activity.max_watts || 0;
-  const avgWatts = activity.average_watts || activity.icu_average_watts || 0;
-  let npWatts = activity.weighted_average_watts || activity.icu_weighted_avg_watts || activity.icu_weighted_average_watts || 0;
+  // Compute canonical session metrics identically to CoachingModal & ActivityCard
+  const totalSeconds = activity.moving_time || activity.elapsed_time || (activity as any).time || (activity as any).duration || (activity as any).icu_recording_time || 0;
+  const durationHours = Math.floor(totalSeconds / 3600);
+  const durationRemMins = Math.round((totalSeconds % 3600) / 60);
+  const durationStr = durationHours > 0 ? `${durationHours}h ${durationRemMins}m` : `${durationRemMins}m`;
+  const durationMins = Math.round(totalSeconds / 60);
+
+  const maxWatts = Math.round(activity.max_watts || 0);
+  const avgWatts = Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0);
+  let npWatts = Math.round(activity.weighted_average_watts ?? activity.icu_weighted_avg_watts ?? activity.icu_weighted_average_watts ?? 0);
   if (npWatts === 0 && avgWatts > 0 && activity.icu_variability_index && activity.icu_variability_index > 1.01) {
     npWatts = Math.round(avgWatts * activity.icu_variability_index);
   }
+  const avgHr = Math.round(activity.average_heartrate || 0);
+  const maxHr = Math.round(activity.max_heartrate || 0);
+
+  const tss = Math.round(activity.icu_training_load ?? activity.icu_tss ?? activity.training_load ?? (activity as any).load ?? (activity as any).tss ?? 0);
+  const displayDistance = activity.distance || (activity as any).icu_distance || 0;
+  const distKm = displayDistance > 0 ? Math.round(displayDistance / 100) / 10 : 0;
+
+  let rawIntensity = activity.icu_intensity ?? 0;
+  if (rawIntensity > 2.0) rawIntensity = rawIntensity / 100;
+  if ((!rawIntensity || rawIntensity <= 0) && (npWatts || avgWatts) > 0 && (ftp || activity.icu_eftp)) {
+    rawIntensity = (npWatts || avgWatts) / (ftp || activity.icu_eftp || 250);
+  }
+  const intensityStr = rawIntensity > 0 ? `${rawIntensity.toFixed(2)} (${Math.round(rawIntensity * 100)}% FTP)` : 'N/A';
+
   let powerSpikesInfo = "";
   if (maxWatts > 0) {
     const spikeRatio = avgWatts > 0 ? (maxWatts / avgWatts).toFixed(1) : "N/A";
-    powerSpikesInfo = `Peak Power Spike: ${Math.round(maxWatts)}W (Peak/Avg Ratio: ${spikeRatio}x). NP: ${Math.round(npWatts || avgWatts)}W, Avg: ${Math.round(avgWatts)}W.`;
+    powerSpikesInfo = `Peak Power Spike: ${maxWatts}W (Peak/Avg Ratio: ${spikeRatio}x). NP: ${npWatts || avgWatts}W, Avg: ${avgWatts}W.`;
   }
 
   if (effectiveIntervals && effectiveIntervals.length > 0) {
@@ -403,6 +426,8 @@ export const getRideFeedback = async (
       const s = Math.round(secs % 60);
       return m > 0 ? `${m}m${s > 0 ? ` ${s}s` : ''}` : `${s}s`;
     };
+
+    const isSingleWholeRideLap = effectiveIntervals.length === 1;
 
     const formattedLaps = effectiveIntervals
       .map(l => {
@@ -419,15 +444,25 @@ export const getRideFeedback = async (
         const maxW = typeof l.max_watts === 'number' && l.max_watts > 0
           ? l.max_watts
           : (typeof l.max_power === 'number' ? l.max_power : undefined);
-        const hr = typeof l.average_heartrate === 'number' && l.average_heartrate > 0
+        let hr = typeof l.average_heartrate === 'number' && l.average_heartrate > 0
           ? l.average_heartrate
           : (l.avg_hr || l.avg_heartrate || 0);
         const maxH = typeof l.max_heartrate === 'number' && l.max_heartrate > 0
           ? l.max_heartrate
           : (l.max_hr || undefined);
-        const cad = typeof l.average_cadence === 'number'
+        let cad = typeof l.average_cadence === 'number'
           ? l.average_cadence
-          : (typeof l.cadence === 'number' ? l.cadence : undefined);
+          : (typeof l.avg_cadence === 'number'
+            ? l.avg_cadence
+            : (typeof l.cadence === 'number' ? l.cadence : undefined));
+
+        // If a single interval spans the whole ride (>=85% of total time), align its summary metrics
+        // with the official session summary so lap vs session averages (e.g. cadence) never contradict each other.
+        if (isSingleWholeRideLap && totalSeconds > 0 && dur >= totalSeconds * 0.85) {
+          if (avgCadence > 0) cad = avgCadence;
+          if (avgHr > 0) hr = avgHr;
+        }
+
         return { ...l, dur, watts, maxW, hr, maxH, cad };
       })
       .filter(l => l.dur >= 5) // include short sprint efforts down to 5s
@@ -450,13 +485,19 @@ export const getRideFeedback = async (
 
   const prompt = getRideFeedbackPrompt({
     activityName: activity.name || '',
-    tss: activity.icu_training_load || activity.icu_tss || activity.training_load || 0,
-    intensity: activity.icu_intensity || 0,
-    eftp: activity.icu_eftp || 'N/A',
-    durationMins: Math.round((activity.moving_time || activity.elapsed_time || 0) / 60),
-    avgPower: Math.round(activity.average_watts || activity.icu_average_watts || 0),
-    npPower: Math.round(npWatts || avgWatts),
-    avgHr: Math.round(activity.average_heartrate || 0),
+    tss,
+    intensity: rawIntensity,
+    intensityStr,
+    eftp: activity.icu_eftp ? Math.round(activity.icu_eftp) : 'N/A',
+    durationMins,
+    durationStr,
+    avgPower: avgWatts,
+    npPower: npWatts || avgWatts,
+    maxWatts,
+    avgHr,
+    maxHr,
+    avgCadence,
+    distKm,
     userGoal: userGoal || 'Fitness',
     plannedWorkoutCtx,
     lapsCtx,

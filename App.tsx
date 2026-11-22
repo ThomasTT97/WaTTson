@@ -278,6 +278,7 @@ const App: React.FC = () => {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const [selectedSuggestedDay, setSelectedSuggestedDay] = useState<WeeklyBriefing['days'][0] | null>(null);
+  const [selectedSuggestedDate, setSelectedSuggestedDate] = useState<Date | null>(null);
   const [weeklyBriefing, setWeeklyBriefing] = useState<WeeklyBriefing | null>(() => {
     try {
       const saved = localStorage.getItem('wattson_saved_weekly_briefing');
@@ -528,6 +529,8 @@ const App: React.FC = () => {
   });
   const [syncingDayInApp, setSyncingDayInApp] = useState<string | null>(null);
   const [syncSuccessInApp, setSyncSuccessInApp] = useState<string | null>(null);
+  const [syncErrorInApp, setSyncErrorInApp] = useState<string | null>(null);
+  const [syncErrorWorkout, setSyncErrorWorkout] = useState<string | null>(null);
 
   const getWeekForDayInApp = (dayObj: any) => {
     if (!weeklyBriefing) return 1;
@@ -860,55 +863,145 @@ const App: React.FC = () => {
     handleApplyScheduleChange(newTweakDirective, undefined, weekIndex, switchTab);
   };
 
-  const handleSyncToIntervalsFromApp = async (day: any, absoluteIndex: number) => {
-    if (!creds) return;
-    setSyncingDayInApp(day.day);
+  const formatWorkoutStepsForIntervals = useCallback((steps: any[] | undefined, fallbackText?: string) => {
+    if (!steps || steps.length === 0) return fallbackText || '';
+    const effOriginalFtp = weeklyBriefing?.ftp || 250;
+    const effCurrentFtp = ftp || effOriginalFtp;
+    const scalingRatio = effCurrentFtp / effOriginalFtp;
+
+    return steps.map((s: any) => {
+      const durMins = Number(s.duration || 0);
+      const durStr = durMins < 1
+        ? `${Math.max(1, Math.round(durMins * 60))}s`
+        : `${Math.round(durMins)}m`;
+
+      const scaledWatts = (typeof s.target_pct === 'number' && s.target_pct > 0)
+        ? Math.round(s.target_pct * effCurrentFtp)
+        : (typeof s.target_watts === 'number' && s.target_watts > 0 ? Math.round(s.target_watts * scalingRatio) : 0);
+
+      // Strip embedded durations, wattages, and (% FTP) tokens so Intervals.icu parses clean single step lines
+      let cleanTitle = (s.label || 'Step')
+        .replace(/^\s*\d+(?:\.\d+)?\s*(?:hours?|hrs?|h|minutes?|mins?|min|m|seconds?|secs?|s)\b\s*/gi, '')
+        .replace(/\(\s*\d+(?:\.\d+)?%\s*(?:FTP)?\s*\)/gi, '')
+        .replace(/@?\s*\d+\s*(?:watts?|w)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (!cleanTitle) cleanTitle = 'Step';
+
+      const targetToken = scaledWatts > 0
+        ? `${scaledWatts}w`
+        : (typeof s.target_pct === 'number' && s.target_pct > 0 ? `${Math.round(s.target_pct * 100)}%` : '');
+
+      return `- ${cleanTitle} ${durStr}${targetToken ? ` ${targetToken}` : ''}`;
+    }).join('\n');
+  }, [ftp, weeklyBriefing?.ftp]);
+
+  const detectIntervalsWorkoutType = (titleOrFocus?: string): string => {
+    const lower = (titleOrFocus || '').toLowerCase();
+    if (lower.includes('run') || lower.includes('brick')) return 'Run';
+    if (lower.includes('swim') || lower.includes('pool')) return 'Swim';
+    return 'Ride';
+  };
+
+  const handleSyncToIntervalsFromApp = async (day: any, absoluteIndex: number, explicitDate?: Date | null) => {
+    if (!creds) {
+      setSyncErrorInApp('Connect your Intervals.icu account first to push workouts.');
+      return;
+    }
+    if (creds.provider === 'strava' && (!creds.apiKey || creds.apiKey === 'strava')) {
+      setSyncErrorInApp('Connect an Intervals.icu account in Profile settings to push workouts to your Intervals.icu calendar.');
+      return;
+    }
+
+    const dayKey = `${day.day || 'day'}_${day.focus || ''}`;
+    setSyncingDayInApp(dayKey);
+    setSyncErrorInApp(null);
+    setSyncSuccessInApp(null);
+
     try {
       const now = new Date();
-      const parsedDayDate = parseBriefingDayDate(day.day, now);
+      now.setHours(0, 0, 0, 0);
+      const parsedDayDate = explicitDate || parseBriefingDayDate(day.day, now);
       let targetDate: Date;
       if (parsedDayDate) {
-        targetDate = parsedDayDate;
+        targetDate = new Date(parsedDayDate);
       } else {
-        const todayStr = toLocalDateStr(now);
-        const hasActivityToday = (activities || []).some(a => a.start_date_local.startsWith(todayStr));
-        const offset = hasActivityToday ? 1 : 0;
         targetDate = new Date(now);
-        targetDate.setDate(targetDate.getDate() + absoluteIndex + offset);
+        if (absoluteIndex >= 0) {
+          targetDate.setDate(targetDate.getDate() + absoluteIndex);
+        }
       }
       const dateStr = toLocalDateStr(targetDate);
-      
-      const effOriginalFtp = weeklyBriefing?.ftp || 250;
-      const scalingRatio = ftp && effOriginalFtp ? (ftp / effOriginalFtp) : 1;
+      const focusLower = (day.focus || '').toLowerCase();
+      const startTime = focusLower.includes('commute pm') || focusLower.includes('evening')
+        ? '17:00:00'
+        : (focusLower.includes('commute am') || focusLower.includes('morning') ? '08:00:00' : '09:00:00');
 
-      const workoutText = day.workout_steps?.map((s: any) => {
-        const scaledWatts = s.target_pct 
-          ? Math.round(s.target_pct * (ftp || 250)) 
-          : (s.target_watts ? Math.round(s.target_watts * scalingRatio) : null);
-        
-        const scaledLabel = s.target_pct && s.target_pct > 0
-          ? scaleLabelWatts(s.label, ftp || 250, effOriginalFtp)
-          : (ftp && effOriginalFtp ? scaleLabelWatts(s.label, ftp, effOriginalFtp) : s.label);
-
-        return `- ${scaledLabel || 'Step'} ${s.duration}m ${scaledWatts ? `${scaledWatts}w` : ''}`;
-      }).join('\n') || day.why;
+      const workoutText = formatWorkoutStepsForIntervals(day.workout_steps, day.why);
+      const workoutName = formatPlannedRideTitle(day.focus);
 
       await uploadWorkout(creds, {
-        name: day.focus,
-        description: day.why,
+        name: workoutName,
+        description: day.why || '',
         date: dateStr,
-        moving_time: day.duration_target * 60,
-        icu_training_load: day.load_target,
+        start_time: startTime,
+        type: detectIntervalsWorkoutType(day.focus),
+        moving_time: Math.max(60, Math.round((day.duration_target || 60) * 60)),
+        icu_training_load: day.load_target || 50,
         workout_text: workoutText
       });
       
-      setSyncSuccessInApp(day.day);
-      setTimeout(() => setSyncSuccessInApp(null), 3000);
-    } catch (err) {
+      setSyncSuccessInApp(dayKey);
+      setTimeout(() => setSyncSuccessInApp(null), 3500);
+    } catch (err: any) {
       console.error("Sync failed:", err);
-      alert("Failed to sync workout to Intervals.icu calendar.");
+      setSyncErrorInApp(err?.message || "Failed to push workout to Intervals.icu calendar.");
     } finally {
       setSyncingDayInApp(null);
+    }
+  };
+
+  const handleSyncCurrentWorkoutToIntervals = async () => {
+    if (!currentWorkout) return;
+    if (!creds) {
+      setSyncErrorWorkout('Connect your Intervals.icu account first to push workouts.');
+      return;
+    }
+    if (creds.provider === 'strava' && (!creds.apiKey || creds.apiKey === 'strava')) {
+      setSyncErrorWorkout('Connect an Intervals.icu account in Profile settings to push workouts to your Intervals.icu calendar.');
+      return;
+    }
+
+    setSyncingWorkout(true);
+    setSyncErrorWorkout(null);
+    setSyncSuccess(false);
+
+    try {
+      const targetDate = new Date();
+      if (hasRideToday) {
+        targetDate.setDate(targetDate.getDate() + 1);
+      }
+      const dateStr = suggestion?.date || toLocalDateStr(targetDate);
+      const workoutText = formatWorkoutStepsForIntervals(currentWorkout.workout_steps, currentWorkout.description);
+
+      await uploadWorkout(creds, {
+        name: currentWorkout.title,
+        description: currentWorkout.description || '',
+        date: dateStr,
+        type: detectIntervalsWorkoutType(currentWorkout.title),
+        moving_time: Math.max(60, Math.round((currentWorkout.duration_minutes || 60) * 60)),
+        icu_training_load: currentWorkout.tss || 50,
+        workout_text: workoutText
+      });
+
+      setSyncSuccess(true);
+      setTimeout(() => setSyncSuccess(false), 3500);
+    } catch (err: any) {
+      console.error("Sync failed:", err);
+      setSyncErrorWorkout(err?.message || "Failed to push workout to Intervals.icu calendar.");
+    } finally {
+      setSyncingWorkout(false);
     }
   };
 
@@ -1506,6 +1599,12 @@ const App: React.FC = () => {
         icu_weighted_avg_watts: a.icu_weighted_avg_watts ?? a.icu_weighted_average_watts ?? a.weighted_average_watts,
         average_heartrate: a.average_heartrate,
         max_heartrate: a.max_heartrate,
+        average_cadence: a.average_cadence,
+        max_watts: a.max_watts,
+        training_load: a.training_load,
+        source: a.source,
+        has_power: a.has_power,
+        has_heartrate: a.has_heartrate,
         icu_intensity: a.icu_intensity,
         icu_variability_index: a.icu_variability_index,
         icu_efficiency_factor: a.icu_efficiency_factor,
@@ -2619,7 +2718,10 @@ const App: React.FC = () => {
                       date={nextRideFromPlan.date}
                       absoluteIndex={nextRideFromPlan.absoluteIndex ?? 0}
                       onClick={(day) => {
+                        setSyncErrorInApp(null);
+                        setSyncSuccessInApp(null);
                         setSelectedSuggestedDay(day);
+                        setSelectedSuggestedDate(nextRideFromPlan.date);
                       }}
                       isToday={isTodayRide}
                     />
@@ -2722,7 +2824,7 @@ const App: React.FC = () => {
                     {isOtherFutureExpanded && ridesSections.sortedFutureItems.length > 0 && (
                       <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-2 overflow-hidden">
                         {ridesSections.sortedFutureItems.map((item) => (
-                          <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} date={item.date} onClick={(day) => setSelectedSuggestedDay(day)} isToday={false} />
+                          <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} date={item.date} onClick={(day) => { setSyncErrorInApp(null); setSyncSuccessInApp(null); setSelectedSuggestedDay(day); setSelectedSuggestedDate(item.date); }} isToday={false} />
                         ))}
                       </motion.div>
                     )}
@@ -2732,7 +2834,7 @@ const App: React.FC = () => {
                     {ridesSections.sortedTomorrowItems.length > 0 && (
                       <div className="space-y-2 pt-0.5">
                         {ridesSections.sortedTomorrowItems.map((item) => (
-                          <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} date={item.date} onClick={(day) => setSelectedSuggestedDay(day)} isToday={false} />
+                          <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} date={item.date} onClick={(day) => { setSyncErrorInApp(null); setSyncSuccessInApp(null); setSelectedSuggestedDay(day); setSelectedSuggestedDate(item.date); }} isToday={false} />
                         ))}
                       </div>
                     )}
@@ -2762,7 +2864,7 @@ const App: React.FC = () => {
                               day={item.dayData!} 
                               absoluteIndex={item.absoluteIndex ?? 0} 
                               date={item.date}
-                              onClick={(day) => setSelectedSuggestedDay(day)} 
+                              onClick={(day) => { setSyncErrorInApp(null); setSyncSuccessInApp(null); setSelectedSuggestedDay(day); setSelectedSuggestedDate(item.date); }} 
                               isToday={true} 
                             />
                           );
@@ -2833,7 +2935,7 @@ const App: React.FC = () => {
                             key={item.key}
                             day={item.dayData}
                             date={item.date}
-                            onClick={(day) => setSelectedSuggestedDay(day)}
+                            onClick={(day) => { setSyncErrorInApp(null); setSyncSuccessInApp(null); setSelectedSuggestedDay(day); setSelectedSuggestedDate(item.date); }}
                             isToday={false}
                           />
                         )}
@@ -3648,14 +3750,49 @@ const App: React.FC = () => {
               )}
             </div>
 
-            {/* Footer close button */}
-            <div className="pt-3 shrink-0 border-t border-white/5 mt-auto">
-              <button 
-                onClick={() => setShowWorkoutDetail(false)}
-                className="w-full py-3 bg-white/5 hover:bg-white/10 active:scale-[0.98] text-slate-300 hover:text-white rounded-xl text-xs font-black uppercase tracking-[0.15em] transition-all cursor-pointer"
-              >
-                Close
-              </button>
+            {/* Footer actions */}
+            <div className="pt-3 shrink-0 border-t border-white/5 mt-auto space-y-2">
+              {syncErrorWorkout && (
+                <div className="px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-300 font-medium text-center">
+                  {syncErrorWorkout}
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                {currentWorkout.intensity !== 'Rest' && (
+                  <button
+                    onClick={handleSyncCurrentWorkoutToIntervals}
+                    disabled={syncingWorkout}
+                    className={`flex-1 py-3 px-3 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed ${
+                      syncSuccess
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 hover:text-blue-200 border border-blue-500/30'
+                    }`}
+                  >
+                    {syncingWorkout ? (
+                      <>
+                        <Loader2 size={13} className="animate-spin shrink-0" />
+                        <span>Pushing...</span>
+                      </>
+                    ) : syncSuccess ? (
+                      <>
+                        <Check size={13} className="shrink-0" />
+                        <span>Pushed to Calendar</span>
+                      </>
+                    ) : (
+                      <>
+                        <Calendar size={13} className="shrink-0" />
+                        <span>Push to Intervals.icu</span>
+                      </>
+                    )}
+                  </button>
+                )}
+                <button 
+                  onClick={() => { setShowWorkoutDetail(false); setSyncErrorWorkout(null); }}
+                  className={`${currentWorkout.intensity !== 'Rest' ? 'px-4' : 'w-full'} py-3 bg-white/5 hover:bg-white/10 active:scale-[0.98] text-slate-300 hover:text-white rounded-xl text-xs font-black uppercase tracking-[0.15em] transition-all cursor-pointer`}
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -3665,14 +3802,16 @@ const App: React.FC = () => {
           const index = weeklyBriefing ? weeklyBriefing.days.indexOf(selectedSuggestedDay) : -1;
           const today = new Date();
           today.setHours(0, 0, 0, 0);
-          const todayStr = toLocalDateStr(today);
-          const parsedSelectedDate = parseBriefingDayDate(selectedSuggestedDay.day, today);
-          const targetDate = parsedSelectedDate || new Date(today);
+          const parsedSelectedDate = selectedSuggestedDate || parseBriefingDayDate(selectedSuggestedDay.day, today);
+          const targetDate = parsedSelectedDate ? new Date(parsedSelectedDate) : new Date(today);
           if (!parsedSelectedDate && index !== -1) {
             targetDate.setDate(today.getDate() + index);
           }
           const weekday = targetDate.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase();
           const dayNum = targetDate.getDate();
+          const daySyncKey = `${selectedSuggestedDay.day || 'day'}_${selectedSuggestedDay.focus || ''}`;
+          const isSyncingThisDay = syncingDayInApp === daySyncKey;
+          const isSyncedThisDay = syncSuccessInApp === daySyncKey;
 
           const weekIdx = getWeekForDayInApp(selectedSuggestedDay);
           const isReworking = reworkingWeeks.includes(weekIdx) || loadingWeeks[weekIdx];
@@ -3725,8 +3864,15 @@ const App: React.FC = () => {
             wellness: wellnessData
           }) : null;
 
+          const closeSelectedModal = () => {
+            setSelectedSuggestedDay(null);
+            setSelectedSuggestedDate(null);
+            setSyncErrorInApp(null);
+            setSyncSuccessInApp(null);
+          };
+
           return (
-            <div className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => setSelectedSuggestedDay(null)}>
+            <div className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={closeSelectedModal}>
               <div className="bg-[#0c0e15] border-t sm:border border-white/10 w-full sm:max-w-md h-auto max-h-[92dvh] sm:max-h-[88dvh] rounded-t-[2rem] sm:rounded-[2.2rem] p-4 sm:p-5 shadow-[0_-10px_40px_rgba(0,0,0,0.8)] sm:shadow-2xl flex flex-col overflow-hidden relative" onClick={e => e.stopPropagation()}>
                 
                 {/* Mobile drag handle */}
@@ -3742,7 +3888,7 @@ const App: React.FC = () => {
                       {formatPlannedRideTitle(selectedSuggestedDay.focus)}
                     </h3>
                   </div>
-                  <button onClick={() => setSelectedSuggestedDay(null)} className="text-slate-400 hover:text-white p-1 rounded-full hover:bg-white/10 transition-colors shrink-0">
+                  <button onClick={closeSelectedModal} className="text-slate-400 hover:text-white p-1 rounded-full hover:bg-white/10 transition-colors shrink-0">
                     <X size={18} />
                   </button>
                 </div>
@@ -3889,14 +4035,49 @@ const App: React.FC = () => {
                   )}
                 </div>
 
-                {/* Footer close button */}
-                <div className="pt-3 shrink-0 border-t border-white/5 mt-auto">
-                  <button 
-                    onClick={() => setSelectedSuggestedDay(null)}
-                    className="w-full py-3 bg-white/5 hover:bg-white/10 active:scale-[0.98] text-slate-300 hover:text-white rounded-xl text-xs font-black uppercase tracking-[0.15em] transition-all cursor-pointer"
-                  >
-                    Close
-                  </button>
+                {/* Footer actions */}
+                <div className="pt-3 shrink-0 border-t border-white/5 mt-auto space-y-2">
+                  {syncErrorInApp && (
+                    <div className="px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-300 font-medium text-center">
+                      {syncErrorInApp}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    {!isRest && !isReworking && (
+                      <button
+                        onClick={() => handleSyncToIntervalsFromApp(selectedSuggestedDay, index, targetDate)}
+                        disabled={isSyncingThisDay}
+                        className={`flex-1 py-3 px-3 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed ${
+                          isSyncedThisDay
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 hover:text-blue-200 border border-blue-500/30'
+                        }`}
+                      >
+                        {isSyncingThisDay ? (
+                          <>
+                            <Loader2 size={13} className="animate-spin shrink-0" />
+                            <span>Pushing...</span>
+                          </>
+                        ) : isSyncedThisDay ? (
+                          <>
+                            <Check size={13} className="shrink-0" />
+                            <span>Pushed to Calendar</span>
+                          </>
+                        ) : (
+                          <>
+                            <Calendar size={13} className="shrink-0" />
+                            <span>Push to Intervals.icu</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                    <button 
+                      onClick={closeSelectedModal}
+                      className={`${!isRest && !isReworking ? 'px-4' : 'w-full'} py-3 bg-white/5 hover:bg-white/10 active:scale-[0.98] text-slate-300 hover:text-white rounded-xl text-xs font-black uppercase tracking-[0.15em] transition-all cursor-pointer`}
+                    >
+                      Close
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -4050,12 +4231,47 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            <button 
-              onClick={() => setShowSuggestionDetail(false)}
-              className="w-full py-2.5 bg-white hover:bg-slate-200 text-slate-950 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer"
-            >
-              Close
-            </button>
+            {syncErrorWorkout && (
+              <div className="px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-300 font-medium text-center">
+                {syncErrorWorkout}
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              {currentWorkout && currentWorkout.intensity !== 'Rest' && (
+                <button
+                  onClick={handleSyncCurrentWorkoutToIntervals}
+                  disabled={syncingWorkout}
+                  className={`flex-1 py-2.5 px-3 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed ${
+                    syncSuccess
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 hover:text-blue-200 border border-blue-500/30'
+                  }`}
+                >
+                  {syncingWorkout ? (
+                    <>
+                      <Loader2 size={12} className="animate-spin shrink-0" />
+                      <span>Pushing...</span>
+                    </>
+                  ) : syncSuccess ? (
+                    <>
+                      <Check size={12} className="shrink-0" />
+                      <span>Pushed to Calendar</span>
+                    </>
+                  ) : (
+                    <>
+                      <Calendar size={12} className="shrink-0" />
+                      <span>Push to Intervals.icu</span>
+                    </>
+                  )}
+                </button>
+              )}
+              <button 
+                onClick={() => { setShowSuggestionDetail(false); setSyncErrorWorkout(null); }}
+                className={`${currentWorkout && currentWorkout.intensity !== 'Rest' ? 'px-4' : 'w-full'} py-2.5 bg-white hover:bg-slate-200 text-slate-950 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer`}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

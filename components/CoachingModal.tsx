@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Activity, IntervalsCredentials, CoachingFeedback } from '../types';
 import { getRideFeedback } from '../services/geminiService';
-import { fetchActivityIntervals, fetchPlannedWorkout } from '../services/intervalsService';
+import { fetchActivityDetails, fetchPlannedWorkout } from '../services/intervalsService';
 import { getRideType } from './ActivityCard';
 import { 
   Sparkles, 
@@ -35,6 +35,9 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
           : [];
 
   const [intervals, setIntervals] = useState<any[]>(initialIntervals);
+  const [resolvedCadence, setResolvedCadence] = useState<number | undefined>(activity.average_cadence);
+  const [resolvedMaxWatts, setResolvedMaxWatts] = useState<number | undefined>(activity.max_watts);
+  const [resolvedAvgHr, setResolvedAvgHr] = useState<number | undefined>(activity.average_heartrate);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,13 +47,17 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
     setError(null);
     try {
       const dateStr = activity.start_date_local.split('T')[0];
-      const [fetchedIntervals, plannedWorkout] = await Promise.all([
-        fetchActivityIntervals(activity.id, creds),
-        fetchPlannedWorkout(dateStr, creds)
-      ]);
+      const isStravaActivity = activity.source === 'strava' || creds.provider === 'strava';
 
-      const resolvedIntervals = (fetchedIntervals && fetchedIntervals.length > 0)
-        ? fetchedIntervals
+      const [details, plannedWorkout] = isStravaActivity
+        ? [{ intervals: initialIntervals, averageCadence: activity.average_cadence, maxWatts: activity.max_watts, averageHeartrate: activity.average_heartrate }, null]
+        : await Promise.all([
+            fetchActivityDetails(activity.id, creds),
+            fetchPlannedWorkout(dateStr, creds)
+          ]);
+
+      const resolvedIntervals = (details.intervals && details.intervals.length > 0)
+        ? details.intervals
         : initialIntervals;
 
       setIntervals(resolvedIntervals);
@@ -58,7 +65,31 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
         (activity as any).icu_intervals = resolvedIntervals;
       }
 
-      const data = await getRideFeedback(activity, resolvedIntervals, plannedWorkout, userGoal, ftp, allActivities, force);
+      const nextCadence = details.averageCadence ?? activity.average_cadence;
+      const nextMaxWatts = details.maxWatts ?? activity.max_watts;
+      const nextAvgHr = details.averageHeartrate ?? activity.average_heartrate;
+
+      if (typeof nextCadence === 'number' && nextCadence > 0) {
+        setResolvedCadence(nextCadence);
+        (activity as any).average_cadence = nextCadence;
+      }
+      if (typeof nextMaxWatts === 'number' && nextMaxWatts > 0) {
+        setResolvedMaxWatts(nextMaxWatts);
+        (activity as any).max_watts = nextMaxWatts;
+      }
+      if (typeof nextAvgHr === 'number' && nextAvgHr > 0) {
+        setResolvedAvgHr(nextAvgHr);
+        (activity as any).average_heartrate = nextAvgHr;
+      }
+
+      const effectiveActivity: Activity = {
+        ...activity,
+        average_cadence: nextCadence,
+        max_watts: nextMaxWatts,
+        average_heartrate: nextAvgHr
+      };
+
+      const data = await getRideFeedback(effectiveActivity, resolvedIntervals, plannedWorkout, userGoal, ftp, allActivities, force);
       setFeedback(data);
     } catch (err: any) {
       setError(err.message || "Engine analysis failed.");
@@ -83,7 +114,8 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
   };
 
   const rideTitle = getRideType(activity, intervals);
-  const duration = formatDuration(activity.moving_time || activity.elapsed_time || 0);
+  const totalSeconds = activity.moving_time || activity.elapsed_time || (activity as any).time || (activity as any).duration || (activity as any).icu_recording_time || 0;
+  const duration = formatDuration(totalSeconds);
   
   const avgWatts = Math.round(activity.average_watts ?? activity.icu_average_watts ?? 0);
   let rawNp = Math.round(activity.weighted_average_watts ?? activity.icu_weighted_avg_watts ?? activity.icu_weighted_average_watts ?? 0);
@@ -92,18 +124,20 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
     rawNp = Math.round(avgWatts * activity.icu_variability_index);
   }
 
-  const hasDistinctNp = rawNp > 0 && avgWatts > 0 && Math.abs(rawNp - avgWatts) >= 2;
   const displayWatts = avgWatts > 0 ? avgWatts : (rawNp > 0 ? rawNp : 0);
   
-  const avgHr = Math.round(activity.average_heartrate || 0);
-  const tss = Math.round(activity.icu_training_load || activity.icu_tss || activity.training_load || 0);
+  const avgHr = Math.round(resolvedAvgHr ?? activity.average_heartrate ?? 0);
+  const rawCadence = resolvedCadence ?? activity.average_cadence ?? (activity as any).icu_average_cadence ?? (activity as any).avg_cadence ?? 0;
+  const avgCadence = typeof rawCadence === 'number' && rawCadence > 0 ? Math.round(rawCadence) : 0;
+  const tss = Math.round(activity.icu_training_load ?? activity.icu_tss ?? activity.training_load ?? (activity as any).load ?? (activity as any).tss ?? 0);
   const displayDistance = activity.distance || (activity as any).icu_distance || 0;
   const distKm = displayDistance > 0 ? (Math.round(displayDistance / 100) / 10) : 0;
+  const peakWatts = Math.round(resolvedMaxWatts ?? activity.max_watts ?? 0);
 
   return (
     <div className="fixed inset-0 z-[220] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={onClose}>
       <div 
-        className="bg-[#0a0c14] border-t sm:border border-white/[0.08] w-full sm:max-w-md h-[90dvh] sm:h-auto sm:max-h-[85dvh] rounded-none sm:rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col overflow-hidden relative" 
+        className="bg-[#0a0c14] border-t sm:border border-white/[0.08] w-full sm:max-w-[468px] h-[90dvh] sm:h-auto sm:max-h-[85dvh] rounded-none sm:rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col overflow-hidden relative" 
         onClick={e => e.stopPropagation()}
       >
         {/* Mobile drag handle */}
@@ -139,38 +173,67 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
         </div>
 
         {/* Minimalist Metrics Strip */}
-        <div className="grid grid-cols-5 gap-2 p-3 bg-white/[0.02] border border-white/[0.06] rounded-2xl shrink-0 mb-4">
-          <div className="flex flex-col items-center justify-center text-center">
-            <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Time</span>
-            <span className="text-xs font-bold text-white font-mono">{duration}</span>
+        {(avgWatts > 0 || rawNp > 0) ? (
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-y-3 gap-x-1 sm:gap-2 px-2 py-3 bg-white/[0.02] border border-white/[0.06] rounded-2xl shrink-0 mb-4">
+            <div className="flex flex-col items-center justify-center text-center">
+              <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Time</span>
+              <span className="text-xs font-bold text-white font-mono">{duration}</span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
+              <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Avg Pwr</span>
+              <span className="text-xs font-bold text-sky-400 font-mono">
+                {avgWatts > 0 ? `${avgWatts}W` : '--'}
+              </span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
+              <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">NP</span>
+              <span className="text-xs font-bold text-emerald-400 font-mono">
+                {rawNp > 0 ? `${rawNp}W` : (displayWatts > 0 ? `${displayWatts}W` : '--')}
+              </span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center sm:border-l border-white/[0.06]">
+              <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5 leading-tight">Heart Rate</span>
+              <span className="text-xs font-bold text-rose-400 font-mono">{avgHr > 0 ? `${avgHr} bpm` : '--'}</span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
+              <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Cadence</span>
+              <span className="text-xs font-bold text-slate-400 font-mono">
+                {avgCadence > 0 ? `${avgCadence} rpm` : '--'}
+              </span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
+              <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">TSS</span>
+              <span className="text-xs font-bold text-amber-400 font-mono">{tss > 0 ? tss : '--'}</span>
+            </div>
           </div>
-          <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
-            <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">
-              {hasDistinctNp ? 'NP' : displayWatts > 0 ? 'Power' : 'Dist'}
-            </span>
-            <span className="text-xs font-bold text-emerald-400 font-mono">
-              {hasDistinctNp ? `${rawNp}W` : displayWatts > 0 ? `${displayWatts}W` : distKm > 0 ? `${distKm}km` : '--'}
-            </span>
+        ) : (
+          <div className="grid grid-cols-5 gap-2 p-3 bg-white/[0.02] border border-white/[0.06] rounded-2xl shrink-0 mb-4">
+            <div className="flex flex-col items-center justify-center text-center">
+              <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Time</span>
+              <span className="text-xs font-bold text-white font-mono">{duration}</span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
+              <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Dist</span>
+              <span className="text-xs font-bold text-emerald-400 font-mono">
+                {distKm > 0 ? `${distKm}km` : '--'}
+              </span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
+              <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Heart Rate</span>
+              <span className="text-xs font-bold text-rose-400 font-mono">{avgHr > 0 ? `${avgHr} bpm` : '--'}</span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
+              <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Cadence</span>
+              <span className="text-xs font-bold text-slate-400 font-mono">
+                {avgCadence > 0 ? `${avgCadence} rpm` : '--'}
+              </span>
+            </div>
+            <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
+              <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">TSS</span>
+              <span className="text-xs font-bold text-amber-400 font-mono">{tss > 0 ? tss : '--'}</span>
+            </div>
           </div>
-          <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
-            <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Heart Rate</span>
-            <span className="text-xs font-bold text-rose-400 font-mono">{avgHr > 0 ? `${avgHr} bpm` : '--'}</span>
-          </div>
-          <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
-            <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">Cadence</span>
-            <span className="text-xs font-bold text-slate-400 font-mono">
-              {typeof activity.average_cadence === 'number' && activity.average_cadence > 0 
-                ? `${Math.round(activity.average_cadence)} rpm` 
-                : typeof (activity as any).icu_average_cadence === 'number' && (activity as any).icu_average_cadence > 0
-                  ? `${Math.round((activity as any).icu_average_cadence)} rpm`
-                  : '--'}
-            </span>
-          </div>
-          <div className="flex flex-col items-center justify-center text-center border-l border-white/[0.06]">
-            <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider mb-0.5">TSS</span>
-            <span className="text-xs font-bold text-amber-400 font-mono">{tss > 0 ? tss : '--'}</span>
-          </div>
-        </div>
+        )}
 
         {/* Secondary Info Bar */}
         <div className="flex items-center justify-between px-4 py-1.5 bg-white/[0.01] border border-white/[0.04] rounded-lg mb-4">
@@ -266,15 +329,18 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                       Laps & Intervals ({intervals.filter(l => (l.moving_time || 0) >= 5).length})
                     </span>
-                    {activity.max_watts && activity.max_watts > 0 && (
+                    {peakWatts > 0 && (
                       <span className="text-[10px] font-semibold text-amber-400 font-mono">
-                        Peak: {Math.round(activity.max_watts)}W
+                        Peak: {peakWatts}W
                       </span>
                     )}
                   </div>
                   <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
-                    {intervals.filter(l => (l.moving_time || 0) >= 5).map((lap, idx) => {
+                    {intervals.filter(l => (l.moving_time || 0) >= 5).map((lap, idx, arr) => {
                       const dur = lap.moving_time || 0;
+                      const isWholeRideSingleLap = arr.length === 1 && totalSeconds > 0 && dur >= totalSeconds * 0.85;
+                      const lapCadence = isWholeRideSingleLap && avgCadence > 0 ? avgCadence : lap.average_cadence;
+                      const lapHr = isWholeRideSingleLap && avgHr > 0 ? avgHr : lap.average_heartrate;
                       const m = Math.floor(dur / 60);
                       const s = Math.round(dur % 60);
                       const timeStr = m > 0 ? `${m}m ${s > 0 ? `${s}s` : ''}` : `${s}s`;
@@ -318,14 +384,14 @@ export const CoachingModal: React.FC<CoachingModalProps> = ({ activity, creds, o
                                 {lap.average_watts}W
                               </span>
                             )}
-                            {lap.average_cadence > 0 && (
+                            {lapCadence > 0 && (
                               <span className="text-slate-400 text-[10px]">
-                                {lap.average_cadence}rpm
+                                {Math.round(lapCadence)}rpm
                               </span>
                             )}
-                            {lap.average_heartrate > 0 && (
+                            {lapHr > 0 && (
                               <span className="text-rose-400 text-[11px]">
-                                {lap.average_heartrate}bpm
+                                {Math.round(lapHr)}bpm
                               </span>
                             )}
                           </div>

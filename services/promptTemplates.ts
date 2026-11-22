@@ -9,11 +9,17 @@ interface RideFeedbackParams {
   activityName: string;
   tss: number;
   intensity: number;
+  intensityStr?: string;
   eftp: string | number;
   durationMins: number;
+  durationStr?: string;
   avgPower: number;
   npPower: number;
+  maxWatts?: number;
   avgHr: number;
+  maxHr?: number;
+  avgCadence?: number;
+  distKm?: number;
   userGoal: string;
   plannedWorkoutCtx: string;
   lapsCtx: string;
@@ -119,23 +125,35 @@ export const getRideFeedbackPrompt = (p: RideFeedbackParams): string => {
     : ``;
 
   return `You are waTTson, an elite cycling coach. 
-    Analyze this ride: "${p.activityName}". 
-    TSS: ${p.tss}. 
-    Intensity: ${p.intensity}.
-    efTP: ${p.eftp}W.
-    Duration: ${p.durationMins}m.
-    Power: ${p.avgPower}W avg, ${p.npPower}W np.
-    HR: ${p.avgHr}bpm avg.
-    Goal: ${p.userGoal}.
+    Analyze this ride: "${p.activityName}".
+    
+    OFFICIAL SESSION SUMMARY METRICS (EXACT VALUES DISPLAYED TO THE ATHLETE):
+    - Duration: ${p.durationStr ? `${p.durationStr} (${p.durationMins} min)` : `${p.durationMins} min`}
+    - Distance: ${p.distKm && p.distKm > 0 ? `${p.distKm} km` : 'N/A'}
+    - Average Power: ${p.avgPower > 0 ? `${p.avgPower}W` : 'N/A'}
+    - Normalized Power (NP): ${p.npPower > 0 ? `${p.npPower}W` : 'N/A'}
+    - Peak Power: ${p.maxWatts && p.maxWatts > 0 ? `${p.maxWatts}W` : 'N/A'}
+    - Average Heart Rate: ${p.avgHr > 0 ? `${p.avgHr} bpm` : 'N/A'}${p.maxHr && p.maxHr > 0 ? ` (Max HR: ${p.maxHr} bpm)` : ''}
+    - Average Cadence: ${p.avgCadence && p.avgCadence > 0 ? `${p.avgCadence} rpm` : 'N/A (not recorded)'}
+    - TSS: ${p.tss}
+    - Intensity Factor (IF): ${p.intensityStr || p.intensity}
+    - efTP: ${p.eftp !== 'N/A' && p.eftp ? `${p.eftp}W` : 'N/A'}
+    - Athlete Goal: ${p.userGoal}
     
     ${p.plannedWorkoutCtx}
     ${p.lapsCtx}
     ${detectedIntervalsCtx}
     
+    CRITICAL NUMERICAL CONSISTENCY RULE (STRICTLY ENFORCED):
+    - Every overall session statistic you mention (duration, average power, NP, average heart rate, average cadence, TSS, distance) MUST match the OFFICIAL SESSION SUMMARY METRICS above to the exact number.
+    - NEVER invent, round differently, estimate, or quote a conflicting session average (e.g., if Average Cadence is ${p.avgCadence && p.avgCadence > 0 ? `${p.avgCadence} rpm` : 'N/A'}, you MUST NOT state any other number as their session average cadence).
+    - If a metric is listed as "N/A", do NOT fabricate a number for it or claim they averaged a specific value for that metric.
+    - When citing individual laps, label them clearly as specific laps (e.g., "In Lap 2...") and never confuse a single lap's figure with the overall ride average unless they match.
+    
     Return JSON with:
-    summary: A 2-4 sentence coaching summary. Start with a punchy hook. CRITICAL: If recorded laps/intervals data or a Recognized Workout Interval Pattern is provided in the prompt, you MUST explicitly discuss the specific work efforts executed (citing their real duration, wattage, and heart rate, e.g. calling out key work blocks like 20m and 10m efforts at ~274W and a 5m VO2 surge at ~324W). Comment on pacing consistency, power target adherence, and physiological adaptations. NEVER state that there were no recorded laps or no structured intervals when recorded laps/intervals are present in the prompt! If truly no laps are present, deduce the efforts from the overall session metrics.
+    summary: A 2-4 sentence coaching summary. Start with a punchy hook. CRITICAL: If recorded laps/intervals data or a Recognized Workout Interval Pattern is provided in the prompt, you MUST explicitly discuss the specific work efforts executed (citing their real duration, wattage, and heart rate). Comment on pacing consistency, power target adherence, and physiological adaptations. NEVER state that there were no recorded laps or no structured intervals when recorded laps/intervals are present in the prompt! If truly no laps are present, deduce the efforts from the overall session metrics.
     goal_contribution: A clear explanation of how this session contributes to ${p.userGoal}.
-    one_thing_to_improve: Exactly 1 action-oriented, helpful conclusion of something they could do better on their next training session based on this ride's data (e.g. "Focus on keeping your cadence above 85 rpm on climbs", "Make sure to fuel with 60g carbs per hour for rides over 90 min", "Control your heart rate during recovery intervals to maximize adaptation"). If the user missed targets during the intervals, point it out.
+    one_thing_to_improve: Exactly 1 action-oriented, helpful conclusion of something they could do better on their next training session grounded strictly in this ride's actual metrics (e.g., pacing control, fueling strategy on longer rides, heart rate recovery between intervals, or cadence optimization ONLY if their actual recorded cadence is genuinely low or missing targets). Do NOT fabricate or copy hypothetical numbers.
     workout_steps: If a planned workout exists, provide the structured steps intended for this workout. 
       Steps should include duration (mins), target_watts (W), and label.
       ${hrGuideline}`;

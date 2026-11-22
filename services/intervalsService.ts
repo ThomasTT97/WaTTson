@@ -326,8 +326,99 @@ export const fetchWellness = async (creds: IntervalsCredentials, daysBack: numbe
   }
 };
 
-export const fetchActivityIntervals = async (activityId: string, creds: IntervalsCredentials): Promise<ActivityInterval[]> => {
-  if (creds.apiKey === 'demo') return getMockIntervals();
+export interface ActivityDetailsResult {
+  intervals: ActivityInterval[];
+  averageCadence?: number;
+  maxWatts?: number;
+  averageHeartrate?: number;
+}
+
+/**
+ * Computes average cadence EXCLUDING zeros (active pedaling time only: cadence > 0).
+ * This matches how Intervals.icu's activity summary and Strava compute cycling average cadence,
+ * preventing coasting (0 rpm) from dragging down the average.
+ */
+export const computeNonZeroAverageCadence = (
+  cadenceData?: (number | null)[] | null,
+  timeData?: (number | null)[] | null,
+  startIdx?: number,
+  endIdx?: number
+): number | undefined => {
+  if (!Array.isArray(cadenceData) || cadenceData.length === 0) return undefined;
+  const from = typeof startIdx === 'number' && startIdx >= 0 ? startIdx : 0;
+  const to = typeof endIdx === 'number' && endIdx > from
+    ? Math.min(endIdx, cadenceData.length)
+    : cadenceData.length;
+  const hasValidTime = Array.isArray(timeData) && timeData.length === cadenceData.length;
+
+  let weightedSum = 0;
+  let totalActiveTime = 0;
+
+  for (let i = from; i < to; i++) {
+    const c = cadenceData[i];
+    if (typeof c === 'number' && Number.isFinite(c) && c > 0) {
+      let dt = 1;
+      if (hasValidTime && i + 1 < cadenceData.length) {
+        const nextT = timeData[i + 1];
+        const currT = timeData[i];
+        if (typeof nextT === 'number' && typeof currT === 'number' && nextT > currT) {
+          dt = Math.min(10, nextT - currT);
+        }
+      }
+      weightedSum += c * dt;
+      totalActiveTime += dt;
+    }
+  }
+
+  if (totalActiveTime <= 0) return undefined;
+  return Math.round(weightedSum / totalActiveTime);
+};
+
+const fetchActivityCadenceStreams = async (
+  cleanId: string,
+  headers: Record<string, string>
+): Promise<{ cadence?: (number | null)[]; time?: (number | null)[] }> => {
+  const endpoints = [
+    `/api/v1/activity/${cleanId}/streams.json?types=cadence,time`,
+    `/api/v1/activity/${cleanId}/streams?types=cadence,time`
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const response = await intervalsFetch(url, { method: 'GET', headers });
+      if (!response.ok) continue;
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) continue;
+      const raw = await response.json();
+
+      let cadence: (number | null)[] | undefined;
+      let time: (number | null)[] | undefined;
+
+      if (Array.isArray(raw)) {
+        for (const stream of raw) {
+          if (stream?.type === 'cadence' && Array.isArray(stream.data)) cadence = stream.data;
+          else if (stream?.type === 'time' && Array.isArray(stream.data)) time = stream.data;
+        }
+      } else if (raw && typeof raw === 'object') {
+        if (Array.isArray(raw.cadence?.data)) cadence = raw.cadence.data;
+        else if (Array.isArray(raw.cadence)) cadence = raw.cadence;
+        if (Array.isArray(raw.time?.data)) time = raw.time.data;
+        else if (Array.isArray(raw.time)) time = raw.time;
+      }
+
+      if (cadence && cadence.length > 0) {
+        return { cadence, time };
+      }
+    } catch {
+      // try next endpoint format
+    }
+  }
+
+  return {};
+};
+
+export const fetchActivityDetails = async (activityId: string, creds: IntervalsCredentials): Promise<ActivityDetailsResult> => {
+  if (creds.apiKey === 'demo') return { intervals: getMockIntervals() };
   const { apiKey } = creds;
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
   const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
@@ -337,20 +428,43 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
   const urlStandard = `/api/v1/activity/${cleanId}`;
 
   try {
-    // 1. Fetch with ?intervals=true (Intervals.icu official parameter for detailed intervals & laps)
-    let response = await intervalsFetch(urlWithIntervals, { method: 'GET', headers });
+    // Fetch activity + intervals AND cadence/time streams in parallel so cadence excludes coasting zeros
+    const [activityResp, streams] = await Promise.all([
+      intervalsFetch(urlWithIntervals, { method: 'GET', headers }),
+      fetchActivityCadenceStreams(cleanId, headers)
+    ]);
+
+    let response = activityResp;
     if (!response.ok) {
       // Fallback: try standard activity endpoint if ?intervals=true was rejected
       response = await intervalsFetch(urlStandard, { method: 'GET', headers });
     }
-    if (!response.ok) return [];
+
+    const streamAvgCadence = computeNonZeroAverageCadence(streams.cadence, streams.time);
+
+    if (!response.ok) {
+      return { intervals: [], averageCadence: streamAvgCadence };
+    }
     
     const contentType = response.headers.get("content-type");
     if (!contentType || !contentType.includes("application/json")) {
-        throw new Error("Intervals.icu returned an unexpected format.");
+      throw new Error("Intervals.icu returned an unexpected format.");
     }
     const data = await response.json();
-    if (!data) return [];
+    if (!data) {
+      return { intervals: [], averageCadence: streamAvgCadence };
+    }
+
+    const apiAvgCadence = (typeof data.average_cadence === 'number' && data.average_cadence > 0)
+      ? Math.round(data.average_cadence)
+      : undefined;
+    const resolvedAverageCadence = streamAvgCadence ?? apiAvgCadence;
+    const resolvedMaxWatts = (typeof data.max_watts === 'number' && data.max_watts > 0)
+      ? Math.round(data.max_watts)
+      : undefined;
+    const resolvedAvgHr = (typeof data.average_heartrate === 'number' && data.average_heartrate > 0)
+      ? Math.round(data.average_heartrate)
+      : undefined;
     
     // Check all potential arrays where Intervals.icu provides laps / intervals
     let rawIntervals: any[] = [];
@@ -395,9 +509,16 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
       } catch {}
     }
 
-    if (rawIntervals.length === 0) return [];
+    if (rawIntervals.length === 0) {
+      return {
+        intervals: [],
+        averageCadence: resolvedAverageCadence,
+        maxWatts: resolvedMaxWatts,
+        averageHeartrate: resolvedAvgHr
+      };
+    }
     
-    return rawIntervals.map((l: any, idx: number) => {
+    const intervals: ActivityInterval[] = rawIntervals.map((l: any, idx: number) => {
       // Map power metrics
       const avgWatts = (typeof l.average_watts === 'number' && l.average_watts > 0)
         ? l.average_watts
@@ -432,11 +553,19 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
         ? l.max_heartrate
         : ((typeof l.max_hr === 'number' && l.max_hr > 0) ? l.max_hr : undefined);
 
-      const avgCadence = (typeof l.average_cadence === 'number')
+      // Compute non-zero cadence for this interval from the cadence stream if indices are available
+      const startIdx = typeof l.start_index === 'number' ? l.start_index : undefined;
+      const endIdx = typeof l.end_index === 'number' ? l.end_index : undefined;
+      const streamIntervalCadence = (startIdx !== undefined && endIdx !== undefined && endIdx > startIdx)
+        ? computeNonZeroAverageCadence(streams.cadence, streams.time, startIdx, endIdx)
+        : undefined;
+
+      const rawIntervalCadence = (typeof l.average_cadence === 'number')
         ? l.average_cadence
         : ((typeof l.avg_cadence === 'number')
           ? l.avg_cadence
           : (typeof l.cadence === 'number' ? l.cadence : undefined));
+      const avgCadence = streamIntervalCadence ?? rawIntervalCadence;
       
       // Map duration in seconds
       const movingTime = (typeof l.moving_time === 'number' && l.moving_time > 0)
@@ -529,10 +658,22 @@ export const fetchActivityIntervals = async (activityId: string, creds: Interval
         intensity: intensity ? Math.round(intensity * 100) / 100 : undefined
       };
     });
+
+    return {
+      intervals,
+      averageCadence: resolvedAverageCadence,
+      maxWatts: resolvedMaxWatts,
+      averageHeartrate: resolvedAvgHr
+    };
   } catch (error) { 
-    console.error("fetchActivityIntervals error:", error);
-    return []; 
+    console.error("fetchActivityDetails error:", error);
+    return { intervals: [] }; 
   }
+};
+
+export const fetchActivityIntervals = async (activityId: string, creds: IntervalsCredentials): Promise<ActivityInterval[]> => {
+  const details = await fetchActivityDetails(activityId, creds);
+  return details.intervals;
 };
 
 /**
@@ -1058,9 +1199,12 @@ export const getAnnualPowerCurves = async (creds: IntervalsCredentials, yearsCou
 
 export const uploadWorkout = async (
   creds: IntervalsCredentials, 
-  workout: { name: string; description: string; date: string; type?: string; moving_time?: number; icu_training_load?: number; workout_text?: string }
+  workout: { name: string; description: string; date: string; start_time?: string; type?: string; moving_time?: number; icu_training_load?: number; workout_text?: string }
 ): Promise<any> => {
   if (creds.apiKey === 'demo') return { success: true };
+  if (!creds.apiKey || !creds.athleteId) {
+    throw new Error("Intervals.icu API Key and Athlete ID are required to push workouts to your calendar.");
+  }
   const { apiKey, athleteId } = creds;
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
   const headers = { 
@@ -1068,19 +1212,26 @@ export const uploadWorkout = async (
     'Content-Type': 'application/json',
     'Accept': 'application/json' 
   };
-  
+
+  // Intervals.icu parses structured workout lines (starting with "- ") from the `description` field on WORKOUT events
+  const cleanNotes = (workout.description || '').trim();
+  const cleanStepsText = (workout.workout_text || '').trim();
+  const fullDescription = cleanStepsText
+    ? (cleanNotes && cleanNotes !== cleanStepsText ? `${cleanNotes}\n\n${cleanStepsText}` : cleanStepsText)
+    : cleanNotes;
+
+  const timePart = workout.start_time || '09:00:00';
   const body = {
     category: 'WORKOUT',
-    start_date_local: `${workout.date}T09:00:00`,
+    start_date_local: `${workout.date}T${timePart}`,
     name: workout.name,
-    description: workout.description,
+    description: fullDescription,
     type: workout.type || 'Ride',
     moving_time: workout.moving_time || 3600,
-    icu_training_load: workout.icu_training_load || 50,
-    workout: workout.workout_text
+    icu_training_load: workout.icu_training_load || 50
   };
 
-  const url = `/api/v1/athlete/${athleteId}/events`;
+  const url = `/api/v1/athlete/${encodeURIComponent(athleteId)}/events`;
   try {
     const response = await intervalsFetch(url, { 
       method: 'POST', 
@@ -1088,9 +1239,14 @@ export const uploadWorkout = async (
       body: JSON.stringify(body)
     });
     if (!response.ok) {
-      const err = await response.text();
-      console.error("Intervals.icu API error:", err);
-      throw new Error(`Failed to upload workout: ${err}`);
+      const errText = await response.text();
+      let errMsg = errText || `HTTP ${response.status}`;
+      try {
+        const parsed = JSON.parse(errText);
+        errMsg = parsed?.error || parsed?.message || errMsg;
+      } catch {}
+      console.error("Intervals.icu API error:", errText);
+      throw new Error(`Failed to upload workout: ${errMsg}`);
     }
     return await response.json();
   } catch (error) {
