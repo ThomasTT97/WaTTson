@@ -309,10 +309,10 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
     6. ULTRA-SHORT WORKOUT STEP LABELS: Keep all workout step "label" text as short as possible (2-3 words, e.g. "10m Warmup", "4x4m Threshold", "10m Cooldown"). Just duration, interval type, and target.
     7. REALISTIC WORKOUT DURATION & PERIODIZATION RULES:
        - MANDATORY OVERRIDE FOR CUSTOM AVAILABILITIES: If CUSTOM DIRECTIVES specifies an adjusted weekly schedule or daily duration/rest limits (e.g., "Adjusted weekly schedule: MON: 1h, TUE: 1h, WED: 2h, THU: Rest..."):
-         THE USER'S AVAILABILITY OVERRIDES ALL DEFAULT DURATION AND SCHEDULE RULES!
-         You MUST strictly set each specified day to EXACTLY the requested duration and Rest status:
-         * If a day is set to "Rest", it MUST be a Rest Day with duration_target: 0 and intensity: "Rest". DO NOT schedule a workout on that day!
-         * If a day is set to a duration (e.g. 1h = 60m, 2h = 120m, 3h = 180m, 45m), duration_target MUST match that duration in minutes.
+         THE USER'S AVAILABILITY OVERRIDES ALL DEFAULT DURATION, WEEKDAY/WEEKEND, AND REST RULES — INCLUDING DAY 1 (TODAY)!
+         You MUST strictly set EVERY specified day (starting with Day 1 = Today) to EXACTLY the requested duration and Rest status:
+         * If a day (including Day 1 / Today) is set to "Rest", it MUST be a Rest Day with duration_target: 0 and intensity: "Rest". DO NOT schedule a workout on that day, even if yesterday was also a Rest Day!
+         * If a day (including Day 1 / Today) is set to a duration (e.g. 1h = 60m, 2h = 120m, 3h = 180m, 45m), duration_target MUST match that exact duration in minutes.
        - "duration_target" MUST be specified in MINUTES (e.g., 45, 60, 75, 90, 120).
        - When no custom availability is specified: Weekday workouts (Monday through Friday) MUST be 45 to 90 minutes (standard: 45m, 60m, 75m, max 90m; max 120m for an exceptional mid-week long ride).
        - When no custom availability is specified: Long endurance rides (>120 minutes / 2h - 3.5h, max 240m) are reserved EXCLUSIVELY for ONE weekend day (Saturday or Sunday), and NEVER scheduled on weekdays or on consecutive days!
@@ -320,7 +320,7 @@ export const getWeeklyBriefingPrompt = (p: WeeklyBriefingParams): string => {
        - NEVER schedule back-to-back 4-hour (240m) rides on consecutive days.
     8. NO CONSECUTIVE RECOVERY RIDES OR CONSECUTIVE REST DAYS:
        - Never schedule 2 recovery rides or active recovery sessions in a row on consecutive days. Having 2 recovery rides after each other makes no training sense. If an athlete needs recovery, pair a single active recovery day with an easy Zone 2 Endurance Ride or a full Rest Day on the following day.
-       - NO UNREQUESTED CONSECUTIVE REST DAYS: Never schedule two complete Rest Days in a row (0 TSS on consecutive days) unless explicitly requested by the user in custom availability or if Form (TSB) is in severe overreaching (< -30). If yesterday was already a Rest Day (0 TSS / no activity logged in history), Day 1 (Today) MUST NOT be a Rest Day! If the athlete still carries fatigue from a preceding block, schedule a short 30-45m Zone 1 Active Recovery spin or an easy 45-60m Zone 2 Aerobic Endurance ride to maintain neuromuscular tone, stimulate blood circulation, and prevent heavy/sluggish legs—never an unrequested second consecutive rest day.
+       - NO UNREQUESTED CONSECUTIVE REST DAYS: Never schedule two complete Rest Days in a row (0 TSS on consecutive days) UNLESS explicitly requested by the user in custom availability/directives or if Form (TSB) is in severe overreaching (< -30). If yesterday was already a Rest Day (0 TSS / no activity logged in history) AND Today is NOT set to Rest in custom availability/directives, Day 1 (Today) MUST NOT be a Rest Day — schedule a short 30-45m Zone 1 Active Recovery spin or an easy 45-60m Zone 2 Aerobic Endurance ride.
     9. REALISTIC INTERVALS RULE / NO PHYSICALLY IMPOSSIBLE HIGH INTENSITY BLOCKS: High intensity (>85% FTP, or HR Zone 4/5) must NEVER be recommended as a single long continuous block/step. You must structure them as intervals/sets with recovery steps in between.
        - VO2Max (Zone 5, >105% FTP / Zone 5 HR): A single block/rep can NEVER exceed 8 minutes. Standard reps are 2-5 minutes. NEVER output a continuous step of e.g. "16 min VO2max" or "15 min VO2max" in 1 block.
        - Threshold (Zone 4, 90-105% FTP / Zone 4 HR): A single block/rep can NEVER exceed 20 minutes (standard is 8-15 minutes).
@@ -466,8 +466,11 @@ export const getChatMessagePrompt = (p: ChatMessageParams): string => {
     - ONLY when the user explicitly agrees or confirms the proposed change in their message (e.g. "yes", "confirm", "ja", "doe maar", "bevestig"):
       - Acknowledge that the training plan is updated in 1 concise sentence.
       - Append the hidden tag at the very end of your message in the exact format: [UPDATE_PLAN: actual technical directive for the weekly builder].
-      - The technical directive inside the tag SHOULD be in English to ensure system parsing reliability.
-      - Example: "Plan updated! I have scheduled a 45 min active recovery spin for today. [UPDATE_PLAN: Schedule a 45 min Zone 1 active recovery ride for today]"
+      - The technical directive inside the tag MUST be in English to ensure system parsing reliability.
+      - When the change updates availabilities across the coming 7 days (including Today), ALWAYS use the exact parseable format covering ALL 7 days starting with Today (${p.dayOfWeek}):
+        [UPDATE_PLAN: Adjusted weekly schedule: MON: <Rest|Xh|Xm>, TUE: <Rest|Xh|Xm>, WED: <Rest|Xh|Xm>, THU: <Rest|Xh|Xm>, FRI: <Rest|Xh|Xm>, SAT: <Rest|Xh|Xm>, SUN: <Rest|Xh|Xm>]
+      - When changing only a single day (including Today), explicitly include "Today (<Weekday>)" or the weekday and duration/Rest, e.g.:
+        [UPDATE_PLAN: Schedule Today (${p.dayOfWeek}) as Rest] or [UPDATE_PLAN: Schedule a 45m active recovery ride for Today (${p.dayOfWeek})]
       - Dutch Example: "Schema aangepast! Ik heb een rustdag ingepland voor morgen. [UPDATE_PLAN: Schedule a rest day for tomorrow]"
     
     STEP 3: USER DECLINES OR REQUESTS MODIFICATION

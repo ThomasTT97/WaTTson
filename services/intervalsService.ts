@@ -1107,6 +1107,31 @@ export const fetchPlannedWorkout = async (dateStr: string, creds: IntervalsCrede
   } catch (error) { return null; }
 };
 
+export const fetchPlannedWorkoutsRange = async (
+  oldestDateStr: string,
+  newestDateStr: string,
+  creds: IntervalsCredentials
+): Promise<PlannedWorkout[]> => {
+  if (!creds || !creds.apiKey || (creds.provider === 'strava' && (!creds.apiKey || creds.apiKey === 'strava'))) {
+    return [];
+  }
+  if (creds.apiKey === 'demo') {
+    return [];
+  }
+  const { apiKey, athleteId } = creds;
+  const encodedAthleteId = encodeURIComponent(athleteId);
+  const auth = btoa(`API_KEY:${apiKey.trim()}`);
+  const headers = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
+  const url = `/api/v1/athlete/${encodedAthleteId}/events?oldest=${encodeURIComponent(oldestDateStr)}&newest=${encodeURIComponent(newestDateStr)}`;
+  const response = await intervalsFetch(url, { method: 'GET', headers });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch planned calendar events (${response.status})`);
+  }
+  const events = await response.json();
+  if (!Array.isArray(events)) return [];
+  return events.filter((e: any) => e && e.category === 'WORKOUT');
+};
+
 export interface AthleteProfile {
   id: string;
   icu_ftp?: number;
@@ -1197,16 +1222,46 @@ export const getAnnualPowerCurves = async (creds: IntervalsCredentials, yearsCou
   return results;
 };
 
+export const getSportGroup = (sportType?: string): 'cycling' | 'running' | 'swimming' | 'other' => {
+  const lower = (sportType || 'ride').toLowerCase();
+  if (lower.includes('ride') || lower.includes('bike') || lower.includes('cycling') || lower === 'virtualride' || lower === 'gravelride' || lower === 'mountainbikeride' || lower === 'ebikeride') {
+    return 'cycling';
+  }
+  if (lower.includes('run') || lower === 'virtualrun' || lower === 'trailrun') {
+    return 'running';
+  }
+  if (lower.includes('swim') || lower === 'openwaterswim') {
+    return 'swimming';
+  }
+  return 'other';
+};
+
 export const uploadWorkout = async (
   creds: IntervalsCredentials, 
-  workout: { name: string; description: string; date: string; start_time?: string; type?: string; moving_time?: number; icu_training_load?: number; workout_text?: string }
+  workout: { name: string; description: string; date: string; start_time?: string; type?: string; moving_time?: number; icu_training_load?: number; workout_text?: string; replaceExisting?: boolean }
 ): Promise<any> => {
-  if (creds.apiKey === 'demo') return { success: true };
+  if (creds.apiKey === 'demo') {
+    return {
+      id: `demo-${Date.now()}`,
+      name: workout.name,
+      description: workout.workout_text || workout.description,
+      category: 'WORKOUT',
+      start_date_local: `${workout.date}T${workout.start_time || '09:00:00'}`,
+      type: workout.type || 'Ride',
+      moving_time: workout.moving_time || 3600,
+      icu_training_load: workout.icu_training_load || 50
+    };
+  }
   if (!creds.apiKey || !creds.athleteId) {
     throw new Error("Intervals.icu API Key and Athlete ID are required to push workouts to your calendar.");
   }
   const { apiKey, athleteId } = creds;
+  const encodedAthleteId = encodeURIComponent(athleteId);
   const auth = btoa(`API_KEY:${apiKey.trim()}`);
+  const readHeaders = {
+    'Authorization': `Basic ${auth}`,
+    'Accept': 'application/json'
+  };
   const headers = { 
     'Authorization': `Basic ${auth}`, 
     'Content-Type': 'application/json',
@@ -1231,10 +1286,77 @@ export const uploadWorkout = async (
     icu_training_load: workout.icu_training_load || 50
   };
 
-  const url = `/api/v1/athlete/${encodeURIComponent(athleteId)}/events`;
+  const eventsBaseUrl = `/api/v1/athlete/${encodedAthleteId}/events`;
+  const shouldReplace = workout.replaceExisting !== false;
+
+  // Check if there are existing planned workouts on this calendar date so we replace instead of duplicating
+  let putFallbackEventId: string | number | null = null;
+  if (shouldReplace && workout.date) {
+    try {
+      const listUrl = `${eventsBaseUrl}?oldest=${encodeURIComponent(workout.date)}&newest=${encodeURIComponent(workout.date)}`;
+      const existingResp = await intervalsFetch(listUrl, { method: 'GET', headers: readHeaders });
+      if (existingResp.ok) {
+        const events = await existingResp.json();
+        if (Array.isArray(events) && events.length > 0) {
+          const targetSportGroup = getSportGroup(workout.type);
+          const pushingNameLower = (workout.name || '').toLowerCase();
+          const isPushingCommuteAm = pushingNameLower.includes('commute am') || pushingNameLower.includes('morning commute');
+          const isPushingCommutePm = pushingNameLower.includes('commute pm') || pushingNameLower.includes('afternoon commute') || pushingNameLower.includes('evening commute');
+
+          const matchingPlannedWorkouts = events.filter((e: any) => {
+            if (!e || e.id == null) return false;
+            if (e.category !== 'WORKOUT') return false;
+            if (e.start_date_local && !String(e.start_date_local).startsWith(workout.date)) return false;
+            // Preserve workouts already paired to a completed activity
+            if (e.paired_activity_id) return false;
+
+            // Match same sport group (or untyped WORKOUT)
+            const eventSportGroup = e.type ? getSportGroup(e.type) : targetSportGroup;
+            if (eventSportGroup !== targetSportGroup) return false;
+
+            // For AM/PM commute double-days, avoid removing the opposite commute slot
+            const existingNameLower = (e.name || '').toLowerCase();
+            if (isPushingCommuteAm && (existingNameLower.includes('commute pm') || existingNameLower.includes('evening') || existingNameLower.includes('afternoon'))) {
+              return false;
+            }
+            if (isPushingCommutePm && (existingNameLower.includes('commute am') || existingNameLower.includes('morning'))) {
+              return false;
+            }
+            return true;
+          });
+
+          for (const existing of matchingPlannedWorkouts) {
+            const deleteUrl = `${eventsBaseUrl}/${encodeURIComponent(String(existing.id))}`;
+            try {
+              const delResp = await intervalsFetch(deleteUrl, {
+                method: 'DELETE',
+                headers: readHeaders
+              });
+              if (!delResp.ok && delResp.status !== 404) {
+                // Keep first non-deletable event ID to update in-place via PUT
+                if (putFallbackEventId === null) {
+                  putFallbackEventId = existing.id;
+                }
+              }
+            } catch {
+              if (putFallbackEventId === null) {
+                putFallbackEventId = existing.id;
+              }
+            }
+          }
+        }
+      }
+    } catch (lookupErr) {
+      console.warn('Could not check existing Intervals.icu planned workouts before upload:', lookupErr);
+    }
+  }
+
   try {
-    const response = await intervalsFetch(url, { 
-      method: 'POST', 
+    const targetUrl = putFallbackEventId !== null
+      ? `${eventsBaseUrl}/${encodeURIComponent(String(putFallbackEventId))}`
+      : eventsBaseUrl;
+    const response = await intervalsFetch(targetUrl, { 
+      method: putFallbackEventId !== null ? 'PUT' : 'POST', 
       headers,
       body: JSON.stringify(body)
     });
@@ -1251,6 +1373,34 @@ export const uploadWorkout = async (
     return await response.json();
   } catch (error) {
     throw error;
+  }
+};
+
+export const deletePlannedWorkout = async (
+  creds: IntervalsCredentials,
+  eventId: string | number
+): Promise<void> => {
+  if (creds.apiKey === 'demo') return;
+  if (!creds.apiKey || !creds.athleteId) {
+    throw new Error("Intervals.icu API Key and Athlete ID are required to remove workouts from your calendar.");
+  }
+  const { apiKey, athleteId } = creds;
+  const encodedAthleteId = encodeURIComponent(athleteId);
+  const auth = btoa(`API_KEY:${apiKey.trim()}`);
+  const headers = {
+    'Authorization': `Basic ${auth}`,
+    'Accept': 'application/json'
+  };
+  const url = `/api/v1/athlete/${encodedAthleteId}/events/${encodeURIComponent(String(eventId))}`;
+  const response = await intervalsFetch(url, { method: 'DELETE', headers });
+  if (!response.ok && response.status !== 404) {
+    const errText = await response.text();
+    let errMsg = errText || `HTTP ${response.status}`;
+    try {
+      const parsed = JSON.parse(errText);
+      errMsg = parsed?.error || parsed?.message || errMsg;
+    } catch {}
+    throw new Error(`Failed to remove workout: ${errMsg}`);
   }
 };
 

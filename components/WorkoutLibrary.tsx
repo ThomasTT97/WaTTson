@@ -4,7 +4,7 @@ import {
   ChevronDown, ChevronRight, X, Activity 
 } from 'lucide-react';
 import { LibraryWorkout, WORKOUT_LIBRARY } from '../services/workoutLibrary';
-import { IntervalsCredentials, formatDuration } from '../types';
+import { IntervalsCredentials, PlannedWorkout, formatDuration } from '../types';
 import { uploadWorkout } from '../services/intervalsService';
 import { 
   isEnduranceWorkout, 
@@ -18,13 +18,15 @@ interface WorkoutLibraryProps {
   creds: IntervalsCredentials;
   onApplyAsSuggestion: (workout: LibraryWorkout) => void;
   onClose: () => void;
+  onWorkoutUploaded?: (event: PlannedWorkout) => void;
 }
 
 export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
   ftp = 250,
   creds,
   onApplyAsSuggestion,
-  onClose
+  onClose,
+  onWorkoutUploaded
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -117,7 +119,7 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
 
     try {
       const workoutText = getIntervalsText(selectedWorkout);
-      await uploadWorkout(creds, {
+      const uploaded = await uploadWorkout(creds, {
         name: selectedWorkout.title,
         description: selectedWorkout.description,
         date: uploadDate,
@@ -126,6 +128,18 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
         icu_training_load: selectedWorkout.tss,
         workout_text: workoutText
       });
+      if (onWorkoutUploaded) {
+        onWorkoutUploaded(uploaded && uploaded.start_date_local ? uploaded : {
+          id: uploaded?.id ? String(uploaded.id) : `local-${Date.now()}`,
+          name: selectedWorkout.title,
+          description: workoutText || selectedWorkout.description,
+          category: 'WORKOUT',
+          start_date_local: `${uploadDate}T09:00:00`,
+          type: 'Ride',
+          moving_time: selectedWorkout.duration_minutes * 60,
+          icu_training_load: selectedWorkout.tss
+        });
+      }
       setUploadSuccess(true);
       setTimeout(() => {
         setUploadSuccess(false);

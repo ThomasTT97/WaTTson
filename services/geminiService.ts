@@ -53,6 +53,7 @@ import {
   formatDirectivesForPrompt,
   serializePlanDirectives,
   parseScheduleDurationsFromDirective,
+  parseDetailedScheduleFromDirective,
   normalizeWeekdayToken,
   harmonizeBriefingWithAvailability,
   parseBriefingDayDate
@@ -557,7 +558,12 @@ export const getDailySuggestion = async (
   if (forTomorrow) targetDate.setDate(targetDate.getDate() + 1);
   
   const targetStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
-  const cacheKey = `wattson_suggestion_${targetStr}_${userGoal || 'default'}_${methodology || 'polarized'}_${trainingMode}`;
+  const storedPlanCtx = typeof window !== 'undefined' ? localStorage.getItem('wattson_plan_context') : null;
+  const targetSchedMap = parseDetailedScheduleFromDirective(storedPlanCtx);
+  const targetDayShort = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][targetDate.getDay()];
+  const targetRule = targetSchedMap ? (targetSchedMap.byDate[targetStr] || targetSchedMap.byWeekday[targetDayShort] || null) : null;
+  const schedKeySuffix = targetRule ? (targetRule.isRest ? 'rest' : `${targetRule.durationMins}m`) : 'auto';
+  const cacheKey = `wattson_suggestion_${targetStr}_${userGoal || 'default'}_${methodology || 'polarized'}_${trainingMode}_${schedKeySuffix}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
@@ -783,9 +789,8 @@ export const getDailySuggestion = async (
 
     // Align with weekly availability schedule if set
     try {
-      const schedMap = parseScheduleDurationsFromDirective('');
-      const targetDayShort = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][targetDate.getDay()];
-      const customSchedRule = schedMap ? schedMap[targetDayShort] : null;
+      const schedMap = parseDetailedScheduleFromDirective(storedPlanCtx);
+      const customSchedRule = schedMap ? (schedMap.byDate[targetStr] || schedMap.byWeekday[targetDayShort] || null) : null;
 
       if (customSchedRule) {
         if (customSchedRule.isRest) {
@@ -801,11 +806,11 @@ export const getDailySuggestion = async (
         } else if (customSchedRule.durationMins > 0) {
           const dur = customSchedRule.durationMins;
           const isCurrentlyRest = result.primary.intensity === 'Rest' || (result.primary.title || '').toLowerCase().includes('rest');
-          if (isCurrentlyRest || Math.abs((result.primary.duration_minutes || 0) - dur) > 15) {
-            const title = `Endurance Ride (${formatDuration(dur)})`;
+          if (isCurrentlyRest || Math.abs((result.primary.duration_minutes || 0) - dur) > 0) {
+            const title = dur >= 60 ? `Endurance Ride (${formatDuration(dur)})` : `Recovery Spin (${formatDuration(dur)})`;
             const warmMins = Math.max(5, Math.round(dur * 0.15));
             const coolMins = Math.max(5, Math.round(dur * 0.12));
-            const mainMins = dur - warmMins - coolMins;
+            const mainMins = Math.max(1, dur - warmMins - coolMins);
             const targetWatts = Math.round((ftp || 250) * 0.68);
             result.primary = {
               title,
@@ -839,20 +844,27 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
   if (!ftp) ftp = 250;
 
   // Check for active weekly schedule directive in planContext or fallback to saved availability
-  let scheduleMap = planContext ? parseScheduleDurationsFromDirective(planContext) : null;
-  if (!scheduleMap && typeof window !== 'undefined') {
-    scheduleMap = parseScheduleDurationsFromDirective('');
+  let detailedSchedule = planContext ? parseDetailedScheduleFromDirective(planContext) : null;
+  if (!detailedSchedule && typeof window !== 'undefined') {
+    detailedSchedule = parseDetailedScheduleFromDirective('');
   }
 
-  // Helper to extract weekday short name e.g. "mon" from "Mon (Sep 21)" or "MON" or "Woensdag"
-  const extractWeekdayToken = (dayStr: string): string | null => {
-    return normalizeWeekdayToken(dayStr);
+  const nowDate = new Date();
+  const todayMid = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate());
+  const weekdayShorts = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+  const resolveRuleForDay = (dayStr: string, fallbackIdx: number) => {
+    if (!detailedSchedule) return null;
+    const parsedDate = parseBriefingDayDate(dayStr, todayMid);
+    const resolvedDate = parsedDate || new Date(todayMid.getFullYear(), todayMid.getMonth(), todayMid.getDate() + fallbackIdx);
+    const iso = `${resolvedDate.getFullYear()}-${String(resolvedDate.getMonth() + 1).padStart(2, '0')}-${String(resolvedDate.getDate()).padStart(2, '0')}`;
+    const token = normalizeWeekdayToken(dayStr) || weekdayShorts[resolvedDate.getDay()];
+    return detailedSchedule.byDate[iso] || (token ? detailedSchedule.byWeekday[token] : null) || null;
   };
 
   // Pass 1: Normalize durations, units, and weekday vs weekend duration caps
   let normalizedDays = briefing.days.map((day, idx) => {
-    const token = extractWeekdayToken(day.day);
-    const customRule = (token && scheduleMap) ? scheduleMap[token] : null;
+    const customRule = resolveRuleForDay(day.day, idx);
 
     let isRest = day.intensity === 'Rest' || (day.focus || '').toLowerCase().includes('rest') || (day.focus || '').toLowerCase().includes('off');
     const isCommute = (day.day || '').toLowerCase().includes('commute') || (day.focus || '').toLowerCase().includes('commute');
@@ -1029,10 +1041,8 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
     const next = normalizedDays[i + 1];
     if (!current || !next) continue;
 
-    const currentToken = extractWeekdayToken(current.day);
-    const hasCustomForCurrent = (currentToken && scheduleMap && scheduleMap[currentToken]);
-    const nextToken = extractWeekdayToken(next.day);
-    const hasCustomForNext = (nextToken && scheduleMap && scheduleMap[nextToken]);
+    const hasCustomForCurrent = Boolean(resolveRuleForDay(current.day, i));
+    const hasCustomForNext = Boolean(resolveRuleForDay(next.day, i + 1));
     // Do not alter or downscale sessions that match user-defined availability schedule rules
     if (hasCustomForCurrent || hasCustomForNext) {
       continue;
@@ -2007,14 +2017,30 @@ POWER MILESTONES & SPIKES:
   }
   const pastDaysDetailedTimeline = pastDaysLog.join('\n');
 
-  // 5. Active custom plan directives
+  // 5. Active custom plan directives (+ saved availability schedule if not already present)
   let activePlanDirectivesSummary = "";
+  const directiveLines: string[] = [];
   if (context.planContext) {
     const parsedDirectives = parsePlanDirectives(context.planContext);
     const { active } = pruneExpiredDirectives(parsedDirectives);
-    if (active.length > 0) {
-      activePlanDirectivesSummary = active.map(d => `- "${d.text}" (requested on ${d.requestedAt})`).join('\n');
-    }
+    active.forEach(d => {
+      directiveLines.push(`- "${d.text}" (requested on ${d.requestedAt})`);
+    });
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      const hasSchedInContext = directiveLines.some(l => l.toLowerCase().includes('weekly schedule'));
+      const savedAvailRaw = localStorage.getItem('wattson_last_saved_availability');
+      if (!hasSchedInContext && savedAvailRaw) {
+        const parsedAvail = JSON.parse(savedAvailRaw);
+        if (parsedAvail?.directiveText) {
+          directiveLines.push(`- "${parsedAvail.directiveText}" (saved availability)`);
+        }
+      }
+    } catch {}
+  }
+  if (directiveLines.length > 0) {
+    activePlanDirectivesSummary = directiveLines.join('\n');
   }
 
   const powerCurveStr = safePowerCurves.map(pc => {

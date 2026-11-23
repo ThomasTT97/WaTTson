@@ -177,6 +177,7 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
   planContext
 }) => {
   const [days, setDays] = useState<DayDurationItem[]>([]);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const loadSavedAvailability = useCallback((): SavedAvailabilityRecord | null => {
     let record: SavedAvailabilityRecord | null = null;
@@ -249,8 +250,9 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
       const dayShort = getDayShort(d);
       const dayName = getDayName(d);
 
-      // Find matching day from previously set availability - prioritize day of week
-      const savedMatch = saved?.days?.find(sd => sd.dayShort === dayShort);
+      // Find matching day from previously set availability - prioritize exact calendar date, then day of week
+      const savedMatch = saved?.days?.find(sd => sd.dateStr && sd.dateStr === dateStr) ||
+                         saved?.days?.find(sd => sd.dayShort === dayShort);
 
       let prefilledMins = 60;
       if (savedMatch !== undefined) {
@@ -285,12 +287,14 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
       });
     }
 
+    setValidationError(null);
     setDays(initialDays);
   }, [isOpen, weeklyBriefing, activities, suggestion, loadSavedAvailability]);
 
   if (!isOpen) return null;
 
   const handleStep = (index: number, deltaMinutes: number) => {
+    setValidationError(null);
     setDays(prev => {
       const next = [...prev];
       const current = next[index].durationMins;
@@ -332,9 +336,10 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
     // Enforce minimum 30 min duration for any day that isn't a Rest day
     const invalidDays = days.filter(d => d.durationMins > 0 && d.durationMins < 30);
     if (invalidDays.length > 0) {
-      alert("Please set workout duration to at least 30 minutes, or set as 'Rest'.");
+      setValidationError("Please set workout duration to at least 30 minutes, or set as 'Rest'.");
       return;
     }
+    setValidationError(null);
 
     const parts = days.map(d => {
       const formatted = formatDurationDisplay(d.durationMins);
@@ -472,6 +477,12 @@ export const PlanAndChangeModal: React.FC<PlanAndChangeModalProps> = ({
             <span className="text-slate-400 text-[10px]">
               Halts acute fatigue & restores muscle glycogen
             </span>
+          </div>
+        )}
+
+        {validationError && (
+          <div className="px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/25 text-[11px] font-medium text-rose-300">
+            {validationError}
           </div>
         )}
 

@@ -98,6 +98,8 @@ export interface PlannedWorkout {
   start_date_local: string;
   moving_time: number;
   icu_training_load: number;
+  type?: string;
+  paired_activity_id?: string | null;
 }
 
 export interface Wellness {

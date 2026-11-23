@@ -13,9 +13,10 @@ import {
   TrainingMode,
   TrainingMethodology,
   ThreeMonthReview,
+  PlannedWorkout,
   formatDuration
 } from './types';
-import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile, getAnnualPowerCurves, uploadWorkout } from './services/intervalsService';
+import { fetchActivities, fetchWellness, fetchAthleteId, fetchAthleteProfile, getAnnualPowerCurves, uploadWorkout, fetchPlannedWorkoutsRange, getSportGroup, deletePlannedWorkout } from './services/intervalsService';
 import { getDailySuggestion, sendChatMessage, getWeeklyBriefing, analyzeUserProfile, analyzeThreeMonthReview, normalizeBriefingDays } from './services/geminiService';
 import { 
   PlanDirective, 
@@ -26,12 +27,13 @@ import {
   getTodayDateString,
   normalizeWeekdayToken,
   harmonizeBriefingWithAvailability,
-  parseBriefingDayDate
+  parseBriefingDayDate,
+  parseDetailedScheduleFromDirective
 } from './services/directiveService';
 import { ActivityCard } from './components/ActivityCard';
 import { RiderPowerCurve } from './components/RiderPowerCurve';
 import { AerobicEfficiencyDecouplingChart } from './components/AerobicEfficiencyDecouplingChart';
-import { SuggestedWorkoutCard, formatPlannedRideTitle } from './components/SuggestedWorkoutCard';
+import { SuggestedWorkoutCard, formatPlannedRideTitle, PlannedWorkoutSyncStatus } from './components/SuggestedWorkoutCard';
 import { CoachingModal } from './components/CoachingModal';
 import { ChangelogModal } from './components/ChangelogModal';
 import { ChatWindow } from './components/ChatWindow';
@@ -94,7 +96,8 @@ import {
   Edit,
   Trash2,
   Sliders,
-  Coffee
+  Coffee,
+  CalendarPlus
 } from 'lucide-react';
 
 const CyclistIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -276,6 +279,18 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [intervalsPlannedWorkouts, setIntervalsPlannedWorkouts] = useState<PlannedWorkout[] | null>(() => {
+    try {
+      const saved = localStorage.getItem('wattson_planned_events_cache');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return null;
+  });
+  const [isRefreshingCalendarStatus, setIsRefreshingCalendarStatus] = useState(false);
+  const lastPlannedEventsFetchRef = useRef<number>(0);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const [selectedSuggestedDay, setSelectedSuggestedDay] = useState<WeeklyBriefing['days'][0] | null>(null);
   const [selectedSuggestedDate, setSelectedSuggestedDate] = useState<Date | null>(null);
@@ -528,8 +543,10 @@ const App: React.FC = () => {
     return serialized || null;
   });
   const [syncingDayInApp, setSyncingDayInApp] = useState<string | null>(null);
+  const [removingDayInApp, setRemovingDayInApp] = useState<string | null>(null);
   const [syncSuccessInApp, setSyncSuccessInApp] = useState<string | null>(null);
   const [syncErrorInApp, setSyncErrorInApp] = useState<string | null>(null);
+  const [removingWorkout, setRemovingWorkout] = useState(false);
   const [syncErrorWorkout, setSyncErrorWorkout] = useState<string | null>(null);
 
   const getWeekForDayInApp = (dayObj: any) => {
@@ -580,8 +597,10 @@ const App: React.FC = () => {
     const existingDays = base.days || [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const week2Start = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7);
+    const anyExistingHasDate = existingDays.some(d => parseBriefingDayDate(d.day, today) !== null);
 
-    // Compute day offsets for existing days
+    // Compute day offsets for existing days (fallback when dates aren't parseable)
     const dayOffsets: number[] = [];
     let currentOffset = 0;
     let prevDayStr = '';
@@ -611,10 +630,28 @@ const App: React.FC = () => {
       const monthDay = targetDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       const dayName = `${weekday} (${monthDay})`;
 
-      // Find any existing day matching this weekday token or offset i
+      // Find any existing day matching exact calendar date first, then Today/Week-1 weekday, then offset i
       const token = dayItem.dayShort.toLowerCase();
-      const existingDay = existingDays.find(d => normalizeWeekdayToken(d.day) === token) || 
-                          (dayOffsets.findIndex(offset => offset === i) !== -1 ? existingDays[dayOffsets.findIndex(offset => offset === i)] : undefined);
+      const existingByDate = existingDays.find(d => {
+        const parsed = parseBriefingDayDate(d.day, today);
+        return parsed &&
+          parsed.getFullYear() === targetDate.getFullYear() &&
+          parsed.getMonth() === targetDate.getMonth() &&
+          parsed.getDate() === targetDate.getDate();
+      });
+      const existingByTodayLabel = i === 0
+        ? existingDays.find(d => /\btoday\b/i.test(d.day || ''))
+        : undefined;
+      const existingByWeekday = existingDays.find(d => {
+        if (normalizeWeekdayToken(d.day) !== token) return false;
+        const parsed = parseBriefingDayDate(d.day, today);
+        return !parsed || (parsed >= today && parsed < week2Start);
+      });
+      const offsetIdx = dayOffsets.findIndex(offset => offset === i);
+      const existingDay = existingByDate ||
+                          existingByTodayLabel ||
+                          existingByWeekday ||
+                          (!anyExistingHasDate && offsetIdx !== -1 ? existingDays[offsetIdx] : undefined);
 
       if (isRest) {
         const restRationale = generateDataDrivenRestRationale({
@@ -742,7 +779,12 @@ const App: React.FC = () => {
       }
     });
 
-    const remainingDays = existingDays.filter((_, idx) => dayOffsets[idx] >= 7);
+    const remainingDays = anyExistingHasDate
+      ? existingDays.filter(d => {
+          const parsed = parseBriefingDayDate(d.day, today);
+          return parsed ? parsed >= week2Start : false;
+        })
+      : existingDays.filter((_, idx) => dayOffsets[idx] >= 7);
 
     return {
       ...base,
@@ -788,22 +830,34 @@ const App: React.FC = () => {
     switchTab = true
   ) => {
     const today = getTodayDateString();
-    const parsed = parsePlanDirectives(planContext);
-    
+    const parsed = parsePlanDirectives(planContextRef.current);
+
     const newDir: PlanDirective = {
       id: `dir_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       text: newTweakDirective.trim(),
       requestedAt: today,
     };
 
-    // Filter out previous weekly schedule directives to avoid conflicting schedule rules
-    const filteredParsed = parsed.filter(d => !d.text.toLowerCase().includes('weekly schedule'));
+    const isFullWeeklySchedule =
+      newTweakDirective.toLowerCase().includes('weekly schedule') ||
+      (updatedDays && updatedDays.length >= 7);
+
+    // Filter out previous weekly schedule directives (and older single-day availability overrides when replacing the full 7-day schedule)
+    const filteredParsed = parsed.filter(d => {
+      if (d.text.toLowerCase().includes('weekly schedule')) return false;
+      if (isFullWeeklySchedule && parseDetailedScheduleFromDirective(JSON.stringify([d]))) {
+        // Keep directives that don't purely clash, or drop older single-day rest/duration tweaks superseded by full 7-day matrix
+        return !/\b(today|tomorrow|mon|monday|tue|tuesday|wed|wednesday|thu|thursday|fri|friday|sat|saturday|sun|sunday|vandaag|morgen)\b/i.test(d.text);
+      }
+      return true;
+    });
     const updatedDirectives = [...filteredParsed, newDir];
     const { active } = pruneExpiredDirectives(updatedDirectives, today);
     const newContext = serializePlanDirectives(active);
 
     setLastAppliedTweak(newTweakDirective.trim());
     setShowTweakSuccessNotice(false);
+    planContextRef.current = newContext;
     setPlanContext(newContext);
     safeSetItem('wattson_plan_context', newContext);
 
@@ -811,15 +865,11 @@ const App: React.FC = () => {
       setActiveTab('rides');
     }
 
-    // 1. Immediately adapt and harmonize weeklyBriefing to reflect user's requested durations and rest days!
+    // 1. Immediately adapt and harmonize weeklyBriefing & local saved availability (for both Modal AND Chat updates!)
+    let harmonizedResult: WeeklyBriefing | null = null;
     if (updatedDays && updatedDays.length > 0) {
-      const adapted = adaptBriefingWithSchedule(weeklyBriefing, updatedDays, ftp || 250, stats, activities, wellnessData);
-      const harmonized = harmonizeBriefingWithAvailability(adapted, newContext, ftp || 250);
-      setWeeklyBriefing(harmonized);
-      safeSetItem('wattson_saved_weekly_briefing', JSON.stringify(harmonized));
-      if (currentUserRef.current) {
-        syncToCloud({ weeklyBriefingJson: JSON.stringify(harmonized) });
-      }
+      const adapted = adaptBriefingWithSchedule(weeklyBriefingRef.current, updatedDays, ftp || 250, stats, activities, wellnessData);
+      harmonizedResult = harmonizeBriefingWithAvailability(adapted, newContext, ftp || 250);
 
       // Persist last saved availability so when the screen is opened again, previous settings are remembered
       try {
@@ -848,15 +898,128 @@ const App: React.FC = () => {
       } catch (err) {
         console.warn('Failed to save availability record in App.tsx', err);
       }
-    } else if (newTweakDirective.toLowerCase().includes('weekly schedule')) {
-      const parsedRecord = parseScheduleDirective(newTweakDirective, today);
-      if (parsedRecord) {
-        safeSetItem(AVAILABILITY_STORAGE_KEY, JSON.stringify(parsedRecord));
+    } else {
+      // Chat / text directive update: also immediately apply any day/availability rules & sync AVAILABILITY_STORAGE_KEY
+      const detailed = parseDetailedScheduleFromDirective(newContext);
+      if (detailed && (Object.keys(detailed.byWeekday).length > 0 || Object.keys(detailed.byDate).length > 0)) {
+        try {
+          const now = new Date();
+          const dayShortNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+          const dayFullNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+          const mergedDays: { dayShort: string; dayName: string; dateStr: string; durationMins: number; formattedDuration: string }[] = [];
+
+          let existingSaved: any = null;
+          try {
+            const rawSaved = localStorage.getItem(AVAILABILITY_STORAGE_KEY);
+            if (rawSaved) existingSaved = JSON.parse(rawSaved);
+          } catch {}
+
+          for (let i = 0; i < 7; i++) {
+            const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+            const dateStr = toLocalDateStr(d);
+            const dayShort = dayShortNames[d.getDay()];
+            const dayName = dayFullNames[d.getDay()];
+            const token = dayShort.toLowerCase();
+            const rule = detailed.byDate[dateStr] || detailed.byWeekday[token];
+
+            let mins = 60;
+            if (rule) {
+              mins = rule.isRest ? 0 : rule.durationMins;
+            } else {
+              const savedMatch = existingSaved?.days?.find((sd: any) => (sd.dayShort || '').toUpperCase() === dayShort);
+              if (savedMatch !== undefined) {
+                mins = savedMatch.durationMins;
+              }
+            }
+            mergedDays.push({
+              dayShort,
+              dayName,
+              dateStr,
+              durationMins: mins,
+              formattedDuration: formatDurationDisplay(mins)
+            });
+          }
+
+          const totalMinutes = mergedDays.reduce((acc, d) => acc + d.durationMins, 0);
+          const totalHours = (totalMinutes / 60).toFixed(1).replace('.0', '');
+          const trainingDaysCount = mergedDays.filter(d => d.durationMins > 0).length;
+          const restDaysCount = mergedDays.length - trainingDaysCount;
+          const parts = mergedDays.map(d => `${d.dayShort}: ${d.formattedDuration}`);
+          const record = {
+            savedAt: now.toISOString(),
+            formattedTime: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+            totalMinutes,
+            totalHours,
+            trainingDaysCount,
+            restDaysCount,
+            directiveText: newTweakDirective.toLowerCase().includes('weekly schedule')
+              ? newTweakDirective.trim()
+              : `Adjusted weekly schedule: ${parts.join(', ')} (Total: ${totalHours}h)`,
+            days: mergedDays
+          };
+          safeSetItem(AVAILABILITY_STORAGE_KEY, JSON.stringify(record));
+        } catch (err) {
+          console.warn('Failed to update availability record from chat directive:', err);
+        }
+
+        harmonizedResult = harmonizeBriefingWithAvailability(weeklyBriefingRef.current, newContext, ftp || 250);
       }
     }
 
-    // 2. Recalibrate in background while preserving weeklyBriefing continuity
-    fetchWeeklyBriefingData(newContext, true, undefined, undefined, weekIndex || 1);
+    if (harmonizedResult) {
+      weeklyBriefingRef.current = harmonizedResult;
+      setWeeklyBriefing(harmonizedResult);
+      safeSetItem('wattson_saved_weekly_briefing', JSON.stringify(harmonizedResult));
+    }
+
+    // Invalidate daily suggestion cache so Today's suggestion stays aligned with updated availability
+    try {
+      localStorage.removeItem('wattson_daily_cache');
+      if (harmonizedResult && harmonizedResult.days.length > 0 && suggestion && suggestion.date === today) {
+        const todayAdapted = harmonizedResult.days[0];
+        const isRestToday = todayAdapted.intensity === 'Rest' || (todayAdapted.duration_target || 0) <= 0;
+        const mappedIntensity: 'Low' | 'Moderate' | 'High' | 'Rest' = isRestToday
+          ? 'Rest'
+          : todayAdapted.intensity === 'Easy'
+          ? 'Low'
+          : todayAdapted.intensity === 'Hard'
+          ? 'High'
+          : 'Moderate';
+        const updatedSuggestion: DailySuggestion = {
+          ...suggestion,
+          primary: {
+            ...suggestion.primary,
+            title: todayAdapted.focus,
+            description: todayAdapted.why || suggestion.primary.description,
+            intensity: mappedIntensity,
+            duration_minutes: todayAdapted.duration_target || 0,
+            type: isRestToday ? 'endurance' : (todayAdapted.workout_steps && todayAdapted.workout_steps.length > 3 ? 'intervals' : 'endurance'),
+            tss: todayAdapted.load_target || 0,
+            workout_steps: todayAdapted.workout_steps || []
+          }
+        };
+        setSuggestion(updatedSuggestion);
+        safeSetItem('wattson_daily_cache', JSON.stringify(updatedSuggestion));
+      }
+    } catch {}
+
+    // Always sync planContext AND weeklyBriefingJson together atomically to avoid Firestore snapshot reverting planContext!
+    if (currentUserRef.current) {
+      syncToCloud({
+        planContext: newContext,
+        ...(harmonizedResult ? { weeklyBriefingJson: JSON.stringify(harmonizedResult) } : {})
+      });
+    }
+
+    // 2. Recalibrate in background while preserving adapted weeklyBriefing continuity
+    fetchWeeklyBriefingData(
+      newContext,
+      true,
+      undefined,
+      undefined,
+      weekIndex || 1,
+      harmonizedResult || weeklyBriefingRef.current
+    );
   };
 
   const handleAddTweakFromApp = (newTweakDirective: string, weekIndex?: number, switchTab = true) => {
@@ -904,6 +1067,139 @@ const App: React.FC = () => {
     return 'Ride';
   };
 
+  const hasIntervalsCalendarAccess = useCallback((targetCreds?: IntervalsCredentials | null): boolean => {
+    const c = targetCreds ?? creds;
+    if (!c || !c.apiKey) return false;
+    if (c.provider === 'strava' && (!c.apiKey || c.apiKey === 'strava')) return false;
+    return true;
+  }, [creds]);
+
+  const refreshIntervalsPlannedWorkouts = useCallback(async (overrideCreds?: IntervalsCredentials | null) => {
+    const activeCreds = overrideCreds ?? creds;
+    if (!hasIntervalsCalendarAccess(activeCreds) || !activeCreds) {
+      setIntervalsPlannedWorkouts(null);
+      return;
+    }
+    setIsRefreshingCalendarStatus(true);
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const end = new Date(today);
+      end.setDate(today.getDate() + 28);
+      const events = await fetchPlannedWorkoutsRange(toLocalDateStr(today), toLocalDateStr(end), activeCreds);
+      lastPlannedEventsFetchRef.current = Date.now();
+      setIntervalsPlannedWorkouts(events);
+      safeSetItem('wattson_planned_events_cache', JSON.stringify(events));
+    } catch (err) {
+      console.warn('Could not refresh Intervals.icu planned workouts:', err);
+    } finally {
+      setIsRefreshingCalendarStatus(false);
+    }
+  }, [creds, hasIntervalsCalendarAccess]);
+
+  const upsertIntervalsPlannedEvent = useCallback((uploadedEvent: PlannedWorkout) => {
+    const dateStr = String(uploadedEvent.start_date_local || '').slice(0, 10);
+    if (!dateStr) return;
+    const targetSportGroup = getSportGroup(uploadedEvent.type);
+    const pushingLower = (uploadedEvent.name || '').toLowerCase();
+    const isPushingCommuteAm = pushingLower.includes('commute am') || pushingLower.includes('morning commute');
+    const isPushingCommutePm = pushingLower.includes('commute pm') || pushingLower.includes('afternoon commute') || pushingLower.includes('evening commute');
+
+    setIntervalsPlannedWorkouts(prev => {
+      const base = Array.isArray(prev) ? prev : [];
+      const filtered = base.filter(e => {
+        if (!e || e.category !== 'WORKOUT') return true;
+        if (!String(e.start_date_local || '').startsWith(dateStr)) return true;
+        if (e.paired_activity_id) return true;
+        const eSportGroup = e.type ? getSportGroup(e.type) : targetSportGroup;
+        if (eSportGroup !== targetSportGroup) return true;
+        const eLower = (e.name || '').toLowerCase();
+        if (isPushingCommuteAm && (eLower.includes('commute pm') || eLower.includes('afternoon') || eLower.includes('evening'))) return true;
+        if (isPushingCommutePm && (eLower.includes('commute am') || eLower.includes('morning'))) return true;
+        return false;
+      });
+      const next = [...filtered, uploadedEvent];
+      safeSetItem('wattson_planned_events_cache', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const removeIntervalsPlannedEvent = useCallback((eventId: string | number) => {
+    const idStr = String(eventId);
+    setIntervalsPlannedWorkouts(prev => {
+      if (!Array.isArray(prev)) return prev;
+      const next = prev.filter(e => String(e.id) !== idStr);
+      safeSetItem('wattson_planned_events_cache', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const getPlannedWorkoutSyncInfo = useCallback((
+    workoutInput: {
+      name?: string;
+      focus?: string;
+      durationMinutes?: number;
+      intensity?: string;
+      workoutSteps?: { duration?: number }[];
+    },
+    date?: Date | string | null
+  ): { status: PlannedWorkoutSyncStatus | null; matchedEvent?: PlannedWorkout } => {
+    const intensityLower = (workoutInput.intensity || '').toLowerCase();
+    const focusOrName = workoutInput.name || formatPlannedRideTitle(workoutInput.focus);
+    const focusLower = (workoutInput.focus || focusOrName || '').toLowerCase();
+    const isRest = intensityLower === 'rest' ||
+                   focusLower.includes('rest') ||
+                   (workoutInput.durationMinutes !== undefined && workoutInput.durationMinutes <= 0);
+    if (isRest) return { status: null };
+    if (!hasIntervalsCalendarAccess() || intervalsPlannedWorkouts === null || !date) {
+      return { status: null };
+    }
+
+    const dateStr = typeof date === 'string' ? date.slice(0, 10) : toLocalDateStr(date);
+    const plannedSportGroup = getSportGroup(detectIntervalsWorkoutType(workoutInput.focus || focusOrName));
+    const pLower = focusOrName.toLowerCase();
+    const isPlannedCommuteAm = pLower.includes('commute am') || pLower.includes('morning commute');
+    const isPlannedCommutePm = pLower.includes('commute pm') || pLower.includes('afternoon commute') || pLower.includes('evening commute');
+
+    const sameSlotEvents = intervalsPlannedWorkouts.filter(e => {
+      if (!e || e.category !== 'WORKOUT') return false;
+      if (!e.start_date_local || !String(e.start_date_local).startsWith(dateStr)) return false;
+      const eSportGroup = e.type ? getSportGroup(e.type) : plannedSportGroup;
+      if (eSportGroup !== plannedSportGroup) return false;
+      const eLower = (e.name || '').toLowerCase();
+      if (isPlannedCommuteAm && (eLower.includes('commute pm') || eLower.includes('afternoon') || eLower.includes('evening'))) return false;
+      if (isPlannedCommutePm && (eLower.includes('commute am') || eLower.includes('morning'))) return false;
+      return true;
+    });
+
+    if (sameSlotEvents.length === 0) {
+      return { status: 'not_pushed' };
+    }
+
+    const norm = (s?: string) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const targetNormName = norm(focusOrName);
+    const plannedSecs = Math.max(60, Math.round((workoutInput.durationMinutes || 60) * 60));
+    const stepsTotalMins = Array.isArray(workoutInput.workoutSteps)
+      ? workoutInput.workoutSteps.reduce((sum, st) => sum + (Number(st?.duration) || 0), 0)
+      : 0;
+    const expectedStepsSecs = stepsTotalMins > 0 ? Math.round(stepsTotalMins * 60) : 0;
+
+    const exactMatch = sameSlotEvents.find(e => {
+      if (norm(e.name) !== targetNormName) return false;
+      const eventSecs = Number(e.moving_time) || 0;
+      if (eventSecs <= 0) return true;
+      if (Math.abs(eventSecs - plannedSecs) <= 300) return true;
+      if (expectedStepsSecs > 0 && Math.abs(eventSecs - expectedStepsSecs) <= 300) return true;
+      return false;
+    });
+
+    if (exactMatch) {
+      return { status: 'pushed', matchedEvent: exactMatch };
+    }
+
+    return { status: 'outdated', matchedEvent: sameSlotEvents[0] };
+  }, [hasIntervalsCalendarAccess, intervalsPlannedWorkouts]);
+
   const handleSyncToIntervalsFromApp = async (day: any, absoluteIndex: number, explicitDate?: Date | null) => {
     if (!creds) {
       setSyncErrorInApp('Connect your Intervals.icu account first to push workouts.');
@@ -940,17 +1236,37 @@ const App: React.FC = () => {
 
       const workoutText = formatWorkoutStepsForIntervals(day.workout_steps, day.why);
       const workoutName = formatPlannedRideTitle(day.focus);
+      const workoutType = detectIntervalsWorkoutType(day.focus);
+      const movingTimeSecs = Math.max(60, Math.round((day.duration_target || 60) * 60));
 
-      await uploadWorkout(creds, {
+      const uploaded = await uploadWorkout(creds, {
         name: workoutName,
         description: day.why || '',
         date: dateStr,
         start_time: startTime,
-        type: detectIntervalsWorkoutType(day.focus),
-        moving_time: Math.max(60, Math.round((day.duration_target || 60) * 60)),
+        type: workoutType,
+        moving_time: movingTimeSecs,
         icu_training_load: day.load_target || 50,
         workout_text: workoutText
       });
+
+      upsertIntervalsPlannedEvent(
+        uploaded && uploaded.start_date_local
+          ? uploaded
+          : {
+              id: uploaded?.id ? String(uploaded.id) : `local-${Date.now()}`,
+              name: workoutName,
+              description: workoutText || day.why || '',
+              category: 'WORKOUT',
+              start_date_local: `${dateStr}T${startTime}`,
+              type: workoutType,
+              moving_time: movingTimeSecs,
+              icu_training_load: day.load_target || 50
+            }
+      );
+      if (creds.apiKey !== 'demo') {
+        setTimeout(() => { refreshIntervalsPlannedWorkouts(creds); }, 400);
+      }
       
       setSyncSuccessInApp(dayKey);
       setTimeout(() => setSyncSuccessInApp(null), 3500);
@@ -984,16 +1300,36 @@ const App: React.FC = () => {
       }
       const dateStr = suggestion?.date || toLocalDateStr(targetDate);
       const workoutText = formatWorkoutStepsForIntervals(currentWorkout.workout_steps, currentWorkout.description);
+      const workoutType = detectIntervalsWorkoutType(currentWorkout.title);
+      const movingTimeSecs = Math.max(60, Math.round((currentWorkout.duration_minutes || 60) * 60));
 
-      await uploadWorkout(creds, {
+      const uploaded = await uploadWorkout(creds, {
         name: currentWorkout.title,
         description: currentWorkout.description || '',
         date: dateStr,
-        type: detectIntervalsWorkoutType(currentWorkout.title),
-        moving_time: Math.max(60, Math.round((currentWorkout.duration_minutes || 60) * 60)),
+        type: workoutType,
+        moving_time: movingTimeSecs,
         icu_training_load: currentWorkout.tss || 50,
         workout_text: workoutText
       });
+
+      upsertIntervalsPlannedEvent(
+        uploaded && uploaded.start_date_local
+          ? uploaded
+          : {
+              id: uploaded?.id ? String(uploaded.id) : `local-${Date.now()}`,
+              name: currentWorkout.title,
+              description: workoutText || currentWorkout.description || '',
+              category: 'WORKOUT',
+              start_date_local: `${dateStr}T09:00:00`,
+              type: workoutType,
+              moving_time: movingTimeSecs,
+              icu_training_load: currentWorkout.tss || 50
+            }
+      );
+      if (creds.apiKey !== 'demo') {
+        setTimeout(() => { refreshIntervalsPlannedWorkouts(creds); }, 400);
+      }
 
       setSyncSuccess(true);
       setTimeout(() => setSyncSuccess(false), 3500);
@@ -1002,6 +1338,63 @@ const App: React.FC = () => {
       setSyncErrorWorkout(err?.message || "Failed to push workout to Intervals.icu calendar.");
     } finally {
       setSyncingWorkout(false);
+    }
+  };
+
+  const handleRemoveFromIntervalsFromApp = async (day: any, eventId: string | number) => {
+    if (!creds) {
+      setSyncErrorInApp('Connect your Intervals.icu account first.');
+      return;
+    }
+    if (creds.provider === 'strava' && (!creds.apiKey || creds.apiKey === 'strava')) {
+      setSyncErrorInApp('Connect an Intervals.icu account in Profile settings to manage calendar workouts.');
+      return;
+    }
+
+    const dayKey = `${day.day || 'day'}_${day.focus || ''}`;
+    setRemovingDayInApp(dayKey);
+    setSyncErrorInApp(null);
+    setSyncSuccessInApp(null);
+
+    try {
+      await deletePlannedWorkout(creds, eventId);
+      removeIntervalsPlannedEvent(eventId);
+      if (creds.apiKey !== 'demo') {
+        setTimeout(() => { refreshIntervalsPlannedWorkouts(creds); }, 400);
+      }
+    } catch (err: any) {
+      console.error("Remove from Intervals failed:", err);
+      setSyncErrorInApp(err?.message || "Failed to remove workout from Intervals.icu calendar.");
+    } finally {
+      setRemovingDayInApp(null);
+    }
+  };
+
+  const handleRemoveCurrentWorkoutFromIntervals = async (eventId: string | number) => {
+    if (!creds) {
+      setSyncErrorWorkout('Connect your Intervals.icu account first.');
+      return;
+    }
+    if (creds.provider === 'strava' && (!creds.apiKey || creds.apiKey === 'strava')) {
+      setSyncErrorWorkout('Connect an Intervals.icu account in Profile settings to manage calendar workouts.');
+      return;
+    }
+
+    setRemovingWorkout(true);
+    setSyncErrorWorkout(null);
+    setSyncSuccess(false);
+
+    try {
+      await deletePlannedWorkout(creds, eventId);
+      removeIntervalsPlannedEvent(eventId);
+      if (creds.apiKey !== 'demo') {
+        setTimeout(() => { refreshIntervalsPlannedWorkouts(creds); }, 400);
+      }
+    } catch (err: any) {
+      console.error("Remove from Intervals failed:", err);
+      setSyncErrorWorkout(err?.message || "Failed to remove workout from Intervals.icu calendar.");
+    } finally {
+      setRemovingWorkout(false);
     }
   };
 
@@ -1235,9 +1628,20 @@ const App: React.FC = () => {
         safeSetItem('wattson_ftp', profile.ftp.toString());
       }
       if (profile.planContext !== undefined && profile.planContext !== planContextRef.current) {
+        planContextRef.current = profile.planContext || null;
         setPlanContext(profile.planContext || null);
         if (profile.planContext) {
           safeSetItem('wattson_plan_context', profile.planContext);
+          try {
+            const dirs = parsePlanDirectives(profile.planContext);
+            const schedDir = [...dirs].reverse().find(d => d.text.toLowerCase().includes('weekly schedule'));
+            if (schedDir) {
+              const parsedRecord = parseScheduleDirective(schedDir.text, schedDir.requestedAt);
+              if (parsedRecord) {
+                safeSetItem(AVAILABILITY_STORAGE_KEY, JSON.stringify(parsedRecord));
+              }
+            }
+          } catch {}
         } else {
           localStorage.removeItem('wattson_plan_context');
         }
@@ -1247,7 +1651,7 @@ const App: React.FC = () => {
       if (profile.weeklyBriefingJson) {
         try {
           const parsed = JSON.parse(profile.weeklyBriefingJson);
-          const effectivePlanContext = profile.planContext || planContextRef.current;
+          const effectivePlanContext = profile.planContext !== undefined ? profile.planContext : planContextRef.current;
           const harmonized = harmonizeBriefingWithAvailability(
             normalizeBriefingDays(parsed, effectivePlanContext),
             effectivePlanContext,
@@ -1256,6 +1660,7 @@ const App: React.FC = () => {
           const currentBriefingStr = weeklyBriefingRef.current ? JSON.stringify(weeklyBriefingRef.current) : '';
           const harmonizedStr = JSON.stringify(harmonized);
           if (currentBriefingStr !== harmonizedStr) {
+            weeklyBriefingRef.current = harmonized;
             setWeeklyBriefing(harmonized);
             safeSetItem('wattson_saved_weekly_briefing', harmonizedStr);
           }
@@ -1447,11 +1852,12 @@ const App: React.FC = () => {
     return () => clearTimeout(timeout);
   }, [messages, currentUser, syncToCloud]);
 
-  // Sync training plan changes to Firestore
+  // Sync training plan changes to Firestore (include planContext so remote snapshots never revert directives)
   useEffect(() => {
     if (!currentUser || !isCloudProfileLoadedRef.current || isApplyingRemoteSyncRef.current) return;
     if (weeklyBriefing) {
       syncToCloud({
+        planContext: planContextRef.current || '',
         weeklyBriefingJson: JSON.stringify(weeklyBriefing),
         generatedWeeksJson: JSON.stringify(generatedWeeks)
       });
@@ -1578,6 +1984,13 @@ const App: React.FC = () => {
       setActivities(fetchedActivities || []);
       setWellnessData(fetchedWellness || []);
       setPowerCurves(curves || []);
+
+      // 5. Fetch upcoming planned calendar events from Intervals.icu (non-blocking)
+      if (hasIntervalsCalendarAccess(activeCreds)) {
+        refreshIntervalsPlannedWorkouts(activeCreds);
+      } else {
+        setIntervalsPlannedWorkouts(null);
+      }
       
       // Limit cache to avoid QuotaExceededError (5MB limit)
       // Save compact representation of recent activities to disk while keeping full history in memory
@@ -1679,6 +2092,15 @@ const App: React.FC = () => {
   }, [creds, activities, syncError, loading]);
 
   useEffect(() => {
+    if (!creds || !hasIntervalsCalendarAccess(creds)) return;
+    if (activeTab !== 'dashboard' && activeTab !== 'rides') return;
+    const now = Date.now();
+    if (intervalsPlannedWorkouts === null || now - lastPlannedEventsFetchRef.current > 60000) {
+      refreshIntervalsPlannedWorkouts(creds);
+    }
+  }, [activeTab, creds, hasIntervalsCalendarAccess, intervalsPlannedWorkouts, refreshIntervalsPlannedWorkouts]);
+
+  useEffect(() => {
     if (!activities || activities.length === 0) return;
     
     const today = new Date();
@@ -1708,7 +2130,14 @@ const App: React.FC = () => {
     }
   }, [activities, userGoal, hasRideToday, trainingMethodology, currentDateKey]);
 
-  const fetchWeeklyBriefingData = useCallback(async (customPlanContext?: string, force = false, mode?: 'power' | 'hr', trainingModeArg?: TrainingMode, weekIndex?: number) => {
+  const fetchWeeklyBriefingData = useCallback(async (
+    customPlanContext?: string,
+    force = false,
+    mode?: 'power' | 'hr',
+    trainingModeArg?: TrainingMode,
+    weekIndex?: number,
+    overrideExistingBriefing?: WeeklyBriefing | null
+  ) => {
     if (!activities || activities.length === 0) return;
     
     if (weekIndex) {
@@ -1721,6 +2150,7 @@ const App: React.FC = () => {
     try {
       const now = new Date();
       const todayStr = toLocalDateStr(now);
+      const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const hasActivityToday = activities.some(a => a.start_date_local.startsWith(todayStr));
       
       const todayName = now.toLocaleDateString('en-US', { weekday: 'long' });
@@ -1733,13 +2163,14 @@ const App: React.FC = () => {
         : "";
         
       let startContext = `CURRENT DATE: ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}. `;
-      startContext += `Plan MUST start from TODAY, which is ${todayName} (Day 1 = Today). Note: The athlete may have completed a workout today (${hasActivityToday ? '1 or more activities completed today' : 'no activities completed yet today'}). ALWAYS output ALL workouts for Today (both the ones already completed and the ones remaining) so the UI can match them properly. CRITICAL FOR TODAY (DAY 1): If the custom directives or request mention adding, changing, scheduling, or modifying a workout or commute for TODAY, you MUST generate and include that requested workout in Day 1 regardless of whether any workouts were already completed today. If their request or custom directives specify multiple workouts or commutes per day, include all of them for Today in Day 1. When scheduling 2 commutes for a day, the first commute MUST be named "Commute AM" and the second commute MUST be named "Commute PM". `;
+      startContext += `Plan MUST start from TODAY, which is ${todayName} (Day 1 = Today). Note: The athlete may have completed a workout today (${hasActivityToday ? '1 or more activities completed today' : 'no activities completed yet today'}). ALWAYS output ALL workouts for Today (both the ones already completed and the ones remaining) so the UI can match them properly. CRITICAL FOR TODAY (DAY 1): Strictly obey any availability, duration, or Rest constraint for TODAY in CUSTOM DIRECTIVES — if Today is set to Rest / 0h, Day 1 MUST be a Rest Day (duration_target: 0, intensity: "Rest"); if Today has a specific workout, commute, or duration requested, you MUST generate and include that exact duration/workout in Day 1 regardless of whether any workouts were already completed today. When scheduling 2 commutes for a day, the first commute MUST be named "Commute AM" and the second commute MUST be named "Commute PM". `;
 
-      const ctxToUse = customPlanContext !== undefined ? customPlanContext : (planContext || undefined);
+      const ctxToUse = customPlanContext !== undefined ? customPlanContext : (planContextRef.current || undefined);
       const activeMode = mode || planMode;
       const activeTrainingMode = trainingModeArg || trainingMode;
+      const existingBriefingForPrompt = overrideExistingBriefing !== undefined ? overrideExistingBriefing : weeklyBriefingRef.current;
 
-      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode, activeTrainingMode, weekIndex, trainingMethodology, weeklyBriefing);
+      const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode, activeTrainingMode, weekIndex, trainingMethodology, existingBriefingForPrompt);
       const harmonizedData = harmonizeBriefingWithAvailability(data, ctxToUse, ftp || 250);
       setWeeklyBriefing(prev => {
         if (!prev) return harmonizedData;
@@ -1756,8 +2187,8 @@ const App: React.FC = () => {
 
           const range = weekRanges[weekIndex - 1];
           
-          // Compute precise session-to-day offsets using chronological assignment to avoid slicing issues due to double sessions/commutes
-          const prevDayOffsets: number[] = [];
+          // Compute precise calendar offsets relative to Today when dates parse, falling back to sequential index
+          const fallbackOffsets: number[] = [];
           let currentOffset = 0;
           let prevDayStr = '';
           prev.days.forEach((day, i) => {
@@ -1768,12 +2199,20 @@ const App: React.FC = () => {
                 currentOffset += 1;
               }
             }
-            prevDayOffsets.push(currentOffset);
+            fallbackOffsets.push(currentOffset);
             prevDayStr = day.day || '';
           });
 
-          // Partition the previous days array by whether they fall before, within, or after the target week range
-          const daysBefore = prev.days.filter((_, i) => prevDayOffsets[i] < range.start);
+          const prevDayOffsets = prev.days.map((day, i) => {
+            const parsed = parseBriefingDayDate(day.day, todayMidnight);
+            if (parsed) {
+              return Math.round((parsed.getTime() - todayMidnight.getTime()) / 86400000);
+            }
+            return fallbackOffsets[i];
+          });
+
+          // Partition the previous days array by whether they fall before (excluding past days < 0) or after the target week range
+          const daysBefore = prev.days.filter((_, i) => prevDayOffsets[i] >= 0 && prevDayOffsets[i] < range.start);
           const daysAfter = prev.days.filter((_, i) => prevDayOffsets[i] >= range.end);
           
           const newDays = [...daysBefore, ...harmonizedData.days, ...daysAfter];
@@ -1801,7 +2240,7 @@ const App: React.FC = () => {
         setShowTweakSuccessNotice(true);
       }
     }
-  }, [activities, wellnessData, userGoal, suggestion, ftp, powerCurves, planContext, planMode, trainingMode]);
+  }, [activities, wellnessData, userGoal, suggestion, ftp, powerCurves, planContext, planMode, trainingMode, trainingMethodology, lastAppliedTweak]);
 
   // Immediate consistency check on startup: harmonize weeklyBriefing with saved availability
   useEffect(() => {
@@ -1809,13 +2248,17 @@ const App: React.FC = () => {
     const savedCtx = localStorage.getItem('wattson_plan_context');
     if (storedAvail || savedCtx || planContext) {
       setWeeklyBriefing(prev => {
-        const harmonized = harmonizeBriefingWithAvailability(prev, savedCtx || planContext, ftp || 250);
+        const effectiveCtx = savedCtx || planContext;
+        const harmonized = harmonizeBriefingWithAvailability(prev, effectiveCtx, ftp || 250);
         const prevStr = prev ? JSON.stringify(prev) : '';
         const harmonizedStr = JSON.stringify(harmonized);
         if (prevStr !== harmonizedStr) {
           safeSetItem('wattson_saved_weekly_briefing', harmonizedStr);
           if (currentUserRef.current) {
-            syncToCloud({ weeklyBriefingJson: harmonizedStr });
+            syncToCloud({
+              ...(effectiveCtx ? { planContext: effectiveCtx } : {}),
+              weeklyBriefingJson: harmonizedStr
+            });
           }
           return harmonized;
         }
@@ -1866,7 +2309,8 @@ const App: React.FC = () => {
       'wattson_seen_version',
       'wattson_plan_context',
       'wattson_saved_weekly_briefing',
-      'wattson_saved_generated_weeks'
+      'wattson_saved_generated_weeks',
+      'wattson_planned_events_cache'
     ];
     keys.forEach(k => localStorage.removeItem(k));
     try {
@@ -2712,11 +3156,18 @@ const App: React.FC = () => {
                 {/* Next Ride Card */}
                 {nextRideFromPlan ? (() => {
                   const isTodayRide = nextRideFromPlan.date.toDateString() === new Date().toDateString();
+                  const nextSyncInfo = getPlannedWorkoutSyncInfo({
+                    focus: nextRideFromPlan.day.focus,
+                    durationMinutes: nextRideFromPlan.day.duration_target,
+                    intensity: nextRideFromPlan.day.intensity,
+                    workoutSteps: nextRideFromPlan.day.workout_steps
+                  }, nextRideFromPlan.date);
                   return (
                     <SuggestedWorkoutCard 
                       day={nextRideFromPlan.day}
                       date={nextRideFromPlan.date}
                       absoluteIndex={nextRideFromPlan.absoluteIndex ?? 0}
+                      intervalsSyncStatus={nextSyncInfo.status}
                       onClick={(day) => {
                         setSyncErrorInApp(null);
                         setSyncSuccessInApp(null);
@@ -2793,6 +3244,58 @@ const App: React.FC = () => {
                     </div>
                   </div>
 
+                  {hasIntervalsCalendarAccess() && intervalsPlannedWorkouts !== null && (() => {
+                    const upcomingPlannedWorkouts = [
+                      ...ridesSections.sortedTodayItems.filter(i => i.type === 'today_suggested' && i.dayData),
+                      ...ridesSections.sortedTomorrowItems.filter(i => i.dayData),
+                      ...ridesSections.sortedFutureItems.filter(i => i.dayData)
+                    ].filter(item => {
+                      const d = item.dayData!;
+                      return !(d.intensity === 'Rest' || (d.focus || '').toLowerCase().includes('rest') || (d.duration_target !== undefined && d.duration_target <= 0));
+                    });
+                    if (upcomingPlannedWorkouts.length === 0) return null;
+                    let pushedCount = 0;
+                    let outdatedCount = 0;
+                    upcomingPlannedWorkouts.forEach(item => {
+                      const st = getPlannedWorkoutSyncInfo({
+                        focus: item.dayData!.focus,
+                        durationMinutes: item.dayData!.duration_target,
+                        intensity: item.dayData!.intensity,
+                        workoutSteps: item.dayData!.workout_steps
+                      }, item.date).status;
+                      if (st === 'pushed') pushedCount += 1;
+                      else if (st === 'outdated') outdatedCount += 1;
+                    });
+                    const total = upcomingPlannedWorkouts.length;
+                    return (
+                      <div className="flex items-center justify-between px-1.5 text-[10px] text-slate-400">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="inline-flex items-center gap-1 font-medium text-slate-400">
+                            <CheckCircle2 size={10} className={pushedCount === total ? 'text-emerald-400/75' : 'text-slate-500'} />
+                            <span>
+                              <span className="text-slate-300 font-semibold font-mono">{pushedCount}/{total}</span> on Intervals
+                            </span>
+                          </span>
+                          {outdatedCount > 0 && (
+                            <span className="text-amber-300/80 font-medium">
+                              · {outdatedCount} modified
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => refreshIntervalsPlannedWorkouts()}
+                          disabled={isRefreshingCalendarStatus}
+                          className="inline-flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition-colors cursor-pointer disabled:opacity-50"
+                          title="Re-check Intervals.icu calendar"
+                        >
+                          <RefreshCw size={10} className={isRefreshingCalendarStatus ? 'animate-spin' : ''} />
+                          <span>Check calendar</span>
+                        </button>
+                      </div>
+                    );
+                  })()}
+
                   <div className="space-y-2 pt-0.5">
                     {/* Plan Updating Indicator */}
                     {isPlanUpdating && (
@@ -2823,9 +3326,17 @@ const App: React.FC = () => {
                     {/* Far Future Rides (Expanded) */}
                     {isOtherFutureExpanded && ridesSections.sortedFutureItems.length > 0 && (
                       <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-2 overflow-hidden">
-                        {ridesSections.sortedFutureItems.map((item) => (
-                          <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} date={item.date} onClick={(day) => { setSyncErrorInApp(null); setSyncSuccessInApp(null); setSelectedSuggestedDay(day); setSelectedSuggestedDate(item.date); }} isToday={false} />
-                        ))}
+                        {ridesSections.sortedFutureItems.map((item) => {
+                          const syncStatus = getPlannedWorkoutSyncInfo({
+                            focus: item.dayData!.focus,
+                            durationMinutes: item.dayData!.duration_target,
+                            intensity: item.dayData!.intensity,
+                            workoutSteps: item.dayData!.workout_steps
+                          }, item.date).status;
+                          return (
+                            <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} date={item.date} intervalsSyncStatus={syncStatus} onClick={(day) => { setSyncErrorInApp(null); setSyncSuccessInApp(null); setSelectedSuggestedDay(day); setSelectedSuggestedDate(item.date); }} isToday={false} />
+                          );
+                        })}
                       </motion.div>
                     )}
 
@@ -2833,9 +3344,17 @@ const App: React.FC = () => {
 
                     {ridesSections.sortedTomorrowItems.length > 0 && (
                       <div className="space-y-2 pt-0.5">
-                        {ridesSections.sortedTomorrowItems.map((item) => (
-                          <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} date={item.date} onClick={(day) => { setSyncErrorInApp(null); setSyncSuccessInApp(null); setSelectedSuggestedDay(day); setSelectedSuggestedDate(item.date); }} isToday={false} />
-                        ))}
+                        {ridesSections.sortedTomorrowItems.map((item) => {
+                          const syncStatus = getPlannedWorkoutSyncInfo({
+                            focus: item.dayData!.focus,
+                            durationMinutes: item.dayData!.duration_target,
+                            intensity: item.dayData!.intensity,
+                            workoutSteps: item.dayData!.workout_steps
+                          }, item.date).status;
+                          return (
+                            <SuggestedWorkoutCard key={item.key} day={item.dayData!} absoluteIndex={item.absoluteIndex ?? 0} date={item.date} intervalsSyncStatus={syncStatus} onClick={(day) => { setSyncErrorInApp(null); setSyncSuccessInApp(null); setSelectedSuggestedDay(day); setSelectedSuggestedDate(item.date); }} isToday={false} />
+                          );
+                        })}
                       </div>
                     )}
 
@@ -2858,12 +3377,19 @@ const App: React.FC = () => {
                               />
                             );
                           }
+                          const syncStatus = getPlannedWorkoutSyncInfo({
+                            focus: item.dayData!.focus,
+                            durationMinutes: item.dayData!.duration_target,
+                            intensity: item.dayData!.intensity,
+                            workoutSteps: item.dayData!.workout_steps
+                          }, item.date).status;
                           return (
                             <SuggestedWorkoutCard 
                               key={item.key} 
                               day={item.dayData!} 
                               absoluteIndex={item.absoluteIndex ?? 0} 
                               date={item.date}
+                              intervalsSyncStatus={syncStatus}
                               onClick={(day) => { setSyncErrorInApp(null); setSyncSuccessInApp(null); setSelectedSuggestedDay(day); setSelectedSuggestedDate(item.date); }} 
                               isToday={true} 
                             />
@@ -3524,6 +4050,7 @@ const App: React.FC = () => {
                     creds={creds!}
                     onApplyAsSuggestion={handleApplyLibraryWorkout}
                     onClose={() => setSettingsView("main")}
+                    onWorkoutUploaded={upsertIntervalsPlannedEvent}
                   />
                 )}
               </div>
@@ -3751,49 +4278,119 @@ const App: React.FC = () => {
             </div>
 
             {/* Footer actions */}
-            <div className="pt-3 shrink-0 border-t border-white/5 mt-auto space-y-2">
-              {syncErrorWorkout && (
-                <div className="px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-300 font-medium text-center">
-                  {syncErrorWorkout}
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                {currentWorkout.intensity !== 'Rest' && (
-                  <button
-                    onClick={handleSyncCurrentWorkoutToIntervals}
-                    disabled={syncingWorkout}
-                    className={`flex-1 py-3 px-3 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed ${
-                      syncSuccess
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                        : 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 hover:text-blue-200 border border-blue-500/30'
-                    }`}
-                  >
-                    {syncingWorkout ? (
-                      <>
-                        <Loader2 size={13} className="animate-spin shrink-0" />
-                        <span>Pushing...</span>
-                      </>
-                    ) : syncSuccess ? (
-                      <>
-                        <Check size={13} className="shrink-0" />
-                        <span>Pushed to Calendar</span>
-                      </>
-                    ) : (
-                      <>
-                        <Calendar size={13} className="shrink-0" />
-                        <span>Push to Intervals.icu</span>
-                      </>
+            {(() => {
+              const fallbackTargetDate = new Date();
+              if (hasRideToday) fallbackTargetDate.setDate(fallbackTargetDate.getDate() + 1);
+              const workoutDateStr = suggestion?.date || toLocalDateStr(fallbackTargetDate);
+              const workoutSyncInfo = currentWorkout
+                ? getPlannedWorkoutSyncInfo({
+                    name: currentWorkout.title,
+                    durationMinutes: currentWorkout.duration_minutes,
+                    intensity: currentWorkout.intensity,
+                    workoutSteps: currentWorkout.workout_steps
+                  }, workoutDateStr)
+                : { status: null };
+              const isWorkoutOnCalendar = workoutSyncInfo.status === 'pushed';
+              const isWorkoutOutdated = workoutSyncInfo.status === 'outdated';
+
+              return (
+                <div className="pt-3 shrink-0 border-t border-white/5 mt-auto space-y-2">
+                  {syncErrorWorkout && (
+                    <div className="px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-300 font-medium text-center">
+                      {syncErrorWorkout}
+                    </div>
+                  )}
+                  {currentWorkout && currentWorkout.intensity !== 'Rest' && workoutSyncInfo.status && !syncSuccess && (
+                    <div className={`px-3 py-1.5 rounded-xl border text-[10.5px] font-medium flex items-center justify-center gap-1.5 ${
+                      isWorkoutOnCalendar
+                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                        : isWorkoutOutdated
+                          ? 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                          : 'bg-white/[0.02] border-white/[0.06] text-slate-400'
+                    }`}>
+                      {isWorkoutOnCalendar ? (
+                        <>
+                          <CheckCircle2 size={12} className="shrink-0 text-emerald-400" />
+                          <span>On your Intervals.icu calendar</span>
+                        </>
+                      ) : isWorkoutOutdated ? (
+                        <>
+                          <RefreshCw size={12} className="shrink-0 text-amber-400" />
+                          <span className="truncate">Intervals.icu has "{workoutSyncInfo.matchedEvent?.name}"</span>
+                        </>
+                      ) : (
+                        <>
+                          <CalendarPlus size={12} className="shrink-0 text-blue-400" />
+                          <span>Not pushed to Intervals.icu yet</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    {currentWorkout.intensity !== 'Rest' && (
+                      <button
+                        onClick={handleSyncCurrentWorkoutToIntervals}
+                        disabled={syncingWorkout || removingWorkout}
+                        className={`flex-1 py-3 px-3 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed ${
+                          syncSuccess || isWorkoutOnCalendar
+                            ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/25'
+                            : isWorkoutOutdated
+                              ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/25'
+                              : 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 hover:text-blue-200 border border-blue-500/30'
+                        }`}
+                      >
+                        {syncingWorkout ? (
+                          <>
+                            <Loader2 size={13} className="animate-spin shrink-0" />
+                            <span>Pushing...</span>
+                          </>
+                        ) : syncSuccess ? (
+                          <>
+                            <Check size={13} className="shrink-0" />
+                            <span>Pushed to Calendar</span>
+                          </>
+                        ) : isWorkoutOnCalendar || isWorkoutOutdated ? (
+                          <>
+                            <RefreshCw size={13} className="shrink-0" />
+                            <span>Update on Intervals.icu</span>
+                          </>
+                        ) : (
+                          <>
+                            <Calendar size={13} className="shrink-0" />
+                            <span>Push to Intervals.icu</span>
+                          </>
+                        )}
+                      </button>
                     )}
-                  </button>
-                )}
-                <button 
-                  onClick={() => { setShowWorkoutDetail(false); setSyncErrorWorkout(null); }}
-                  className={`${currentWorkout.intensity !== 'Rest' ? 'px-4' : 'w-full'} py-3 bg-white/5 hover:bg-white/10 active:scale-[0.98] text-slate-300 hover:text-white rounded-xl text-xs font-black uppercase tracking-[0.15em] transition-all cursor-pointer`}
-                >
-                  Close
-                </button>
-              </div>
-            </div>
+                    <button 
+                      onClick={() => { setShowWorkoutDetail(false); setSyncErrorWorkout(null); }}
+                      className={`${currentWorkout.intensity !== 'Rest' ? 'px-4' : 'w-full'} py-3 bg-white/5 hover:bg-white/10 active:scale-[0.98] text-slate-300 hover:text-white rounded-xl text-xs font-black uppercase tracking-[0.15em] transition-all cursor-pointer`}
+                    >
+                      Close
+                    </button>
+                  </div>
+                  {currentWorkout.intensity !== 'Rest' && (isWorkoutOnCalendar || isWorkoutOutdated) && workoutSyncInfo.matchedEvent?.id != null && (
+                    <button
+                      onClick={() => handleRemoveCurrentWorkoutFromIntervals(workoutSyncInfo.matchedEvent!.id)}
+                      disabled={removingWorkout || syncingWorkout}
+                      className="w-full py-2 px-3 rounded-xl text-[10px] font-semibold tracking-wide transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed bg-rose-500/[0.03] hover:bg-rose-500/10 text-rose-400/75 hover:text-rose-300 border border-rose-500/15 hover:border-rose-500/25"
+                    >
+                      {removingWorkout ? (
+                        <>
+                          <Loader2 size={12} className="animate-spin shrink-0" />
+                          <span>Removing from Calendar...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 size={12} className="shrink-0" />
+                          <span>Remove from Intervals.icu</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -3811,6 +4408,7 @@ const App: React.FC = () => {
           const dayNum = targetDate.getDate();
           const daySyncKey = `${selectedSuggestedDay.day || 'day'}_${selectedSuggestedDay.focus || ''}`;
           const isSyncingThisDay = syncingDayInApp === daySyncKey;
+          const isRemovingThisDay = removingDayInApp === daySyncKey;
           const isSyncedThisDay = syncSuccessInApp === daySyncKey;
 
           const weekIdx = getWeekForDayInApp(selectedSuggestedDay);
@@ -3870,6 +4468,15 @@ const App: React.FC = () => {
             setSyncErrorInApp(null);
             setSyncSuccessInApp(null);
           };
+
+          const daySyncInfo = getPlannedWorkoutSyncInfo({
+            focus: selectedSuggestedDay.focus,
+            durationMinutes: selectedSuggestedDay.duration_target,
+            intensity: selectedSuggestedDay.intensity,
+            workoutSteps: selectedSuggestedDay.workout_steps
+          }, targetDate);
+          const isAlreadyPushed = daySyncInfo.status === 'pushed';
+          const isDayOutdated = daySyncInfo.status === 'outdated';
 
           return (
             <div className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={closeSelectedModal}>
@@ -4042,15 +4649,46 @@ const App: React.FC = () => {
                       {syncErrorInApp}
                     </div>
                   )}
+                  {!isRest && !isReworking && daySyncInfo.status && !isSyncedThisDay && (
+                    <div className={`px-3 py-1.5 rounded-xl border text-[10.5px] font-medium flex items-center justify-center gap-1.5 ${
+                      isAlreadyPushed
+                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                        : isDayOutdated
+                          ? 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                          : 'bg-white/[0.02] border-white/[0.06] text-slate-400'
+                    }`}>
+                      {isAlreadyPushed ? (
+                        <>
+                          <CheckCircle2 size={12} className="shrink-0 text-emerald-400" />
+                          <span>Synced on your Intervals.icu calendar</span>
+                        </>
+                      ) : isDayOutdated ? (
+                        <>
+                          <RefreshCw size={12} className="shrink-0 text-amber-400" />
+                          <span className="truncate">
+                            Intervals.icu currently has "{daySyncInfo.matchedEvent?.name}"
+                            {daySyncInfo.matchedEvent?.moving_time ? ` (${formatDuration(Math.round(daySyncInfo.matchedEvent.moving_time / 60))})` : ''}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <CalendarPlus size={12} className="shrink-0 text-blue-400" />
+                          <span>Not pushed to Intervals.icu yet</span>
+                        </>
+                      )}
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     {!isRest && !isReworking && (
                       <button
                         onClick={() => handleSyncToIntervalsFromApp(selectedSuggestedDay, index, targetDate)}
-                        disabled={isSyncingThisDay}
+                        disabled={isSyncingThisDay || isRemovingThisDay}
                         className={`flex-1 py-3 px-3 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed ${
-                          isSyncedThisDay
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                            : 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 hover:text-blue-200 border border-blue-500/30'
+                          isSyncedThisDay || isAlreadyPushed
+                            ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/25'
+                            : isDayOutdated
+                              ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/25'
+                              : 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 hover:text-blue-200 border border-blue-500/30'
                         }`}
                       >
                         {isSyncingThisDay ? (
@@ -4062,6 +4700,11 @@ const App: React.FC = () => {
                           <>
                             <Check size={13} className="shrink-0" />
                             <span>Pushed to Calendar</span>
+                          </>
+                        ) : isAlreadyPushed || isDayOutdated ? (
+                          <>
+                            <RefreshCw size={13} className="shrink-0" />
+                            <span>Update on Intervals.icu</span>
                           </>
                         ) : (
                           <>
@@ -4078,6 +4721,25 @@ const App: React.FC = () => {
                       Close
                     </button>
                   </div>
+                  {!isRest && !isReworking && (isAlreadyPushed || isDayOutdated) && daySyncInfo.matchedEvent?.id != null && (
+                    <button
+                      onClick={() => handleRemoveFromIntervalsFromApp(selectedSuggestedDay, daySyncInfo.matchedEvent!.id)}
+                      disabled={isRemovingThisDay || isSyncingThisDay}
+                      className="w-full py-2 px-3 rounded-xl text-[10px] font-semibold tracking-wide transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed bg-rose-500/[0.03] hover:bg-rose-500/10 text-rose-400/75 hover:text-rose-300 border border-rose-500/15 hover:border-rose-500/25"
+                    >
+                      {isRemovingThisDay ? (
+                        <>
+                          <Loader2 size={12} className="animate-spin shrink-0" />
+                          <span>Removing from Calendar...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 size={12} className="shrink-0" />
+                          <span>Remove from Intervals.icu</span>
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -4231,47 +4893,119 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {syncErrorWorkout && (
-              <div className="px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-300 font-medium text-center">
-                {syncErrorWorkout}
-              </div>
-            )}
-            <div className="flex items-center gap-2">
-              {currentWorkout && currentWorkout.intensity !== 'Rest' && (
-                <button
-                  onClick={handleSyncCurrentWorkoutToIntervals}
-                  disabled={syncingWorkout}
-                  className={`flex-1 py-2.5 px-3 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed ${
-                    syncSuccess
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                      : 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 hover:text-blue-200 border border-blue-500/30'
-                  }`}
-                >
-                  {syncingWorkout ? (
-                    <>
-                      <Loader2 size={12} className="animate-spin shrink-0" />
-                      <span>Pushing...</span>
-                    </>
-                  ) : syncSuccess ? (
-                    <>
-                      <Check size={12} className="shrink-0" />
-                      <span>Pushed to Calendar</span>
-                    </>
-                  ) : (
-                    <>
-                      <Calendar size={12} className="shrink-0" />
-                      <span>Push to Intervals.icu</span>
-                    </>
+            {(() => {
+              const fallbackTargetDate = new Date();
+              if (hasRideToday) fallbackTargetDate.setDate(fallbackTargetDate.getDate() + 1);
+              const workoutDateStr = suggestion?.date || toLocalDateStr(fallbackTargetDate);
+              const workoutSyncInfo = currentWorkout
+                ? getPlannedWorkoutSyncInfo({
+                    name: currentWorkout.title,
+                    durationMinutes: currentWorkout.duration_minutes,
+                    intensity: currentWorkout.intensity,
+                    workoutSteps: currentWorkout.workout_steps
+                  }, workoutDateStr)
+                : { status: null };
+              const isWorkoutOnCalendar = workoutSyncInfo.status === 'pushed';
+              const isWorkoutOutdated = workoutSyncInfo.status === 'outdated';
+
+              return (
+                <>
+                  {syncErrorWorkout && (
+                    <div className="px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-300 font-medium text-center">
+                      {syncErrorWorkout}
+                    </div>
                   )}
-                </button>
-              )}
-              <button 
-                onClick={() => { setShowSuggestionDetail(false); setSyncErrorWorkout(null); }}
-                className={`${currentWorkout && currentWorkout.intensity !== 'Rest' ? 'px-4' : 'w-full'} py-2.5 bg-white hover:bg-slate-200 text-slate-950 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer`}
-              >
-                Close
-              </button>
-            </div>
+                  {currentWorkout && currentWorkout.intensity !== 'Rest' && workoutSyncInfo.status && !syncSuccess && (
+                    <div className={`px-3 py-1.5 rounded-xl border text-[10.5px] font-medium flex items-center justify-center gap-1.5 ${
+                      isWorkoutOnCalendar
+                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                        : isWorkoutOutdated
+                          ? 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                          : 'bg-white/[0.02] border-white/[0.06] text-slate-400'
+                    }`}>
+                      {isWorkoutOnCalendar ? (
+                        <>
+                          <CheckCircle2 size={12} className="shrink-0 text-emerald-400" />
+                          <span>Synced on your Intervals.icu calendar</span>
+                        </>
+                      ) : isWorkoutOutdated ? (
+                        <>
+                          <RefreshCw size={12} className="shrink-0 text-amber-400" />
+                          <span className="truncate">Intervals.icu has "{workoutSyncInfo.matchedEvent?.name}"</span>
+                        </>
+                      ) : (
+                        <>
+                          <CalendarPlus size={12} className="shrink-0 text-blue-400" />
+                          <span>Not pushed to Intervals.icu yet</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    {currentWorkout && currentWorkout.intensity !== 'Rest' && (
+                      <button
+                        onClick={handleSyncCurrentWorkoutToIntervals}
+                        disabled={syncingWorkout || removingWorkout}
+                        className={`flex-1 py-2.5 px-3 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed ${
+                          syncSuccess || isWorkoutOnCalendar
+                            ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/25'
+                            : isWorkoutOutdated
+                              ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/25'
+                              : 'bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 hover:text-blue-200 border border-blue-500/30'
+                        }`}
+                      >
+                        {syncingWorkout ? (
+                          <>
+                            <Loader2 size={12} className="animate-spin shrink-0" />
+                            <span>Pushing...</span>
+                          </>
+                        ) : syncSuccess ? (
+                          <>
+                            <Check size={12} className="shrink-0" />
+                            <span>Pushed to Calendar</span>
+                          </>
+                        ) : isWorkoutOnCalendar || isWorkoutOutdated ? (
+                          <>
+                            <RefreshCw size={12} className="shrink-0" />
+                            <span>Update on Intervals.icu</span>
+                          </>
+                        ) : (
+                          <>
+                            <Calendar size={12} className="shrink-0" />
+                            <span>Push to Intervals.icu</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => { setShowSuggestionDetail(false); setSyncErrorWorkout(null); }}
+                      className={`${currentWorkout && currentWorkout.intensity !== 'Rest' ? 'px-4' : 'w-full'} py-2.5 bg-white hover:bg-slate-200 text-slate-950 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer`}
+                    >
+                      Close
+                    </button>
+                  </div>
+                  {currentWorkout && currentWorkout.intensity !== 'Rest' && (isWorkoutOnCalendar || isWorkoutOutdated) && workoutSyncInfo.matchedEvent?.id != null && (
+                    <button
+                      onClick={() => handleRemoveCurrentWorkoutFromIntervals(workoutSyncInfo.matchedEvent!.id)}
+                      disabled={removingWorkout || syncingWorkout}
+                      className="w-full py-2 px-3 rounded-xl text-[10px] font-semibold tracking-wide transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed bg-rose-500/[0.03] hover:bg-rose-500/10 text-rose-400/75 hover:text-rose-300 border border-rose-500/15 hover:border-rose-500/25"
+                    >
+                      {removingWorkout ? (
+                        <>
+                          <Loader2 size={12} className="animate-spin shrink-0" />
+                          <span>Removing from Calendar...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 size={12} className="shrink-0" />
+                          <span>Remove from Intervals.icu</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
       )}

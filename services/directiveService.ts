@@ -146,152 +146,307 @@ export function parseBriefingDayDate(dayStr: string | null | undefined, referenc
   return bestCandidate;
 }
 
+export interface ScheduleRule {
+  durationMins: number;
+  isRest: boolean;
+  targetDateStr?: string;
+}
+
+export interface DetailedScheduleMap {
+  byWeekday: Record<string, ScheduleRule>;
+  byDate: Record<string, ScheduleRule>;
+}
+
+function toIsoDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function addDaysToIso(isoStr: string, offsetDays: number): string {
+  const [y, m, d] = isoStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + offsetDays);
+  return toIsoDateStr(dt);
+}
+
+function weekdayTokenFromIso(isoStr: string): string {
+  const [y, m, d] = isoStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return WEEKDAYS_SHORT[dt.getDay()];
+}
+
+function parseDurationValueToMins(rawVal: string): { durationMins: number; isRest: boolean } | null {
+  const val = rawVal.trim().toLowerCase();
+  if (!val) return null;
+
+  if (/^(rest|rest\s*day|rust|rust\s*dag|off|day\s*off|0|0h|0u|0m|0\s*hours?|0\s*mins?)$/.test(val)) {
+    return { durationMins: 0, isRest: true };
+  }
+
+  const hmMatch = val.match(/^(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?|u|uur)\s*(\d+)\s*(?:m|mins?|minutes?|min)?$/i);
+  if (hmMatch) {
+    const mins = Math.round(parseFloat(hmMatch[1]) * 60) + parseInt(hmMatch[2], 10);
+    return { durationMins: mins, isRest: mins <= 0 };
+  }
+
+  const hMatch = val.match(/^(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?|u|uur)$/i);
+  if (hMatch) {
+    const mins = Math.round(parseFloat(hMatch[1]) * 60);
+    return { durationMins: mins, isRest: mins <= 0 };
+  }
+
+  const mMatch = val.match(/^(\d+)\s*(?:m|mins?|minutes?|min)$/i);
+  if (mMatch) {
+    const mins = parseInt(mMatch[1], 10);
+    return { durationMins: mins, isRest: mins <= 0 };
+  }
+
+  const num = parseFloat(val);
+  if (!isNaN(num)) {
+    const mins = num <= 6 ? Math.round(num * 60) : Math.round(num);
+    return { durationMins: mins, isRest: mins <= 0 };
+  }
+
+  return null;
+}
+
+function parseSingleTextIntoScheduleMap(
+  text: string,
+  refDateStr: string,
+  target: DetailedScheduleMap
+): boolean {
+  if (!text || !text.trim()) return false;
+  let matchedAny = false;
+  const trimmed = text.trim();
+
+  const dayAliases: Record<string, string[]> = {
+    mon: ['mon', 'monday', 'ma', 'maandag'],
+    tue: ['tue', 'tues', 'tuesday', 'di', 'dinsdag'],
+    wed: ['wed', 'wednesday', 'wo', 'woensdag'],
+    thu: ['thu', 'thur', 'thurs', 'thursday', 'do', 'donderdag'],
+    fri: ['fri', 'friday', 'vr', 'vrijdag'],
+    sat: ['sat', 'saturday', 'za', 'zaterdag'],
+    sun: ['sun', 'sunday', 'zo', 'zondag']
+  };
+
+  const dayTokens = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+  const durationAtom = `(?:\\d+(?:\\.\\d+)?\\s*(?:h|hrs?|hours?|u|uur)\\s*(?:\\d+\\s*(?:m|mins?|minutes?|min))?|\\d+\\s*(?:m|mins?|minutes?|min)|rest\\s*day|rust\\s*dag|day\\s*off|rest|rust|off)`;
+
+  // 1. Parse relative "today" / "tomorrow" / "vandaag" / "morgen"
+  const relativeSpecs: { pattern: string; offset: number }[] = [
+    { pattern: 'today|vandaag|tonight|this afternoon|this evening', offset: 0 },
+    { pattern: 'tomorrow|morgen', offset: 1 }
+  ];
+
+  for (const rel of relativeSpecs) {
+    const relDateStr = addDaysToIso(refDateStr, rel.offset);
+    const relToken = weekdayTokenFromIso(relDateStr);
+
+    // Format A: "Today: Rest", "Today (Mon): 1h", "Today (Monday, Nov 23): Rest"
+    const colonRegex = new RegExp(`(?:^|[\\s,;])(?:${rel.pattern})(?:\\s*\\([^)]*\\))?\\s*[:=\\-]\\s*(${durationAtom})\\b`, 'i');
+    // Format B: "Make/set/schedule/keep today (Monday) (as/to/for) (a) Rest day / 1h / 45 min"
+    const verbRegex = new RegExp(`\\b(?:make|set|schedule|keep|change|adapt|update|turn|plan|zet|maak|plan)\\s+(?:my\\s+|the\\s+)?(?:workout\\s+(?:for|on)\\s+)?(?:${rel.pattern})(?:\\s*\\([^)]*\\))?(?:\\s+(?:as|to|into|for|op|als))?(?:\\s+(?:a|an|een))?\\s+(${durationAtom})\\b`, 'i');
+    // Format C: "Schedule a 45m active recovery ride for today" / "Rest day for today"
+    const reverseRegex = new RegExp(`\\b(${durationAtom})(?:\\s+(?:zone\\s*\\d+\\s+)?(?:active\\s+recovery|recovery|endurance|tempo|threshold|sweet\\s*spot|interval|easy|ride|spin|workout|session))?\\s+(?:for|on|voor|op)\\s+(?:${rel.pattern})\\b`, 'i');
+    // Format D: "<rel> as/is/will be (a) rest day"
+    const isRestRegex = new RegExp(`\\b(?:${rel.pattern})(?:\\s*\\([^)]*\\))?\\s+(?:is|as|will\\s+be|wordt|als)\\s+(?:a\\s+|an\\s+|een\\s+)?(rest\\s*day|rust\\s*dag|day\\s*off|rest|rust|off)\\b`, 'i');
+
+    const match =
+      trimmed.match(colonRegex) ||
+      trimmed.match(verbRegex) ||
+      trimmed.match(reverseRegex) ||
+      trimmed.match(isRestRegex);
+
+    if (match && match[1]) {
+      const parsed = parseDurationValueToMins(match[1]);
+      if (parsed) {
+        const rule: ScheduleRule = { ...parsed, targetDateStr: relDateStr };
+        target.byDate[relDateStr] = rule;
+        target.byWeekday[relToken] = rule;
+        matchedAny = true;
+      }
+    }
+  }
+
+  // 2. Parse explicit weekday rules (e.g., "MON: Rest", "Monday (Nov 23): 1h", "Tuesday 1h30m", "make Monday rest")
+  dayTokens.forEach(day => {
+    const aliasPattern = dayAliases[day].join('|');
+
+    // Colon/equals or direct follow: "MON: 1h", "Monday (Nov 23): Rest", "Tue 90m" (note optional parenthetical date)
+    const directRegex = new RegExp(`(?:^|[\\s,;])(${aliasPattern})(?:\\s*\\([^)]*\\))?\\s*(?::|=|\\s)\\s*(${durationAtom})\\b`, 'i');
+    // Verb phrasing: "make/set/schedule/change Monday (as/to/for) (a) Rest day / 1h"
+    const verbRegex = new RegExp(`\\b(?:make|set|schedule|keep|change|adapt|update|turn|plan|zet|maak)\\s+(?:my\\s+|the\\s+)?(?:${aliasPattern})(?:\\s*\\([^)]*\\))?(?:\\s+(?:as|to|into|for|op|als))?(?:\\s+(?:a|an|een))?\\s+(${durationAtom})\\b`, 'i');
+    // Reverse phrasing: "1h ride on Tuesday" / "Rest day on Monday"
+    const reverseRegex = new RegExp(`\\b(${durationAtom})(?:\\s+(?:zone\\s*\\d+\\s+)?(?:active\\s+recovery|recovery|endurance|tempo|threshold|sweet\\s*spot|interval|easy|ride|spin|workout|session))?\\s+(?:for|on|voor|op)\\s+(?:${aliasPattern})\\b`, 'i');
+
+    const match =
+      trimmed.match(directRegex) ||
+      trimmed.match(verbRegex) ||
+      trimmed.match(reverseRegex);
+
+    if (match) {
+      const durStr = match[2] ?? match[1];
+      const parsed = parseDurationValueToMins(durStr);
+      if (parsed) {
+        target.byWeekday[day] = { ...parsed };
+        matchedAny = true;
+      }
+    }
+  });
+
+  return matchedAny;
+}
+
 /**
  * Parses daily duration and rest constraints from a weekly schedule directive string,
- * e.g. "Adjusted weekly schedule: MON: 1h, TUE: 1h, WED: 2h, THU: Rest, FRI: 1h, SAT: Rest, SUN: 1h (Total: 5h)"
+ * PlanDirective[] JSON, or SavedAvailabilityRecord JSON, preserving both weekday rules
+ * and exact calendar date rules (including "today"/"tomorrow" resolved from requestedAt).
  */
-/**
- * Parses daily duration and rest constraints from a weekly schedule directive string or availability record.
- * Handles:
- * - Directives like "Adjusted weekly schedule: WED: 3h, THU: Rest, FRI: 1h, SAT: 3h, SUN: 2h, MON: 1h, TUE: Rest (Total: 10h)"
- * - JSON serialized PlanDirective[] arrays
- * - JSON SavedAvailabilityRecord objects
- * - Multilingual weekday names (English and Dutch, short and full)
- */
-export function parseScheduleDurationsFromDirective(directiveText: string | null | undefined): Record<string, { durationMins: number; isRest: boolean }> | null {
-  const daysMap: Record<string, { durationMins: number; isRest: boolean }> = {};
+export function parseDetailedScheduleFromDirective(
+  directiveText: string | null | undefined
+): DetailedScheduleMap | null {
+  const result: DetailedScheduleMap = {
+    byWeekday: {},
+    byDate: {}
+  };
 
-  // 1. Try parsing direct JSON (either SavedAvailabilityRecord or PlanDirective[])
+  const loadFromLocalStorage = (): DetailedScheduleMap | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const stored = localStorage.getItem('wattson_last_saved_availability');
+      if (!stored) return null;
+      const parsedStored = JSON.parse(stored);
+      const localMap: DetailedScheduleMap = { byWeekday: {}, byDate: {} };
+      if (parsedStored && Array.isArray(parsedStored.days) && parsedStored.days.length > 0) {
+        parsedStored.days.forEach((d: any) => {
+          const short = (d.dayShort || '').toLowerCase().substring(0, 3);
+          const token = normalizeWeekdayToken(short || d.dayName);
+          const mins = typeof d.durationMins === 'number' ? d.durationMins : 0;
+          const rule: ScheduleRule = {
+            durationMins: mins,
+            isRest: mins <= 0,
+            targetDateStr: typeof d.dateStr === 'string' && d.dateStr ? d.dateStr : undefined
+          };
+          if (token) {
+            localMap.byWeekday[token] = rule;
+          }
+          if (rule.targetDateStr) {
+            localMap.byDate[rule.targetDateStr] = rule;
+          }
+        });
+        if (Object.keys(localMap.byWeekday).length > 0 || Object.keys(localMap.byDate).length > 0) {
+          return localMap;
+        }
+      }
+      if (parsedStored && parsedStored.directiveText) {
+        parseSingleTextIntoScheduleMap(parsedStored.directiveText, getTodayDateString(), localMap);
+        if (Object.keys(localMap.byWeekday).length > 0 || Object.keys(localMap.byDate).length > 0) {
+          return localMap;
+        }
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return null;
+  };
+
   if (directiveText && typeof directiveText === 'string') {
     const trimmed = directiveText.trim();
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       try {
         const parsed = JSON.parse(trimmed);
-        
+
         // Format A: SavedAvailabilityRecord with days array
         if (parsed && Array.isArray(parsed.days) && parsed.days.length > 0) {
           parsed.days.forEach((d: any) => {
             const short = (d.dayShort || '').toLowerCase().substring(0, 3);
             const token = normalizeWeekdayToken(short || d.dayName);
-            if (token) {
-              const mins = typeof d.durationMins === 'number' ? d.durationMins : 0;
-              daysMap[token] = {
-                durationMins: mins,
-                isRest: mins <= 0
-              };
-            }
+            const mins = typeof d.durationMins === 'number' ? d.durationMins : 0;
+            const rule: ScheduleRule = {
+              durationMins: mins,
+              isRest: mins <= 0,
+              targetDateStr: typeof d.dateStr === 'string' && d.dateStr ? d.dateStr : undefined
+            };
+            if (token) result.byWeekday[token] = rule;
+            if (rule.targetDateStr) result.byDate[rule.targetDateStr] = rule;
           });
-          if (Object.keys(daysMap).length > 0) return daysMap;
-        }
-
-        // Format B: Array of PlanDirectives
-        if (Array.isArray(parsed)) {
-          const schedDir = [...parsed].reverse().find(d => 
-            d && typeof d.text === 'string' && d.text.toLowerCase().includes('weekly schedule')
-          );
-          if (schedDir) {
-            return parseScheduleDurationsFromDirective(schedDir.text);
+          if (Object.keys(result.byWeekday).length > 0 || Object.keys(result.byDate).length > 0) {
+            return result;
           }
         }
-      } catch {
-        // Fall through to regex parsing
-      }
-    }
-  }
 
-  // 2. If no valid directiveText provided, try loading from localStorage in browser environment
-  let textToParse = (directiveText || '').trim();
-  if (!textToParse || !textToParse.toLowerCase().includes('weekly schedule')) {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('wattson_last_saved_availability');
-        if (stored) {
-          const parsedStored = JSON.parse(stored);
-          if (parsedStored && Array.isArray(parsedStored.days) && parsedStored.days.length > 0) {
-            parsedStored.days.forEach((d: any) => {
-              const short = (d.dayShort || '').toLowerCase().substring(0, 3);
-              const token = normalizeWeekdayToken(short || d.dayName);
-              if (token) {
-                const mins = typeof d.durationMins === 'number' ? d.durationMins : 0;
-                daysMap[token] = {
-                  durationMins: mins,
-                  isRest: mins <= 0
+        // Format B: Array of PlanDirectives (apply oldest -> newest so newer directives override older ones)
+        if (Array.isArray(parsed)) {
+          const today = getTodayDateString();
+          const { active } = pruneExpiredDirectives(
+            parsed.filter((d: any) => d && typeof d.text === 'string' && d.text.trim().length > 0),
+            today
+          );
+
+          let hasWeeklyScheduleInDirectives = false;
+          for (const dir of active) {
+            const refDate = dir.requestedAt || today;
+            const isWeeklySched = dir.text.toLowerCase().includes('weekly schedule');
+            if (isWeeklySched) {
+              // New weekly schedule resets earlier weekday rules before layering subsequent tweaks
+              result.byWeekday = {};
+              result.byDate = {};
+              hasWeeklyScheduleInDirectives = true;
+            }
+            parseSingleTextIntoScheduleMap(dir.text, refDate, result);
+          }
+
+          if (Object.keys(result.byWeekday).length > 0 || Object.keys(result.byDate).length > 0) {
+            // If no weekly schedule directive existed in planContext, seed missing days from localStorage availability ONLY for days not overridden
+            if (!hasWeeklyScheduleInDirectives) {
+              const fallback = loadFromLocalStorage();
+              if (fallback) {
+                return {
+                  byWeekday: { ...fallback.byWeekday, ...result.byWeekday },
+                  byDate: { ...fallback.byDate, ...result.byDate }
                 };
               }
-            });
-            if (Object.keys(daysMap).length > 0) return daysMap;
+            }
+            return result;
           }
-          if (parsedStored && parsedStored.directiveText) {
-            textToParse = parsedStored.directiveText;
-          }
+
+          return loadFromLocalStorage();
         }
       } catch {
-        // Fall through
+        // Fall through to plain-text parsing
+      }
+    }
+
+    // Plain-text directive
+    if (trimmed) {
+      const matched = parseSingleTextIntoScheduleMap(trimmed, getTodayDateString(), result);
+      if (matched) {
+        return result;
       }
     }
   }
 
-  if (!textToParse) return null;
+  return loadFromLocalStorage();
+}
 
-  const dayTokens = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-
-  dayTokens.forEach(day => {
-    // English abbreviations & full names
-    const engNames: Record<string, string[]> = {
-      mon: ['mon', 'monday'],
-      tue: ['tue', 'tues', 'tuesday'],
-      wed: ['wed', 'wednesday'],
-      thu: ['thu', 'thur', 'thurs', 'thursday'],
-      fri: ['fri', 'friday'],
-      sat: ['sat', 'saturday'],
-      sun: ['sun', 'sunday']
-    };
-
-    // Dutch abbreviations & full names
-    const dutchNames: Record<string, string[]> = {
-      mon: ['ma', 'maandag'],
-      tue: ['di', 'dinsdag'],
-      wed: ['wo', 'woensdag'],
-      thu: ['do', 'donderdag'],
-      fri: ['vr', 'vrijdag'],
-      sat: ['za', 'zaterdag'],
-      sun: ['zo', 'zondag']
-    };
-
-    const allAliases = [...(engNames[day] || [day]), ...(dutchNames[day] || [])];
-    const aliasPattern = allAliases.join('|');
-
-    const regex = new RegExp(`(?:\\b|\\s)(${aliasPattern}):?\\s*([0-9.]+\\s*(?:h|m|hours|mins|u|uur|min)?(?:[0-9.]+\\s*(?:m|min))?|rest|rust)\\b`, 'i');
-
-    const match = textToParse.match(regex);
-    if (match) {
-      const val = match[2].trim().toLowerCase();
-      if (val === 'rest' || val === 'rust' || val === '0' || val === '0h' || val === '0u' || val === '0m') {
-        daysMap[day] = { durationMins: 0, isRest: true };
-      } else if (val.includes('h') && val.includes('m')) {
-        // e.g. 1h30m or 1h30
-        const hmMatch = val.match(/^(\d+)h\s*(\d+)m?$/);
-        if (hmMatch) {
-          const mins = parseInt(hmMatch[1], 10) * 60 + parseInt(hmMatch[2], 10);
-          daysMap[day] = { durationMins: mins, isRest: false };
-        }
-      } else if (val.endsWith('h') || val.endsWith('hours') || val.endsWith('u') || val.endsWith('uur')) {
-        const num = parseFloat(val);
-        daysMap[day] = { durationMins: Math.round(num * 60), isRest: false };
-      } else if (val.endsWith('m') || val.endsWith('mins') || val.endsWith('min')) {
-        const num = parseFloat(val);
-        daysMap[day] = { durationMins: Math.round(num), isRest: false };
-      } else {
-        const num = parseFloat(val);
-        if (!isNaN(num)) {
-          const mins = num <= 6 ? Math.round(num * 60) : Math.round(num);
-          daysMap[day] = { durationMins: mins, isRest: mins === 0 };
-        }
-      }
+/**
+ * Parses daily duration and rest constraints from a weekly schedule directive string or availability record.
+ * Handles:
+ * - Directives like "Adjusted weekly schedule: WED: 3h, THU: Rest, FRI: 1h, SAT: 3h, SUN: 2h, MON: 1h, TUE: Rest (Total: 10h)"
+ * - JSON serialized PlanDirective[] arrays (including "today" / "tomorrow" / per-day overrides)
+ * - JSON SavedAvailabilityRecord objects
+ * - Multilingual weekday names (English and Dutch, short and full)
+ */
+export function parseScheduleDurationsFromDirective(directiveText: string | null | undefined): Record<string, { durationMins: number; isRest: boolean }> | null {
+  const detailed = parseDetailedScheduleFromDirective(directiveText);
+  if (!detailed) return null;
+  if (Object.keys(detailed.byWeekday).length > 0) {
+    const out: Record<string, { durationMins: number; isRest: boolean }> = {};
+    for (const [k, v] of Object.entries(detailed.byWeekday)) {
+      out[k] = { durationMins: v.durationMins, isRest: v.isRest };
     }
-  });
-
-  return Object.keys(daysMap).length > 0 ? daysMap : null;
+    return out;
+  }
+  return null;
 }
 
 /**
@@ -346,13 +501,14 @@ export function harmonizeBriefingWithAvailability(
   planContext?: string | null,
   userFtp: number = 250
 ): WeeklyBriefing {
-  let scheduleMap = planContext ? parseScheduleDurationsFromDirective(planContext) : null;
-  if (!scheduleMap && typeof window !== 'undefined') {
-    scheduleMap = parseScheduleDurationsFromDirective('');
+  let detailed = planContext ? parseDetailedScheduleFromDirective(planContext) : null;
+  if (!detailed && typeof window !== 'undefined') {
+    detailed = parseDetailedScheduleFromDirective('');
   }
 
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const week2Start = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7);
 
   const base: WeeklyBriefing = briefing ? { ...briefing } : {
     phase: 'Build / Aerobic Base',
@@ -364,23 +520,22 @@ export function harmonizeBriefingWithAvailability(
 
   const existingDays = base.days || [];
 
-  // If no custom schedule is set anywhere, ensure existing days at least have consistent dates from today
-  if (!scheduleMap || Object.keys(scheduleMap).length === 0) {
-    if (existingDays.length === 0) {
-      return base;
-    }
+  // If no custom schedule is set anywhere, return base unchanged
+  if (!detailed || (Object.keys(detailed.byWeekday).length === 0 && Object.keys(detailed.byDate).length === 0)) {
     return base;
   }
 
+  const anyExistingHasDate = existingDays.some(d => parseBriefingDayDate(d.day, today) !== null);
   const harmonizedWeek1Days: WeeklyBriefing['days'] = [];
 
   for (let i = 0; i < 7; i++) {
     const targetDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+    const targetIso = toIsoDateStr(targetDate);
     const weekdayShort = targetDate.toLocaleDateString('en-US', { weekday: 'short' });
     const monthDay = targetDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     const dayName = `${weekdayShort} (${monthDay})`;
     const token = normalizeWeekdayToken(weekdayShort);
-    const rule = token && scheduleMap ? scheduleMap[token] : null;
+    const rule = detailed.byDate[targetIso] || (token ? detailed.byWeekday[token] : null) || null;
 
     const existingDayByExactDate = existingDays.find(d => {
       const parsed = parseBriefingDayDate(d.day, today);
@@ -389,9 +544,17 @@ export function harmonizeBriefingWithAvailability(
         parsed.getMonth() === targetDate.getMonth() &&
         parsed.getDate() === targetDate.getDate();
     });
-    const anyExistingHasDate = existingDays.some(d => parseBriefingDayDate(d.day, today) !== null);
+    const existingDayTodayLabel = i === 0
+      ? existingDays.find(d => /\btoday\b/i.test(d.day || ''))
+      : undefined;
+    const existingDayByWeekdayInWeek1 = existingDays.find(d => {
+      if (normalizeWeekdayToken(d.day) !== token) return false;
+      const parsed = parseBriefingDayDate(d.day, today);
+      return !parsed || (parsed >= today && parsed < week2Start);
+    });
     const existingDay = existingDayByExactDate ||
-      existingDays.find(d => normalizeWeekdayToken(d.day) === token) ||
+      existingDayTodayLabel ||
+      existingDayByWeekdayInWeek1 ||
       (!anyExistingHasDate ? existingDays[i] : undefined);
 
     if (rule) {
@@ -466,7 +629,7 @@ export function harmonizeBriefingWithAvailability(
           if (sumStepDur !== requestedMins && scaledSteps.length > 0) {
             const lastFillerIdx = [...scaledSteps].reverse().findIndex(s => !isWorkStep(s));
             const idx = lastFillerIdx !== -1 ? scaledSteps.length - 1 - lastFillerIdx : scaledSteps.length - 1;
-            scaledSteps[idx].duration += (requestedMins - sumStepDur);
+            scaledSteps[idx].duration = Math.max(1, scaledSteps[idx].duration + (requestedMins - sumStepDur));
             scaledSteps[idx].label = scaledSteps[idx].label.replace(/^\d+m/, `${scaledSteps[idx].duration}m`);
           }
 
@@ -481,14 +644,13 @@ export function harmonizeBriefingWithAvailability(
         } else {
           // New structured Endurance / Aerobic Ride
           const defaultIntensity: 'Medium' | 'Easy' = requestedMins >= 75 ? 'Medium' : 'Easy';
-          const defaultFocus = requestedMins >= 180 ? `Endurance Ride (${formatDuration(requestedMins)})` :
-                               requestedMins >= 120 ? `Endurance Ride (${formatDuration(requestedMins)})` :
-                               requestedMins >= 60 ? `Endurance Ride (${formatDuration(requestedMins)})` :
-                               `Recovery Spin (${formatDuration(requestedMins)})`;
+          const defaultFocus = requestedMins >= 60
+            ? `Endurance Ride (${formatDuration(requestedMins)})`
+            : `Recovery Spin (${formatDuration(requestedMins)})`;
 
           const warmMins = Math.max(5, Math.round(requestedMins * 0.15));
           const coolMins = Math.max(5, Math.round(requestedMins * 0.12));
-          const mainMins = requestedMins - warmMins - coolMins;
+          const mainMins = Math.max(1, requestedMins - warmMins - coolMins);
 
           const steps = [
             { duration: warmMins, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${warmMins}m Warm-up (55% FTP)` },
@@ -529,8 +691,13 @@ export function harmonizeBriefingWithAvailability(
     }
   }
 
-  // Preserve any days from weeks 2, 3, 4 if they exist
-  const remainingDays = existingDays.slice(7);
+  // Preserve any days from weeks 2, 3, 4 without leaking stale Week 1 days by calendar date
+  const remainingDays = anyExistingHasDate
+    ? existingDays.filter(d => {
+        const parsed = parseBriefingDayDate(d.day, today);
+        return parsed ? parsed >= week2Start : false;
+      })
+    : existingDays.slice(7);
 
   return {
     ...base,
@@ -638,8 +805,11 @@ export function isDirectiveExpired(directive: PlanDirective, todayDateStr: strin
 
   const deltaDays = diffInCalendarDays(directive.requestedAt, todayDateStr);
 
-  // 0b. Weekly schedule directives (e.g. "Adjusted weekly schedule: MON: 1h...") apply for the entire 7-day week
-  if (textLower.includes('weekly schedule') || textLower.includes('adjusted weekly schedule')) {
+  // 0b. Weekly / multi-day schedule directives apply for the entire 7-day week
+  const distinctWeekdaysCount = WEEKDAYS_SHORT.filter((short, idx) =>
+    new RegExp(`\\b(${short}|${WEEKDAYS[idx]})\\b`, 'i').test(textLower)
+  ).length;
+  if (textLower.includes('weekly schedule') || textLower.includes('adjusted weekly schedule') || distinctWeekdaysCount >= 2) {
     return deltaDays > 7;
   }
 
@@ -749,9 +919,13 @@ export function formatDirectivesForPrompt(
     const deltaDays = diffInCalendarDays(dir.requestedAt, todayDateStr);
     const textLower = dir.text.toLowerCase();
 
+    const distinctWeekdaysCount = WEEKDAYS_SHORT.filter((short, idx) =>
+      new RegExp(`\\b(${short}|${WEEKDAYS[idx]})\\b`, 'i').test(textLower)
+    ).length;
+
     let note = '';
-    if (textLower.includes('adjusted weekly schedule') || textLower.includes('weekly schedule')) {
-      note = ` [MANDATORY WEEKLY AVAILABILITY CONSTRAINTS: You MUST strictly set every single day to the exact duration and Rest status requested!]`;
+    if (textLower.includes('adjusted weekly schedule') || textLower.includes('weekly schedule') || distinctWeekdaysCount >= 2) {
+      note = ` [MANDATORY WEEKLY AVAILABILITY CONSTRAINTS: You MUST strictly set every single specified day — INCLUDING TODAY (Day 1) — to the exact duration and Rest status requested!]`;
     } else if (/\b(every|always|each|weekly|recurring)\b/i.test(textLower)) {
       note = ` [Recurring rule -> applies consistently across all relevant days]`;
     } else if (/\b(tomorrow|tomorrow's|tomorrows|next day)\b/.test(textLower)) {

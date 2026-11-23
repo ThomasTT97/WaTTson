@@ -1,6 +1,8 @@
 import React, { memo } from 'react';
-import { Clock, Zap, Activity, Bike, ShieldAlert, Coffee } from 'lucide-react';
+import { Clock, Zap, Activity, Bike, ShieldAlert, Coffee, CheckCircle2, RefreshCw, CalendarPlus } from 'lucide-react';
 import { WeeklyBriefing, formatDuration } from '../types';
+
+export type PlannedWorkoutSyncStatus = 'pushed' | 'outdated' | 'not_pushed';
 
 interface SuggestedWorkoutCardProps {
   day: WeeklyBriefing['days'][0];
@@ -8,6 +10,7 @@ interface SuggestedWorkoutCardProps {
   onClick: (day: WeeklyBriefing['days'][0]) => void;
   isToday?: boolean;
   date?: Date;
+  intervalsSyncStatus?: PlannedWorkoutSyncStatus | null;
 }
 
 export const formatPlannedRideTitle = (focusStr?: string): string => {
@@ -42,7 +45,8 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
   absoluteIndex, 
   onClick,
   isToday = false,
-  date
+  date,
+  intervalsSyncStatus = null
 }) => {
   if (!day) return null;
   const getDayAbbr = (dayStr: string) => {
@@ -151,39 +155,71 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
     'Rest': 'text-slate-400 bg-slate-500/10 border-slate-500/20'
   };
 
+  const isPushed = intervalsSyncStatus === 'pushed';
+  const isOutdated = intervalsSyncStatus === 'outdated';
+  const isNotPushed = intervalsSyncStatus === 'not_pushed';
+
+  const cardSurfaceClasses = isOutdated
+    ? (isToday
+        ? 'border-amber-400/50 bg-amber-500/[0.03] hover:border-amber-400/70 shadow-[0_0_12px_rgba(245,158,11,0.05)]'
+        : 'border-amber-400/35 bg-amber-500/[0.02] hover:border-amber-400/55 hover:bg-amber-500/[0.04] shadow-[0_0_10px_rgba(245,158,11,0.04)]')
+    : isNotPushed
+    ? (isToday
+        ? 'border-blue-400/45 bg-blue-500/[0.03] hover:border-blue-400/70 shadow-[0_0_10px_rgba(59,130,246,0.04)]'
+        : 'border-blue-500/22 bg-white/[0.01] hover:border-blue-400/45 hover:bg-blue-500/[0.03] shadow-[0_0_10px_rgba(59,130,246,0.03)]')
+    : (isToday
+        ? 'border-blue-400/60 bg-blue-500/[0.05] hover:border-blue-400/80 shadow-[0_0_12px_rgba(59,130,246,0.06)]'
+        : 'border-blue-500/40 bg-blue-500/[0.02] hover:border-blue-400/60 hover:bg-blue-500/[0.05] shadow-[0_0_12px_rgba(59,130,246,0.06)]');
+
+  const dateTileClasses = isOutdated
+    ? 'bg-amber-500/12 border-amber-500/30 text-amber-300 group-hover:border-amber-400/45'
+    : (isToday
+        ? 'bg-blue-500/15 border-blue-500/35 text-blue-400'
+        : isNotPushed
+          ? 'bg-blue-500/[0.06] border-blue-500/20 text-blue-300/80 group-hover:border-blue-500/35'
+          : 'bg-blue-500/10 border-blue-500/25 text-blue-300 group-hover:border-blue-500/40');
+
+  const dateWeekdayColor = isOutdated
+    ? 'text-amber-400/90'
+    : (isToday ? 'text-blue-400' : isNotPushed ? 'text-blue-400/70' : 'text-blue-400/90');
+
+  const dateNumberColor = isOutdated
+    ? 'text-amber-100'
+    : (isToday ? 'text-blue-200' : isNotPushed ? 'text-slate-200' : 'text-slate-100');
+
+  const titleClasses = isOutdated
+    ? (isToday ? 'text-amber-200' : 'text-slate-200 group-hover:text-amber-300')
+    : (isToday ? 'text-blue-300' : 'text-slate-200 group-hover:text-blue-400');
+
+  const tssColor = isOutdated
+    ? 'text-amber-400/90'
+    : isNotPushed
+      ? 'text-blue-400/75'
+      : 'text-blue-400';
+
   return (
     <div 
       onClick={() => onClick(day)}
-      className={`p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border shadow-[0_0_12px_rgba(59,130,246,0.06)] ${
-        isToday 
-          ? 'border-blue-400/60 bg-blue-500/[0.05] hover:border-blue-400/80' 
-          : 'border-blue-500/40 bg-blue-500/[0.02] hover:border-blue-400/60 hover:bg-blue-500/[0.05]'
-      }`}
+      className={`p-3 rounded-2xl cursor-pointer active:scale-[0.99] transition-all duration-200 group flex items-center gap-3 border ${cardSurfaceClasses}`}
     >
-      <div className={`w-9 h-9 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-colors ${
-        isToday
-          ? 'bg-blue-500/15 border-blue-500/35 text-blue-400'
-          : 'bg-blue-500/10 border-blue-500/25 text-blue-300 group-hover:border-blue-500/40'
-      }`}>
-        <span className={`text-[7.5px] font-bold uppercase leading-none mb-0.5 tracking-wider ${isToday ? 'text-blue-400' : 'text-blue-400/90'}`}>{weekday}</span>
-        <span className={`text-xs font-bold font-mono leading-none ${isToday ? 'text-blue-200' : 'text-slate-100'}`}>{dayNum || '–'}</span>
+      <div className={`w-9 h-9 rounded-xl flex flex-col items-center justify-center shrink-0 border transition-colors ${dateTileClasses}`}>
+        <span className={`text-[7.5px] font-bold uppercase leading-none mb-0.5 tracking-wider ${dateWeekdayColor}`}>{weekday}</span>
+        <span className={`text-xs font-bold font-mono leading-none ${dateNumberColor}`}>{dayNum || '–'}</span>
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col justify-center">
         <div className="flex items-center gap-2 mb-0.5">
-          <h3 className={`font-semibold text-xs truncate leading-tight tracking-tight transition-colors ${
-            isToday ? 'text-blue-300' : 'text-slate-200 group-hover:text-blue-400'
-          }`}>
+          <h3 className={`font-semibold text-xs truncate leading-tight tracking-tight transition-colors ${titleClasses}`}>
             {formatPlannedRideTitle(day.focus)}
           </h3>
-          <span className={`text-[7.5px] font-semibold px-1.5 py-0.5 rounded-md uppercase tracking-wider border ${
+          <span className={`text-[7.5px] font-semibold px-1.5 py-0.5 rounded-md uppercase tracking-wider border shrink-0 ${
             intensityColors[day.intensity] || intensityColors['Medium']
           }`}>
             {day.intensity}
           </span>
         </div>
         
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
           <div className="flex items-center gap-1 text-[10.5px] font-medium text-slate-400">
             <Clock size={10} className="text-slate-500" />
             <span>{formatWorkoutDuration(day.duration_target)}</span>
@@ -201,13 +237,34 @@ export const SuggestedWorkoutCard: React.FC<SuggestedWorkoutCardProps> = memo(({
             )}
             <span>{sport.name} Session</span>
           </div>
+
+          {isPushed && (
+            <div className="flex items-center gap-1 text-[10px] font-medium text-slate-400/90">
+              <CheckCircle2 size={9.5} className="text-emerald-400/75 shrink-0" />
+              <span>On Intervals</span>
+            </div>
+          )}
+
+          {isOutdated && (
+            <div className="flex items-center gap-1 text-[10px] font-medium text-amber-300/85">
+              <RefreshCw size={9.5} className="text-amber-400/80 shrink-0" />
+              <span>Update needed</span>
+            </div>
+          )}
+
+          {isNotPushed && (
+            <div className="flex items-center gap-1 text-[10px] font-medium text-slate-500 group-hover:text-slate-300 transition-colors">
+              <CalendarPlus size={9.5} className="text-slate-500 shrink-0" />
+              <span>Not pushed</span>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="flex flex-col items-end justify-center shrink-0">
         {day.load_target > 0 ? (
           <div className="flex flex-col items-end">
-            <span className="text-xs font-bold font-mono leading-none text-blue-400">{day.load_target}</span>
+            <span className={`text-xs font-bold font-mono leading-none ${tssColor}`}>{day.load_target}</span>
             <span className="text-[7.5px] font-semibold uppercase tracking-wider text-slate-500 mt-0.5">TSS</span>
           </div>
         ) : (
