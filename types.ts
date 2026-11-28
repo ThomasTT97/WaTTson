@@ -166,6 +166,7 @@ export interface WeeklyBriefing {
       target_pct?: number; // percentage of FTP as decimal, e.g. 0.75
       label: string;
     }[];
+    manualOverride?: boolean;
   }[];
 }
 

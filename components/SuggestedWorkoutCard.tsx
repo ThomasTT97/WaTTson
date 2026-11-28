@@ -28,6 +28,7 @@ export const formatPlannedRideTitle = (focusStr?: string): string => {
     lower.includes('ride') ||
     lower.includes('run') ||
     lower.includes('swim') ||
+    lower.includes('spin') ||
     lower.includes('rest') ||
     lower.includes('commute') ||
     lower.includes('brick') ||

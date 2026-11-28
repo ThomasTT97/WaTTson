@@ -56,7 +56,10 @@ import {
   parseDetailedScheduleFromDirective,
   normalizeWeekdayToken,
   harmonizeBriefingWithAvailability,
-  parseBriefingDayDate
+  parseBriefingDayDate,
+  detectWorkoutFocusType,
+  buildStructuredWorkoutForType,
+  WorkoutFocusType
 } from "./directiveService";
 
 
@@ -803,27 +806,25 @@ export const getDailySuggestion = async (
             tss: 0,
             workout_steps: []
           };
-        } else if (customSchedRule.durationMins > 0) {
-          const dur = customSchedRule.durationMins;
+        } else if (customSchedRule.durationMins > 0 || customSchedRule.preserveDuration) {
+          const dur = customSchedRule.preserveDuration
+            ? (result.primary.duration_minutes || customSchedRule.durationMins || 60)
+            : customSchedRule.durationMins;
           const isCurrentlyRest = result.primary.intensity === 'Rest' || (result.primary.title || '').toLowerCase().includes('rest');
-          if (isCurrentlyRest || Math.abs((result.primary.duration_minutes || 0) - dur) > 0) {
-            const title = dur >= 60 ? `Endurance Ride (${formatDuration(dur)})` : `Recovery Spin (${formatDuration(dur)})`;
-            const warmMins = Math.max(5, Math.round(dur * 0.15));
-            const coolMins = Math.max(5, Math.round(dur * 0.12));
-            const mainMins = Math.max(1, dur - warmMins - coolMins);
-            const targetWatts = Math.round((ftp || 250) * 0.68);
+          const currentType = detectWorkoutFocusType(result.primary.title);
+          const typeMismatch = Boolean(customSchedRule.workoutType && currentType !== customSchedRule.workoutType);
+          if (isCurrentlyRest || typeMismatch || Math.abs((result.primary.duration_minutes || 0) - dur) > 0) {
+            const targetType: WorkoutFocusType = customSchedRule.workoutType || currentType || (dur >= 60 ? 'endurance' : 'recovery');
+            const built = buildStructuredWorkoutForType(targetType, dur, ftp || 250);
+            const mappedInt: 'Low' | 'Moderate' | 'High' = built.intensity === 'Easy' ? 'Low' : built.intensity === 'Hard' ? 'High' : 'Moderate';
             result.primary = {
-              title,
-              description: `Scheduled ${formatDuration(dur)} aerobic endurance ride aligned with your availability.`,
-              intensity: dur >= 75 ? "Medium" : "Easy",
+              title: built.focus,
+              description: built.why,
+              intensity: mappedInt,
               duration_minutes: dur,
-              type: "endurance",
-              tss: Math.round(dur * (dur >= 75 ? 0.72 : 0.62)),
-              workout_steps: [
-                { duration: warmMins, target_pct: 0.55, target_watts: Math.round((ftp || 250) * 0.55), label: `${warmMins}m Progressive Warm-up (55% FTP)` },
-                { duration: mainMins, target_pct: 0.68, target_watts: targetWatts, label: `${mainMins}m Steady Zone 2 (${targetWatts}W)` },
-                { duration: coolMins, target_pct: 0.50, target_watts: Math.round((ftp || 250) * 0.50), label: `${coolMins}m Easy Spin Cool-down (${Math.round((ftp || 250) * 0.50)}W)` }
-              ]
+              type: targetType === 'endurance' || targetType === 'recovery' ? 'endurance' : 'intervals',
+              tss: built.load_target,
+              workout_steps: built.workout_steps
             };
           }
         }
@@ -881,7 +882,7 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
     }
 
     if (customRule) {
-      if (customRule.isRest) {
+      if (customRule.isRest || (!customRule.preserveDuration && customRule.durationMins <= 0)) {
         const rationale = generateDataDrivenRestRationale({
           dayName: day.day,
           dayIndex: idx,
@@ -897,7 +898,9 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
           workout_steps: []
         };
       } else {
-        targetDuration = customRule.durationMins;
+        targetDuration = customRule.preserveDuration
+          ? (targetDuration > 0 ? targetDuration : customRule.durationMins || 60)
+          : customRule.durationMins;
         isRest = false;
       }
     } else {
@@ -911,9 +914,18 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
       }
     }
 
-    // Determine appropriate focus title and intensity if transitioning from Rest Day to a Workout
+    // Determine appropriate focus title and intensity if transitioning from Rest Day to a Workout or overridden by directive workoutType
     let workoutFocus = day.focus || '';
     let currentIntensity = isRest ? ('Rest' as const) : (day.intensity === 'Rest' ? ('Medium' as const) : day.intensity || ('Medium' as const));
+
+    if (!isRest && customRule?.workoutType) {
+      const existingFocusType = detectWorkoutFocusType(workoutFocus);
+      if (existingFocusType !== customRule.workoutType) {
+        const previewBuilt = buildStructuredWorkoutForType(customRule.workoutType, targetDuration, ftp);
+        workoutFocus = previewBuilt.focus;
+        currentIntensity = previewBuilt.intensity;
+      }
+    }
     
     if (!isRest && (workoutFocus.toLowerCase().includes('rest') || workoutFocus.toLowerCase().includes('off') || !workoutFocus)) {
       if (targetDuration >= 180) {
@@ -943,7 +955,11 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
 
     if (!isRest && !isCommute) {
       const matched = matchWorkoutToLibrary(currentDay.focus || '', targetDuration, currentDay.intensity || 'Medium');
-      if (matched) {
+      const requestedType = customRule?.workoutType || detectWorkoutFocusType(currentDay.focus);
+      const matchedType = matched ? detectWorkoutFocusType(`${matched.category} ${matched.title}`) : undefined;
+      const matchedCompatible = matched && (!requestedType || !matchedType || requestedType === matchedType);
+
+      if (matched && matchedCompatible) {
         const matchedDuration = matched.duration_minutes || 60;
         
         // Intelligent scaling: Adjust Easy steps, preserve Work steps
@@ -987,7 +1003,7 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
         if (totalStepDur !== targetDuration && finalSteps.length > 0) {
           const lastFillerIdx = [...finalSteps].reverse().findIndex(s => (s.target_pct || 0) <= 0.75);
           const idx = lastFillerIdx !== -1 ? finalSteps.length - 1 - lastFillerIdx : finalSteps.length - 1;
-          finalSteps[idx].duration += (targetDuration - totalStepDur);
+          finalSteps[idx].duration = Math.max(1, finalSteps[idx].duration + (targetDuration - totalStepDur));
           finalSteps[idx].label = finalSteps[idx].label.replace(/^\d+m/, `${finalSteps[idx].duration}m`);
         }
 
@@ -1000,24 +1016,22 @@ export const normalizeBriefingDays = (briefing: WeeklyBriefing, planContext?: st
           why: `${matched.category} focus: ${matched.description}`
         };
       } else {
-        // Fallback: Generate structured 3-part endurance steps if library matching didn't return a match
-        const warmMins = Math.max(5, Math.round(targetDuration * 0.15));
-        const coolMins = Math.max(5, Math.round(targetDuration * 0.12));
-        const mainMins = targetDuration - warmMins - coolMins;
-
-        const fallbackSteps = [
-          { duration: warmMins, target_pct: 0.55, target_watts: Math.round(ftp * 0.55), label: `${warmMins}m Progressive Warm-up (55% FTP)` },
-          { duration: mainMins, target_pct: 0.68, target_watts: Math.round(ftp * 0.68), label: `${mainMins}m Steady Zone 2 Endurance (${Math.round(ftp * 0.68)}W)` },
-          { duration: coolMins, target_pct: 0.50, target_watts: Math.round(ftp * 0.50), label: `${coolMins}m Easy Spin Cool-down (${Math.round(ftp * 0.50)}W)` }
-        ];
+        // Fallback: Generate structured steps matching the requested focus/intensity (VO2 Max, Threshold, Sweet Spot, Endurance, etc.)
+        const fallbackType: WorkoutFocusType =
+          requestedType ||
+          (currentIntensity === 'Hard' ? 'vo2' : currentIntensity === 'Medium' ? 'endurance' : (targetDuration >= 60 ? 'endurance' : 'recovery'));
+        const built = buildStructuredWorkoutForType(fallbackType, targetDuration, ftp);
 
         return {
           ...currentDay,
-          focus: currentDay.focus || `Endurance Ride (${formatDuration(targetDuration)})`,
-          workout_steps: fallbackSteps,
+          focus: currentDay.focus && (!requestedType || detectWorkoutFocusType(currentDay.focus) === fallbackType)
+            ? currentDay.focus
+            : built.focus,
+          intensity: built.intensity,
+          workout_steps: built.workout_steps,
           duration_target: targetDuration,
-          load_target: Math.round(targetDuration * (currentIntensity === 'Medium' ? 0.72 : 0.62)),
-          why: 'Aerobic endurance base development and cardiovascular adaptation.'
+          load_target: built.load_target,
+          why: built.why
         };
       }
     }

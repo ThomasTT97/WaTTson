@@ -191,10 +191,10 @@ app.post('/api/gemini/generate', aiLimiter, async (req, res) => {
     });
 
     // Whitelist only safe, lightweight coaching models
-    const allowedModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'];
+    const allowedModels = ['gemini-3.1-flash-lite', 'gemini-4-hydrogen', 'gemini-2.5-flash'];
     const models = options?.preferFlashLite === false
-      ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash']
-      : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'];
+      ? ['gemini-4-hydrogen', 'gemini-3.1-flash-lite', 'gemini-2.5-flash']
+      : ['gemini-3.1-flash-lite', 'gemini-4-hydrogen', 'gemini-2.5-flash'];
 
     let lastError: any = null;
     let lastParsedError: { status: number; message: string; isAuthError: boolean } | null = null;
@@ -287,10 +287,10 @@ app.post('/api/gemini/stream', aiLimiter, async (req, res) => {
       }
     });
 
-    const allowedModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'];
+    const allowedModels = ['gemini-3.1-flash-lite', 'gemini-4-hydrogen', 'gemini-2.5-flash'];
     const models = options?.preferFlashLite === false
-      ? ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash']
-      : ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'];
+      ? ['gemini-4-hydrogen', 'gemini-3.1-flash-lite', 'gemini-2.5-flash']
+      : ['gemini-3.1-flash-lite', 'gemini-4-hydrogen', 'gemini-2.5-flash'];
 
     // Setup Server-Sent Events headers
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');

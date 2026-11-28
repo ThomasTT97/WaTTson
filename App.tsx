@@ -747,7 +747,8 @@ const App: React.FC = () => {
             duration_target: requestedMins,
             load_target: Math.round((existingDay.load_target || Math.round(oldDur * 0.7)) * (requestedMins / oldDur)),
             workout_steps: scaledSteps,
-            why: existingDay.why || 'Targeted aerobic development and progression.'
+            why: existingDay.why || 'Targeted aerobic development and progression.',
+            manualOverride: undefined
           });
         } else {
           let defaultFocus = `Endurance Ride (${formatDuration(requestedMins)})`;
@@ -924,7 +925,12 @@ const App: React.FC = () => {
 
             let mins = 60;
             if (rule) {
-              mins = rule.isRest ? 0 : rule.durationMins;
+              const savedMatch = existingSaved?.days?.find((sd: any) => (sd.dayShort || '').toUpperCase() === dayShort);
+              mins = rule.isRest
+                ? 0
+                : rule.preserveDuration
+                ? (savedMatch !== undefined ? savedMatch.durationMins : (rule.durationMins || 60))
+                : rule.durationMins;
             } else {
               const savedMatch = existingSaved?.days?.find((sd: any) => (sd.dayShort || '').toUpperCase() === dayShort);
               if (savedMatch !== undefined) {
@@ -962,7 +968,25 @@ const App: React.FC = () => {
           console.warn('Failed to update availability record from chat directive:', err);
         }
 
-        harmonizedResult = harmonizeBriefingWithAvailability(weeklyBriefingRef.current, newContext, ftp || 250);
+        // Clear manualOverride on any day explicitly targeted by the newly issued directive so chat edits always take effect
+        const newDirMap = parseDetailedScheduleFromDirective(JSON.stringify([newDir]));
+        const briefingForHarmonize = weeklyBriefingRef.current && newDirMap
+          ? {
+              ...weeklyBriefingRef.current,
+              days: (weeklyBriefingRef.current.days || []).map((d, idx) => {
+                if (!d.manualOverride) return d;
+                const parsedDate = parseBriefingDayDate(d.day, new Date());
+                const dayIso = parsedDate ? toLocalDateStr(parsedDate) : '';
+                const dayToken = normalizeWeekdayToken(d.day);
+                const isTargeted =
+                  (dayIso && Boolean(newDirMap.byDate[dayIso])) ||
+                  (idx < 7 && dayToken && Boolean(newDirMap.byWeekday[dayToken]));
+                return isTargeted ? { ...d, manualOverride: undefined } : d;
+              })
+            }
+          : weeklyBriefingRef.current;
+
+        harmonizedResult = harmonizeBriefingWithAvailability(briefingForHarmonize, newContext, ftp || 250);
       }
     }
 
@@ -2172,6 +2196,8 @@ const App: React.FC = () => {
 
       const data = await getWeeklyBriefing(activities, wellnessData, userGoal, startContext, ftp || undefined, powerCurves, ctxToUse || undefined, force, activeMode, activeTrainingMode, weekIndex, trainingMethodology, existingBriefingForPrompt);
       const harmonizedData = harmonizeBriefingWithAvailability(data, ctxToUse, ftp || 250);
+      let finalTodayAdapted: WeeklyBriefing['days'][0] | undefined = harmonizedData.days?.[0];
+
       setWeeklyBriefing(prev => {
         if (!prev) return harmonizedData;
         
@@ -2216,11 +2242,38 @@ const App: React.FC = () => {
           const daysAfter = prev.days.filter((_, i) => prevDayOffsets[i] >= range.end);
           
           const newDays = [...daysBefore, ...harmonizedData.days, ...daysAfter];
-          
-          return harmonizeBriefingWithAvailability({ ...prev, days: newDays }, ctxToUse, ftp || 250);
+          const finalHarmonized = harmonizeBriefingWithAvailability({ ...prev, days: newDays }, ctxToUse, ftp || 250);
+          finalTodayAdapted = finalHarmonized.days?.[0];
+          return finalHarmonized;
         }
         return harmonizedData;
       });
+
+      if ((!weekIndex || weekIndex === 1) && finalTodayAdapted && suggestion && suggestion.date === todayStr) {
+        const isRestToday = finalTodayAdapted.intensity === 'Rest' || (finalTodayAdapted.duration_target || 0) <= 0;
+        const mappedInt: 'Low' | 'Moderate' | 'High' | 'Rest' = isRestToday
+          ? 'Rest'
+          : finalTodayAdapted.intensity === 'Easy'
+          ? 'Low'
+          : finalTodayAdapted.intensity === 'Hard'
+          ? 'High'
+          : 'Moderate';
+        const syncedSuggestion: DailySuggestion = {
+          ...suggestion,
+          primary: {
+            ...suggestion.primary,
+            title: finalTodayAdapted.focus,
+            description: finalTodayAdapted.why || suggestion.primary.description,
+            intensity: mappedInt,
+            duration_minutes: finalTodayAdapted.duration_target || 0,
+            type: isRestToday ? 'endurance' : (finalTodayAdapted.workout_steps && finalTodayAdapted.workout_steps.length > 3 ? 'intervals' : 'endurance'),
+            tss: finalTodayAdapted.load_target || 0,
+            workout_steps: finalTodayAdapted.workout_steps || []
+          }
+        };
+        setSuggestion(syncedSuggestion);
+        safeSetItem('wattson_daily_cache', JSON.stringify(syncedSuggestion));
+      }
       if (weekIndex) {
         setGeneratedWeeks(prev => [...new Set([...prev, weekIndex])]);
       } else {
@@ -2319,15 +2372,16 @@ const App: React.FC = () => {
     window.location.reload();
   };
 
-  const handleApplyLibraryWorkout = (workout: LibraryWorkout) => {
+  const applyLibrarySuggestionForToday = (workout: LibraryWorkout) => {
     const todayStr = toLocalDateStr(new Date());
+    const activeFtp = ftp || 250;
     const newSuggestion: DailySuggestion = {
       date: todayStr,
       readiness_score: stats.readiness || 8,
       readiness_analysis: "Custom workout applied from the Workout Library.",
       reasoning: `You hand-selected the curated "${workout.title}" workout from your Workout Library.`,
       primary: {
-        title: workout.title,
+        title: formatPlannedRideTitle(workout.title),
         description: workout.description,
         intensity: workout.intensity === 'Rest' ? 'Rest' : (workout.intensity === 'Easy' ? 'Low' : workout.intensity === 'Medium' ? 'Moderate' : 'High'),
         duration_minutes: workout.duration_minutes,
@@ -2335,7 +2389,7 @@ const App: React.FC = () => {
         tss: workout.tss,
         workout_steps: workout.workout_steps.map(step => ({
           duration: step.duration,
-          target_watts: Math.round(step.target_pct * (ftp || 250)),
+          target_watts: Math.round(step.target_pct * activeFtp),
           label: `${formatDuration(step.duration)} ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
         }))
       },
@@ -2347,14 +2401,127 @@ const App: React.FC = () => {
         type: "endurance",
         tss: 15,
         workout_steps: [
-          { duration: 5, target_watts: Math.round(0.45 * (ftp || 250)), label: "5m Spin up warmup" },
-          { duration: 20, target_watts: Math.round(0.52 * (ftp || 250)), label: "20m Steady recovery spin" },
-          { duration: 5, target_watts: Math.round(0.40 * (ftp || 250)), label: "5m Easy cooldown" }
+          { duration: 5, target_watts: Math.round(0.45 * activeFtp), label: "5m Spin up warmup" },
+          { duration: 20, target_watts: Math.round(0.52 * activeFtp), label: "20m Steady recovery spin" },
+          { duration: 5, target_watts: Math.round(0.40 * activeFtp), label: "5m Easy cooldown" }
         ]
       }
     };
     setSuggestion(newSuggestion);
     safeSetItem('wattson_daily_cache', JSON.stringify(newSuggestion));
+  };
+
+  const addLibraryWorkoutToWeeklyPlan = (
+    workout: LibraryWorkout,
+    targetDateStr: string,
+    skipSuggestionSync = false
+  ) => {
+    const cleanDateStr = (targetDateStr || '').slice(0, 10);
+    const match = cleanDateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const targetDate = match
+      ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+      : new Date(today);
+    targetDate.setHours(0, 0, 0, 0);
+
+    const normalizedTargetDateStr = toLocalDateStr(targetDate);
+    const weekday = targetDate.toLocaleDateString('en-US', { weekday: 'short' });
+    const monthDay = targetDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const dayName = `${weekday} (${monthDay})`;
+    const activeFtp = ftp || 250;
+
+    const newDayEntry: WeeklyBriefing['days'][0] = {
+      day: dayName,
+      focus: formatPlannedRideTitle(workout.title),
+      load_target: workout.tss,
+      duration_target: workout.duration_minutes,
+      intensity: workout.intensity,
+      why: workout.description,
+      manualOverride: true,
+      workout_steps: workout.workout_steps.map(step => ({
+        duration: step.duration,
+        target_pct: step.target_pct,
+        target_watts: Math.round(step.target_pct * activeFtp),
+        label: `${formatDuration(step.duration)} ${step.label} (${Math.round(step.target_pct * 100)}% FTP)`
+      }))
+    };
+
+    setWeeklyBriefing(prev => {
+      let updated: WeeklyBriefing;
+
+      if (prev && Array.isArray(prev.days) && prev.days.length > 0) {
+        const dayOffsets: number[] = [];
+        let currentOffset = 0;
+        let prevDayStr = '';
+
+        prev.days.forEach((d, idx) => {
+          if (idx > 0) {
+            const curDayNormalized = (d.day || '').trim().toLowerCase();
+            const prevDayNormalized = prevDayStr.trim().toLowerCase();
+            if (curDayNormalized !== prevDayNormalized) {
+              currentOffset += 1;
+            }
+          }
+          dayOffsets.push(currentOffset);
+          prevDayStr = d.day || '';
+        });
+
+        const mapped = prev.days.map((d, idx) => {
+          const parsed = parseBriefingDayDate(d.day, today);
+          let resolvedDate: Date;
+          if (parsed) {
+            resolvedDate = parsed;
+          } else {
+            resolvedDate = new Date(today);
+            resolvedDate.setDate(today.getDate() + dayOffsets[idx]);
+          }
+          resolvedDate.setHours(0, 0, 0, 0);
+          return {
+            dayObj: d,
+            dateMs: resolvedDate.getTime(),
+            dateStr: toLocalDateStr(resolvedDate),
+            order: idx
+          };
+        });
+
+        const filtered = mapped.filter(item => item.dateStr !== normalizedTargetDateStr);
+        filtered.push({
+          dayObj: newDayEntry,
+          dateMs: targetDate.getTime(),
+          dateStr: normalizedTargetDateStr,
+          order: prev.days.length
+        });
+
+        filtered.sort((a, b) => a.dateMs - b.dateMs || a.order - b.order);
+
+        updated = {
+          ...prev,
+          days: filtered.map(item => item.dayObj)
+        };
+      } else {
+        updated = {
+          phase: 'Custom Selection',
+          focus: formatPlannedRideTitle(workout.title),
+          outlook_summary: 'Custom workout added from the Workout Library.',
+          ftp: activeFtp,
+          days: [newDayEntry]
+        };
+      }
+
+      safeSetItem('wattson_saved_weekly_briefing', JSON.stringify(updated));
+      return updated;
+    });
+
+    if (!skipSuggestionSync && normalizedTargetDateStr === toLocalDateStr(today)) {
+      applyLibrarySuggestionForToday(workout);
+    }
+  };
+
+  const handleApplyLibraryWorkout = (workout: LibraryWorkout) => {
+    applyLibrarySuggestionForToday(workout);
+    addLibraryWorkoutToWeeklyPlan(workout, toLocalDateStr(new Date()), true);
   };
 
   const stats = useMemo(() => {
@@ -4051,6 +4218,7 @@ const App: React.FC = () => {
                     onApplyAsSuggestion={handleApplyLibraryWorkout}
                     onClose={() => setSettingsView("main")}
                     onWorkoutUploaded={upsertIntervalsPlannedEvent}
+                    onAddToWeeklyPlan={addLibraryWorkoutToWeeklyPlan}
                   />
                 )}
               </div>

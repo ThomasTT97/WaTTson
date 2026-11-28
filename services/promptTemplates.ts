@@ -449,32 +449,29 @@ export const getChatMessagePrompt = (p: ChatMessageParams): string => {
     ========================================================
     PLAN ADAPTATION & TWO-STEP CONFIRMATION PROTOCOL:
     ========================================================
-    CRITICAL RULE: You MUST NEVER update the training plan or append the [UPDATE_PLAN: ...] tag before confirming the change in the chat conversation with the user!
+    CRITICAL RULE FOR DIRECT WORKOUT REQUESTS:
+    - When the user asks to schedule, change, or set a specific workout type and duration for today or any day (e.g., "workout of today should only be 1 hour and contain VO2 max intervals", "make today a 1h threshold ride", "schedule 90m endurance for tomorrow"), you MUST immediately apply the change and append the [UPDATE_PLAN: ...] tag at the very end of your message in the same response (e.g., [UPDATE_PLAN: Schedule a 60m VO2 Max Intervals workout for today]).
+    - Two-step confirmation is ONLY required for ambiguous, open-ended schedule tweaks (e.g. "shift my rest days around"). For direct workout requests, apply and sync instantly.
     
     SUPPORTED LANGUAGES: 
     - You MUST support Dutch (Nederlands) natively.
     - If the user asks in Dutch, you respond in Dutch.
     - Confirmation words in Dutch: "ja", "ja graag", "bevestig", "doe maar", "akkoord", "sounds good", "zeker".
 
-    STEP 1: INITIAL PROPOSAL / TWEAK REQUEST
-    - When the user asks to modify, adjust, or change their training plan (e.g. "add more intensity", "make tomorrow rest", "zet morgen op rustdag", "plan een commute op vrijdag"):
-      - Explain the proposed adjustment clearly and concisely (1-2 sentences) along with why it makes sense for their goal.
-      - Explicitly ask the user to confirm the update in the chat before applying it (e.g. "Would you like me to update your training plan with this change?" or in Dutch: "Zal ik je trainingsschema aanpassen met deze wijziging?").
-      - ABSOLUTELY DO NOT append the [UPDATE_PLAN: ...] tag in this initial proposal message.
+    STEP 1: INITIAL PROPOSAL / TWEAK REQUEST (For open-ended tweaks)
+    - When the user asks to modify or adjust their overall schedule without specifying a workout (e.g. "add more intensity", "make tomorrow rest"):
+      - Explain the proposed adjustment clearly and concisely along with why it makes sense.
+      - Explicitly ask the user to confirm the update before applying it, without appending [UPDATE_PLAN: ...] yet.
     
-    STEP 2: EXPLICIT USER CONFIRMATION
-    - ONLY when the user explicitly agrees or confirms the proposed change in their message (e.g. "yes", "confirm", "ja", "doe maar", "bevestig"):
-      - Acknowledge that the training plan is updated in 1 concise sentence.
+    STEP 2: IMMEDIATE EXECUTION / CONFIRMATION
+    - When the user specifies a concrete workout request (e.g., duration + intensity/intervals) or confirms a tweak:
+      - Never claim the training plan is "already" set to the requested change if Today's or that day's current plan differs; state clearly that you are updating the plan now.
+      - Ensure any interval structure you describe matches the requested total duration accurately (including warm-up, work/recovery intervals, and cool-down summing to the requested duration).
       - Append the hidden tag at the very end of your message in the exact format: [UPDATE_PLAN: actual technical directive for the weekly builder].
-      - The technical directive inside the tag MUST be in English to ensure system parsing reliability.
-      - When the change updates availabilities across the coming 7 days (including Today), ALWAYS use the exact parseable format covering ALL 7 days starting with Today (${p.dayOfWeek}):
-        [UPDATE_PLAN: Adjusted weekly schedule: MON: <Rest|Xh|Xm>, TUE: <Rest|Xh|Xm>, WED: <Rest|Xh|Xm>, THU: <Rest|Xh|Xm>, FRI: <Rest|Xh|Xm>, SAT: <Rest|Xh|Xm>, SUN: <Rest|Xh|Xm>]
-      - When changing only a single day (including Today), explicitly include "Today (<Weekday>)" or the weekday and duration/Rest, e.g.:
-        [UPDATE_PLAN: Schedule Today (${p.dayOfWeek}) as Rest] or [UPDATE_PLAN: Schedule a 45m active recovery ride for Today (${p.dayOfWeek})]
-      - Dutch Example: "Schema aangepast! Ik heb een rustdag ingepland voor morgen. [UPDATE_PLAN: Schedule a rest day for tomorrow]"
-    
+      - The technical directive inside the tag MUST be in English and include both duration and workout type, e.g.: [UPDATE_PLAN: Schedule a 60m VO2 Max Intervals workout for Today (${p.dayOfWeek}, ${p.todayIso})].
+
     STEP 3: USER DECLINES OR REQUESTS MODIFICATION
-    - If the user says "no", "nee", "niet doen", declines, or asks for a different option, do NOT update the plan. Provide an alternative proposal and ask if they'd like to apply that one instead.
+    - If the user declines, do NOT update the plan and offer an alternative proposal.
 
     ========================================================
     FINAL TEMPORAL GROUNDING CHECK (MANDATORY):

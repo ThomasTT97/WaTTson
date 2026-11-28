@@ -12,6 +12,7 @@ import {
   GroupedWorkoutStepsList, 
   calculateWorkoutAverageWatts 
 } from './StepLabel';
+import { formatPlannedRideTitle } from './SuggestedWorkoutCard';
 
 interface WorkoutLibraryProps {
   ftp: number;
@@ -19,6 +20,7 @@ interface WorkoutLibraryProps {
   onApplyAsSuggestion: (workout: LibraryWorkout) => void;
   onClose: () => void;
   onWorkoutUploaded?: (event: PlannedWorkout) => void;
+  onAddToWeeklyPlan?: (workout: LibraryWorkout, dateStr: string) => void;
 }
 
 export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
@@ -26,7 +28,8 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
   creds,
   onApplyAsSuggestion,
   onClose,
-  onWorkoutUploaded
+  onWorkoutUploaded,
+  onAddToWeeklyPlan
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -45,10 +48,14 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
 
   const [uploadDate, setUploadDate] = useState<string>(() => {
     const today = new Date();
-    return today.toISOString().split('T')[0];
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, '0');
+    const d = String(today.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   });
   const [isUploading, setIsUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [planAddedSuccess, setPlanAddedSuccess] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [appliedSuccess, setAppliedSuccess] = useState(false);
 
@@ -116,14 +123,17 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
     setIsUploading(true);
     setUploadError(null);
     setUploadSuccess(false);
+    setPlanAddedSuccess(false);
 
     try {
       const workoutText = getIntervalsText(selectedWorkout);
+      const workoutName = formatPlannedRideTitle(selectedWorkout.title);
+      const workoutType = selectedWorkout.sport === 'Running' ? 'Run' : 'Ride';
       const uploaded = await uploadWorkout(creds, {
-        name: selectedWorkout.title,
+        name: workoutName,
         description: selectedWorkout.description,
         date: uploadDate,
-        type: 'Ride',
+        type: workoutType,
         moving_time: selectedWorkout.duration_minutes * 60,
         icu_training_load: selectedWorkout.tss,
         workout_text: workoutText
@@ -131,14 +141,17 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
       if (onWorkoutUploaded) {
         onWorkoutUploaded(uploaded && uploaded.start_date_local ? uploaded : {
           id: uploaded?.id ? String(uploaded.id) : `local-${Date.now()}`,
-          name: selectedWorkout.title,
+          name: workoutName,
           description: workoutText || selectedWorkout.description,
           category: 'WORKOUT',
           start_date_local: `${uploadDate}T09:00:00`,
-          type: 'Ride',
+          type: workoutType,
           moving_time: selectedWorkout.duration_minutes * 60,
           icu_training_load: selectedWorkout.tss
         });
+      }
+      if (onAddToWeeklyPlan) {
+        onAddToWeeklyPlan(selectedWorkout, uploadDate);
       }
       setUploadSuccess(true);
       setTimeout(() => {
@@ -149,6 +162,17 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
     } finally {
       setIsUploading(false);
     }
+  };
+
+  const handleAddToPlanOnly = () => {
+    if (!selectedWorkout || !onAddToWeeklyPlan) return;
+    setUploadError(null);
+    setUploadSuccess(false);
+    onAddToWeeklyPlan(selectedWorkout, uploadDate);
+    setPlanAddedSuccess(true);
+    setTimeout(() => {
+      setPlanAddedSuccess(false);
+    }, 3000);
   };
 
   const handleApplySuggestion = () => {
@@ -247,6 +271,10 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
                         onClick={() => {
                           setSelectedWorkout(workout);
                           setActionTab('today');
+                          setUploadError(null);
+                          setUploadSuccess(false);
+                          setPlanAddedSuccess(false);
+                          setAppliedSuccess(false);
                         }}
                         className="w-full px-4 py-2.5 text-left hover:bg-white/[0.03] transition-colors flex items-center justify-between gap-3 cursor-pointer"
                       >
@@ -423,11 +451,11 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
                     >
                       {appliedSuccess ? (
                         <>
-                          <Check size={12} /> Applied Successfully!
+                          <Check size={12} /> Added to Today&apos;s Plan!
                         </>
                       ) : (
                         <>
-                          Set as Today's Suggested Workout <ArrowRight size={11} />
+                          Set as Today&apos;s Workout <ArrowRight size={11} />
                         </>
                       )}
                     </button>
@@ -438,14 +466,19 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
                       <input
                         type="date"
                         value={uploadDate}
-                        onChange={e => setUploadDate(e.target.value)}
-                        className="bg-white/[0.02] border border-white/[0.08] rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-white/20 font-medium max-w-[130px]"
+                        onChange={e => {
+                          setUploadDate(e.target.value);
+                          setUploadSuccess(false);
+                          setPlanAddedSuccess(false);
+                          setUploadError(null);
+                        }}
+                        className="bg-white/[0.02] border border-white/[0.08] rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-white/20 font-medium max-w-[130px]"
                       />
                       
                       <button
                         onClick={handleUploadToIntervals}
                         disabled={isUploading}
-                        className="flex-1 py-2 bg-white hover:bg-slate-200 disabled:opacity-30 text-slate-950 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                        className="flex-1 py-2.5 bg-white hover:bg-slate-200 disabled:opacity-30 text-slate-950 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-1 cursor-pointer"
                       >
                         {isUploading ? (
                           <>
@@ -453,15 +486,34 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
                           </>
                         ) : uploadSuccess ? (
                           <>
-                            <Check size={10} /> Synced!
+                            <Check size={10} /> Added &amp; Synced!
                           </>
                         ) : (
                           <>
-                            Upload to Calendar
+                            Add to Plan &amp; Intervals
                           </>
                         )}
                       </button>
                     </div>
+
+                    {onAddToWeeklyPlan && (
+                      <button
+                        type="button"
+                        onClick={handleAddToPlanOnly}
+                        disabled={isUploading}
+                        className="w-full py-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-300 rounded-xl text-[10px] font-semibold tracking-wide transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
+                      >
+                        {planAddedSuccess ? (
+                          <>
+                            <Check size={11} className="text-emerald-400" /> Added to Weekly Plan!
+                          </>
+                        ) : (
+                          <>
+                            <Calendar size={11} /> Add to Weekly Plan Only
+                          </>
+                        )}
+                      </button>
+                    )}
 
                     {uploadError && (
                       <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[10px] text-rose-400 font-medium leading-tight text-center">
@@ -470,7 +522,12 @@ export const WorkoutLibrary: React.FC<WorkoutLibraryProps> = ({
                     )}
                     {uploadSuccess && (
                       <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-[10px] text-emerald-400 font-medium leading-tight text-center">
-                        ✓ Successfully added to Intervals.icu!
+                        ✓ Added to your weekly plan &amp; synced to Intervals.icu!
+                      </div>
+                    )}
+                    {planAddedSuccess && (
+                      <div className="p-2.5 bg-blue-500/10 border border-blue-500/20 rounded-xl text-[10px] text-blue-300 font-medium leading-tight text-center">
+                        ✓ Added to your weekly plan for {uploadDate}.
                       </div>
                     )}
                   </div>

@@ -146,15 +146,317 @@ export function parseBriefingDayDate(dayStr: string | null | undefined, referenc
   return bestCandidate;
 }
 
+export type WorkoutFocusType =
+  | 'vo2'
+  | 'anaerobic'
+  | 'threshold'
+  | 'sweetspot'
+  | 'tempo'
+  | 'endurance'
+  | 'recovery';
+
 export interface ScheduleRule {
   durationMins: number;
   isRest: boolean;
   targetDateStr?: string;
+  workoutType?: WorkoutFocusType;
+  preserveDuration?: boolean;
 }
 
 export interface DetailedScheduleMap {
   byWeekday: Record<string, ScheduleRule>;
   byDate: Record<string, ScheduleRule>;
+}
+
+export function detectWorkoutFocusType(text?: string | null): WorkoutFocusType | undefined {
+  const lower = (text || '').toLowerCase();
+  if (!lower) return undefined;
+  if (/(?:vo2|v02|aerobic\s*capacity|norwegian|30\/30)/.test(lower)) return 'vo2';
+  if (/(?:anaerobic|sprint|burst|micro|ronnestad|rønnestad|30\/15|neuromuscular)/.test(lower)) return 'anaerobic';
+  if (/(?:threshold|over[\s/-]*under|lthr|lactate|\bftp\b)/.test(lower)) return 'threshold';
+  if (/(?:sweet\s*spot|sweetspot|\bsst\b)/.test(lower)) return 'sweetspot';
+  if (/\b(?:tempo|zone\s*3|z3)\b/.test(lower)) return 'tempo';
+  if (/(?:recovery|recup|flush|\bspin\b)/.test(lower)) return 'recovery';
+  if (/(?:endurance|zone\s*2|\bz2\b|aerobic\s*base|\bbase\b)/.test(lower)) return 'endurance';
+  if (/\bintervals?\b/.test(lower)) return 'vo2';
+  return undefined;
+}
+
+export function buildStructuredWorkoutForType(
+  workoutType: WorkoutFocusType,
+  durationMins: number,
+  userFtp: number = 250
+): {
+  focus: string;
+  intensity: 'Easy' | 'Medium' | 'Hard';
+  load_target: number;
+  why: string;
+  workout_steps: { duration: number; target_pct: number; target_watts: number; label: string }[];
+} {
+  const safeMins = Math.max(15, Math.round(durationMins || 60));
+  const ftp = Math.max(50, Math.round(userFtp || 250));
+  const durLabel = formatDuration(safeMins);
+
+  const makeStep = (duration: number, pct: number, name: string) => ({
+    duration,
+    target_pct: pct,
+    target_watts: Math.round(ftp * pct),
+    label: `${duration}m ${name} (${Math.round(pct * 100)}% FTP)`
+  });
+
+  if (workoutType === 'vo2') {
+    let warmMins = Math.min(18, Math.max(8, Math.round(safeMins * 0.22)));
+    let coolMins = Math.min(15, Math.max(5, Math.round(safeMins * 0.15)));
+    const workPool = Math.max(6, safeMins - warmMins - coolMins);
+    const repDur = safeMins < 40 ? 3 : 4;
+    const recDur = 3;
+    const reps = Math.max(2, Math.min(5, Math.floor((workPool + recDur) / (repDur + recDur))));
+    const intervalBlockMins = reps * repDur + Math.max(0, reps - 1) * recDur;
+    const leftover = Math.max(0, safeMins - warmMins - coolMins - intervalBlockMins);
+
+    let aerobicTailMins = 0;
+    if (leftover > 12) {
+      aerobicTailMins = leftover;
+    } else if (leftover > 0) {
+      const addWarm = Math.ceil(leftover / 2);
+      const addCool = leftover - addWarm;
+      warmMins += addWarm;
+      coolMins += addCool;
+    }
+
+    const steps: { duration: number; target_pct: number; target_watts: number; label: string }[] = [
+      makeStep(warmMins, 0.55, 'Progressive Warm-up')
+    ];
+    for (let r = 1; r <= reps; r++) {
+      steps.push(makeStep(repDur, 1.12, `VO2 Max Interval ${r}`));
+      if (r < reps) {
+        steps.push(makeStep(recDur, 0.50, `Active Recovery ${r}`));
+      }
+    }
+    if (aerobicTailMins > 0) {
+      steps.push(makeStep(aerobicTailMins, 0.65, 'Steady Zone 2 Aerobic Extension'));
+    }
+    steps.push(makeStep(coolMins, 0.45, 'Easy Spin Cool-down'));
+
+    // Guarantee exact sum
+    const sum = steps.reduce((s, st) => s + st.duration, 0);
+    if (sum !== safeMins && steps.length > 0) {
+      const lastIdx = steps.length - 1;
+      steps[lastIdx].duration = Math.max(1, steps[lastIdx].duration + (safeMins - sum));
+      steps[lastIdx].label = steps[lastIdx].label.replace(/^\d+m/, `${steps[lastIdx].duration}m`);
+    }
+
+    return {
+      focus: `VO2 Max Intervals (${durLabel})`,
+      intensity: 'Hard',
+      load_target: Math.round(safeMins * 0.92),
+      why: 'High-intensity VO2 max intervals to expand aerobic ceiling and maximal oxygen uptake.',
+      workout_steps: steps
+    };
+  }
+
+  if (workoutType === 'anaerobic') {
+    let warmMins = Math.min(18, Math.max(8, Math.round(safeMins * 0.25)));
+    let coolMins = Math.min(15, Math.max(5, Math.round(safeMins * 0.18)));
+    const workPool = Math.max(6, safeMins - warmMins - coolMins);
+    const repDur = 1;
+    const recDur = 3;
+    const reps = Math.max(3, Math.min(8, Math.floor((workPool + recDur) / (repDur + recDur))));
+    const intervalBlockMins = reps * repDur + Math.max(0, reps - 1) * recDur;
+    const leftover = Math.max(0, safeMins - warmMins - coolMins - intervalBlockMins);
+
+    let aerobicTailMins = 0;
+    if (leftover > 12) {
+      aerobicTailMins = leftover;
+    } else if (leftover > 0) {
+      const addWarm = Math.ceil(leftover / 2);
+      warmMins += addWarm;
+      coolMins += leftover - addWarm;
+    }
+
+    const steps = [makeStep(warmMins, 0.55, 'Progressive Warm-up')];
+    for (let r = 1; r <= reps; r++) {
+      steps.push(makeStep(repDur, 1.30, `Anaerobic Surge ${r}`));
+      if (r < reps) {
+        steps.push(makeStep(recDur, 0.48, `Spin Recovery ${r}`));
+      }
+    }
+    if (aerobicTailMins > 0) {
+      steps.push(makeStep(aerobicTailMins, 0.65, 'Steady Zone 2 Aerobic Extension'));
+    }
+    steps.push(makeStep(coolMins, 0.45, 'Easy Spin Cool-down'));
+
+    return {
+      focus: `Anaerobic Intervals (${durLabel})`,
+      intensity: 'Hard',
+      load_target: Math.round(safeMins * 0.90),
+      why: 'Supra-threshold repeats to elevate anaerobic capacity and peak sprint repeatability.',
+      workout_steps: steps
+    };
+  }
+
+  if (workoutType === 'threshold') {
+    let warmMins = Math.min(18, Math.max(8, Math.round(safeMins * 0.20)));
+    let coolMins = Math.min(15, Math.max(5, Math.round(safeMins * 0.13)));
+    const workPool = Math.max(8, safeMins - warmMins - coolMins);
+    const repDur = safeMins >= 60 ? 8 : 6;
+    const recDur = 3;
+    const reps = Math.max(2, Math.min(4, Math.floor((workPool + recDur) / (repDur + recDur))));
+    const intervalBlockMins = reps * repDur + Math.max(0, reps - 1) * recDur;
+    const leftover = Math.max(0, safeMins - warmMins - coolMins - intervalBlockMins);
+
+    let aerobicTailMins = 0;
+    if (leftover > 12) {
+      aerobicTailMins = leftover;
+    } else if (leftover > 0) {
+      const addWarm = Math.ceil(leftover / 2);
+      warmMins += addWarm;
+      coolMins += leftover - addWarm;
+    }
+
+    const steps = [makeStep(warmMins, 0.58, 'Progressive Warm-up')];
+    for (let r = 1; r <= reps; r++) {
+      steps.push(makeStep(repDur, 0.98, `Threshold Block ${r}`));
+      if (r < reps) {
+        steps.push(makeStep(recDur, 0.55, `Active Recovery ${r}`));
+      }
+    }
+    if (aerobicTailMins > 0) {
+      steps.push(makeStep(aerobicTailMins, 0.66, 'Steady Zone 2 Endurance'));
+    }
+    steps.push(makeStep(coolMins, 0.48, 'Easy Cool-down'));
+
+    return {
+      focus: `Threshold Intervals (${durLabel})`,
+      intensity: 'Hard',
+      load_target: Math.round(safeMins * 0.88),
+      why: 'Sustained lactate threshold efforts to raise functional threshold power and clearance.',
+      workout_steps: steps
+    };
+  }
+
+  if (workoutType === 'sweetspot') {
+    let warmMins = Math.min(15, Math.max(6, Math.round(safeMins * 0.18)));
+    let coolMins = Math.min(12, Math.max(5, Math.round(safeMins * 0.12)));
+    const workPool = Math.max(10, safeMins - warmMins - coolMins);
+    const repDur = safeMins >= 75 ? 15 : 12;
+    const recDur = 3;
+    const reps = Math.max(2, Math.min(4, Math.floor((workPool + recDur) / (repDur + recDur))));
+    const intervalBlockMins = reps * repDur + Math.max(0, reps - 1) * recDur;
+    const leftover = Math.max(0, safeMins - warmMins - coolMins - intervalBlockMins);
+
+    let aerobicTailMins = 0;
+    if (leftover > 12) {
+      aerobicTailMins = leftover;
+    } else if (leftover > 0) {
+      const addWarm = Math.ceil(leftover / 2);
+      warmMins += addWarm;
+      coolMins += leftover - addWarm;
+    }
+
+    const steps = [makeStep(warmMins, 0.56, 'Progressive Warm-up')];
+    for (let r = 1; r <= reps; r++) {
+      steps.push(makeStep(repDur, 0.90, `Sweet Spot Block ${r}`));
+      if (r < reps) {
+        steps.push(makeStep(recDur, 0.55, `Easy Spin Recovery ${r}`));
+      }
+    }
+    if (aerobicTailMins > 0) {
+      steps.push(makeStep(aerobicTailMins, 0.68, 'Steady Zone 2 Endurance'));
+    }
+    steps.push(makeStep(coolMins, 0.50, 'Easy Cool-down'));
+
+    return {
+      focus: `Sweet Spot Intervals (${durLabel})`,
+      intensity: 'Medium',
+      load_target: Math.round(safeMins * 0.80),
+      why: 'High-efficiency sweet spot intervals to build aerobic power with manageable fatigue.',
+      workout_steps: steps
+    };
+  }
+
+  if (workoutType === 'tempo') {
+    const warmMins = Math.max(5, Math.round(safeMins * 0.16));
+    const coolMins = Math.max(5, Math.round(safeMins * 0.14));
+    const mainMins = Math.max(5, safeMins - warmMins - coolMins);
+    return {
+      focus: `Tempo Ride (${durLabel})`,
+      intensity: 'Medium',
+      load_target: Math.round(safeMins * 0.76),
+      why: 'Sustained Zone 3 aerobic tempo block to enhance muscular endurance.',
+      workout_steps: [
+        makeStep(warmMins, 0.55, 'Progressive Warm-up'),
+        makeStep(mainMins, 0.80, 'Steady Tempo Block'),
+        makeStep(coolMins, 0.50, 'Easy Cool-down')
+      ]
+    };
+  }
+
+  if (workoutType === 'recovery') {
+    const warmMins = Math.max(4, Math.round(safeMins * 0.15));
+    const coolMins = Math.max(4, Math.round(safeMins * 0.15));
+    const mainMins = Math.max(5, safeMins - warmMins - coolMins);
+    return {
+      focus: `Recovery Spin (${durLabel})`,
+      intensity: 'Easy',
+      load_target: Math.round(safeMins * 0.45),
+      why: 'Low-intensity active recovery spin to flush fatigue and promote blood flow.',
+      workout_steps: [
+        makeStep(warmMins, 0.45, 'Spin-up Warm-up'),
+        makeStep(mainMins, 0.52, 'Steady Recovery Spin'),
+        makeStep(coolMins, 0.40, 'Easy Cool-down')
+      ]
+    };
+  }
+
+  // Default: endurance
+  const intensity: 'Easy' | 'Medium' = safeMins >= 75 ? 'Medium' : 'Easy';
+  const warmMins = Math.max(5, Math.round(safeMins * 0.15));
+  const coolMins = Math.max(5, Math.round(safeMins * 0.12));
+  const mainMins = Math.max(5, safeMins - warmMins - coolMins);
+  return {
+    focus: safeMins >= 60 ? `Endurance Ride (${durLabel})` : `Recovery Spin (${durLabel})`,
+    intensity,
+    load_target: Math.round(safeMins * (intensity === 'Medium' ? 0.72 : 0.62)),
+    why: 'Builds mitochondrial density and steady aerobic endurance.',
+    workout_steps: [
+      makeStep(warmMins, 0.55, 'Progressive Warm-up'),
+      makeStep(mainMins, 0.68, 'Steady Zone 2 Endurance'),
+      makeStep(coolMins, 0.50, 'Easy Cool-down')
+    ]
+  };
+}
+
+export function doesDayMatchWorkoutType(
+  day: WeeklyBriefing['days'][0] | undefined,
+  expectedType: WorkoutFocusType,
+  userFtp: number = 250
+): boolean {
+  if (!day || !Array.isArray(day.workout_steps) || day.workout_steps.length === 0) return false;
+  const ftp = userFtp > 0 ? userFtp : 250;
+  const maxPct = day.workout_steps.reduce((mx, s) => {
+    const pct = s.target_pct || (s.target_watts ? s.target_watts / ftp : 0);
+    return Math.max(mx, pct);
+  }, 0);
+  const detectedFocus = detectWorkoutFocusType(day.focus);
+  if (detectedFocus && detectedFocus !== expectedType) return false;
+
+  switch (expectedType) {
+    case 'vo2':
+      return maxPct >= 1.00;
+    case 'anaerobic':
+      return maxPct >= 1.15;
+    case 'threshold':
+      return maxPct >= 0.92 && maxPct < 1.15;
+    case 'sweetspot':
+      return maxPct >= 0.85 && maxPct < 1.02;
+    case 'tempo':
+      return maxPct >= 0.75 && maxPct < 0.92;
+    case 'recovery':
+      return maxPct <= 0.65;
+    case 'endurance':
+      return maxPct <= 0.78;
+  }
 }
 
 function toIsoDateStr(d: Date): string {
@@ -216,6 +518,11 @@ function parseSingleTextIntoScheduleMap(
   if (!text || !text.trim()) return false;
   let matchedAny = false;
   const trimmed = text.trim();
+  const isMultiDaySchedule =
+    /weekly\s+schedule/i.test(trimmed) ||
+    WEEKDAYS_SHORT.filter((short, idx) =>
+      new RegExp(`\\b(${short}|${WEEKDAYS[idx]})\\b`, 'i').test(trimmed)
+    ).length >= 2;
 
   const dayAliases: Record<string, string[]> = {
     mon: ['mon', 'monday', 'ma', 'maandag'],
@@ -240,54 +547,91 @@ function parseSingleTextIntoScheduleMap(
   for (const rel of relativeSpecs) {
     const relDateStr = addDaysToIso(refDateStr, rel.offset);
     const relToken = weekdayTokenFromIso(relDateStr);
+    const hasRelMention = new RegExp(`\\b(?:${rel.pattern})\\b`, 'i').test(trimmed);
+    if (!hasRelMention) continue;
 
-    // Format A: "Today: Rest", "Today (Mon): 1h", "Today (Monday, Nov 23): Rest"
+    // Format A: "Today: Rest", "Today (Mon): 1h", "Today (Monday, Nov 23): 60m VO2 Max"
     const colonRegex = new RegExp(`(?:^|[\\s,;])(?:${rel.pattern})(?:\\s*\\([^)]*\\))?\\s*[:=\\-]\\s*(${durationAtom})\\b`, 'i');
-    // Format B: "Make/set/schedule/keep today (Monday) (as/to/for) (a) Rest day / 1h / 45 min"
-    const verbRegex = new RegExp(`\\b(?:make|set|schedule|keep|change|adapt|update|turn|plan|zet|maak|plan)\\s+(?:my\\s+|the\\s+)?(?:workout\\s+(?:for|on)\\s+)?(?:${rel.pattern})(?:\\s*\\([^)]*\\))?(?:\\s+(?:as|to|into|for|op|als))?(?:\\s+(?:a|an|een))?\\s+(${durationAtom})\\b`, 'i');
-    // Format C: "Schedule a 45m active recovery ride for today" / "Rest day for today"
-    const reverseRegex = new RegExp(`\\b(${durationAtom})(?:\\s+(?:zone\\s*\\d+\\s+)?(?:active\\s+recovery|recovery|endurance|tempo|threshold|sweet\\s*spot|interval|easy|ride|spin|workout|session))?\\s+(?:for|on|voor|op)\\s+(?:${rel.pattern})\\b`, 'i');
-    // Format D: "<rel> as/is/will be (a) rest day"
+    // Format B: "Make/set/schedule today ... to/as 1h / 60m / Rest"
+    const verbRegex = new RegExp(`\\b(?:make|set|schedule|keep|change|adapt|update|turn|plan|zet|maak)\\s+(?:my\\s+|the\\s+)?(?:workout\\s+(?:for|on|of)\\s+)?(?:${rel.pattern})(?:\\s*\\([^)]*\\))?(?:\\s+(?:should\\s+(?:only\\s+)?be|as|to|into|for|with|op|als))?(?:\\s+(?:a|an|een))?\\s+(${durationAtom})\\b`, 'i');
+    // Format C: "Schedule a 60m VO2 Max interval session for Today (Saturday, 2026-11-28)" / "1h endurance ride for today"
+    const reverseRegex = new RegExp(`\\b(${durationAtom})(?:\\s+[^,.;\\n()]{1,65}?)?\\s+(?:for|on|voor|op)\\s+(?:${rel.pattern})\\b`, 'i');
+    // Format D: "workout of today should only be 1 hour" / "today's workout ... 1 hour"
+    const subjectVerbRegex = new RegExp(`\\b(?:${rel.pattern})(?:'s)?(?:\\s+\\w+){0,4}\\s+(?:should|must|can|will)?\\s*(?:only\\s+)?(?:be|last)\\s+(?:a\\s+|an\\s+)?(${durationAtom})\\b`, 'i');
+    // Format E: "<rel> as/is/will be (a) rest day"
     const isRestRegex = new RegExp(`\\b(?:${rel.pattern})(?:\\s*\\([^)]*\\))?\\s+(?:is|as|will\\s+be|wordt|als)\\s+(?:a\\s+|an\\s+|een\\s+)?(rest\\s*day|rust\\s*dag|day\\s*off|rest|rust|off)\\b`, 'i');
 
     const match =
       trimmed.match(colonRegex) ||
       trimmed.match(verbRegex) ||
       trimmed.match(reverseRegex) ||
+      trimmed.match(subjectVerbRegex) ||
       trimmed.match(isRestRegex);
+
+    const workoutType = !isMultiDaySchedule ? detectWorkoutFocusType(trimmed) : undefined;
 
     if (match && match[1]) {
       const parsed = parseDurationValueToMins(match[1]);
       if (parsed) {
-        const rule: ScheduleRule = { ...parsed, targetDateStr: relDateStr };
+        const rule: ScheduleRule = {
+          ...parsed,
+          targetDateStr: relDateStr,
+          ...(workoutType && !parsed.isRest ? { workoutType } : {})
+        };
         target.byDate[relDateStr] = rule;
         target.byWeekday[relToken] = rule;
         matchedAny = true;
       }
+    } else if (!isMultiDaySchedule && workoutType) {
+      // Type-only directive for Today/Tomorrow (e.g. "Change today's workout to VO2 Max intervals")
+      const existingRule = target.byDate[relDateStr] || target.byWeekday[relToken];
+      const rule: ScheduleRule = {
+        durationMins: existingRule && existingRule.durationMins > 0 ? existingRule.durationMins : 60,
+        isRest: false,
+        targetDateStr: relDateStr,
+        workoutType,
+        preserveDuration: !(existingRule && existingRule.durationMins > 0)
+      };
+      target.byDate[relDateStr] = rule;
+      target.byWeekday[relToken] = rule;
+      matchedAny = true;
     }
   }
 
-  // 2. Parse explicit weekday rules (e.g., "MON: Rest", "Monday (Nov 23): 1h", "Tuesday 1h30m", "make Monday rest")
+  // 2. Parse explicit weekday rules (e.g., "MON: Rest", "Monday (Nov 23): 1h", "60m VO2 Max ride on Tuesday")
   dayTokens.forEach(day => {
     const aliasPattern = dayAliases[day].join('|');
 
-    // Colon/equals or direct follow: "MON: 1h", "Monday (Nov 23): Rest", "Tue 90m" (note optional parenthetical date)
+    // Colon/equals or direct follow: "MON: 1h", "Monday (Nov 23): Rest", "Tue 90m"
     const directRegex = new RegExp(`(?:^|[\\s,;])(${aliasPattern})(?:\\s*\\([^)]*\\))?\\s*(?::|=|\\s)\\s*(${durationAtom})\\b`, 'i');
     // Verb phrasing: "make/set/schedule/change Monday (as/to/for) (a) Rest day / 1h"
-    const verbRegex = new RegExp(`\\b(?:make|set|schedule|keep|change|adapt|update|turn|plan|zet|maak)\\s+(?:my\\s+|the\\s+)?(?:${aliasPattern})(?:\\s*\\([^)]*\\))?(?:\\s+(?:as|to|into|for|op|als))?(?:\\s+(?:a|an|een))?\\s+(${durationAtom})\\b`, 'i');
-    // Reverse phrasing: "1h ride on Tuesday" / "Rest day on Monday"
-    const reverseRegex = new RegExp(`\\b(${durationAtom})(?:\\s+(?:zone\\s*\\d+\\s+)?(?:active\\s+recovery|recovery|endurance|tempo|threshold|sweet\\s*spot|interval|easy|ride|spin|workout|session))?\\s+(?:for|on|voor|op)\\s+(?:${aliasPattern})\\b`, 'i');
+    const verbRegex = new RegExp(`\\b(?:make|set|schedule|keep|change|adapt|update|turn|plan|zet|maak)\\s+(?:my\\s+|the\\s+)?(?:workout\\s+(?:for|on|of)\\s+)?(${aliasPattern})(?:\\s*\\([^)]*\\))?(?:\\s+(?:as|to|into|for|with|op|als))?(?:\\s+(?:a|an|een))?\\s+(${durationAtom})\\b`, 'i');
+    // Reverse phrasing: "60m VO2 Max ride on Tuesday" / "Rest day on Monday" (guarded against crossing parentheses or commas)
+    const reverseRegex = isMultiDaySchedule
+      ? null
+      : new RegExp(`\\b(${durationAtom})(?:\\s+[^,.;\\n()]{1,65}?)?\\s+(?:for|on|voor|op)\\s+(${aliasPattern})\\b`, 'i');
 
     const match =
       trimmed.match(directRegex) ||
       trimmed.match(verbRegex) ||
-      trimmed.match(reverseRegex);
+      (reverseRegex ? trimmed.match(reverseRegex) : null);
 
     if (match) {
+      // Avoid matching a parenthetical weekday that follows "today/tomorrow" e.g. "for Today (Saturday, 2026-11-28)"
+      const matchedStr = match[0] || '';
+      const beforeMatch = trimmed.slice(0, match.index || 0);
+      if (/\(\s*$/.test(beforeMatch) && !matchedStr.includes(':')) {
+        return;
+      }
+
       const durStr = match[2] ?? match[1];
       const parsed = parseDurationValueToMins(durStr);
       if (parsed) {
-        target.byWeekday[day] = { ...parsed };
+        const workoutType = !isMultiDaySchedule ? detectWorkoutFocusType(trimmed) : undefined;
+        target.byWeekday[day] = {
+          ...parsed,
+          ...(workoutType && !parsed.isRest ? { workoutType } : {})
+        };
         matchedAny = true;
       }
     }
@@ -557,8 +901,13 @@ export function harmonizeBriefingWithAvailability(
       existingDayByWeekdayInWeek1 ||
       (!anyExistingHasDate ? existingDays[i] : undefined);
 
-    if (rule) {
-      if (rule.isRest || rule.durationMins <= 0) {
+    if (existingDay?.manualOverride) {
+      harmonizedWeek1Days.push({
+        ...existingDay,
+        day: dayName
+      });
+    } else if (rule) {
+      if (rule.isRest || (!rule.preserveDuration && rule.durationMins <= 0)) {
         // Rest Day
         harmonizedWeek1Days.push({
           day: dayName,
@@ -570,14 +919,23 @@ export function harmonizeBriefingWithAvailability(
           workout_steps: []
         });
       } else {
-        // Active workout of exact duration rule.durationMins
-        const requestedMins = rule.durationMins;
+        // Active workout of exact duration requestedMins
+        const requestedMins = rule.preserveDuration
+          ? (existingDay && existingDay.duration_target > 0 ? existingDay.duration_target : rule.durationMins || 60)
+          : rule.durationMins;
+
         const hadWorkout = existingDay && 
           existingDay.intensity !== 'Rest' && 
           !existingDay.focus.toLowerCase().includes('rest') && 
           (existingDay.duration_target || 0) > 0;
 
-        if (hadWorkout && existingDay) {
+        const impliedExistingType = existingDay ? detectWorkoutFocusType(existingDay.focus) : undefined;
+        const requiredType = rule.workoutType || impliedExistingType;
+        const existingMatchesRequiredType = requiredType
+          ? doesDayMatchWorkoutType(existingDay, requiredType, userFtp)
+          : true;
+
+        if (hadWorkout && existingDay && existingMatchesRequiredType) {
           const oldDur = existingDay.duration_target || 60;
           const isWorkStep = (s: any) => {
             const pct = s.target_pct || (s.target_watts && userFtp ? s.target_watts / userFtp : 0);
@@ -615,14 +973,8 @@ export function harmonizeBriefingWithAvailability(
               });
             }
           } else {
-            const warmMins = Math.max(5, Math.round(requestedMins * 0.15));
-            const coolMins = Math.max(5, Math.round(requestedMins * 0.12));
-            const mainMins = requestedMins - warmMins - coolMins;
-            scaledSteps = [
-              { duration: warmMins, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${warmMins}m Warm-up (55% FTP)` },
-              { duration: mainMins, target_pct: 0.68, target_watts: Math.round(userFtp * 0.68), label: `${mainMins}m Aerobic Pace (68% FTP)` },
-              { duration: coolMins, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${coolMins}m Cool-down (55% FTP)` }
-            ];
+            const built = buildStructuredWorkoutForType(requiredType || 'endurance', requestedMins, userFtp);
+            scaledSteps = built.workout_steps;
           }
 
           const sumStepDur = scaledSteps.reduce((sum, s) => sum + s.duration, 0);
@@ -642,30 +994,18 @@ export function harmonizeBriefingWithAvailability(
             why: existingDay.why || 'Targeted aerobic development and progression.'
           });
         } else {
-          // New structured Endurance / Aerobic Ride
-          const defaultIntensity: 'Medium' | 'Easy' = requestedMins >= 75 ? 'Medium' : 'Easy';
-          const defaultFocus = requestedMins >= 60
-            ? `Endurance Ride (${formatDuration(requestedMins)})`
-            : `Recovery Spin (${formatDuration(requestedMins)})`;
-
-          const warmMins = Math.max(5, Math.round(requestedMins * 0.15));
-          const coolMins = Math.max(5, Math.round(requestedMins * 0.12));
-          const mainMins = Math.max(1, requestedMins - warmMins - coolMins);
-
-          const steps = [
-            { duration: warmMins, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${warmMins}m Warm-up (55% FTP)` },
-            { duration: mainMins, target_pct: 0.68, target_watts: Math.round(userFtp * 0.68), label: `${mainMins}m Aerobic Pace (68% FTP)` },
-            { duration: coolMins, target_pct: 0.55, target_watts: Math.round(userFtp * 0.55), label: `${coolMins}m Cool-down (55% FTP)` }
-          ];
+          // Build a fresh structured workout matching the requested type (VO2 Max, Threshold, Sweet Spot, Endurance, etc.)
+          const targetType: WorkoutFocusType = requiredType || (requestedMins >= 60 ? 'endurance' : 'recovery');
+          const built = buildStructuredWorkoutForType(targetType, requestedMins, userFtp);
 
           harmonizedWeek1Days.push({
             day: dayName,
-            focus: defaultFocus,
-            intensity: defaultIntensity,
+            focus: built.focus,
+            intensity: built.intensity,
             duration_target: requestedMins,
-            load_target: Math.round(requestedMins * (defaultIntensity === 'Medium' ? 0.72 : 0.62)),
-            why: 'Builds mitochondrial density and steady aerobic endurance.',
-            workout_steps: steps
+            load_target: built.load_target,
+            why: built.why,
+            workout_steps: built.workout_steps
           });
         }
       }

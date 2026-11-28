@@ -309,7 +309,17 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
+    const safetyTimeout = setTimeout(() => {
+      setIsChatLoading(false);
+      setStreamingMessageId(null);
+      isStreamCompleteRef.current = true;
+      if (!targetTextRef.current) {
+        targetTextRef.current = "I apologize, but the request timed out. Please try asking again.";
+      }
+    }, 50000);
+
     startSmoothTyping(() => {
+      clearTimeout(safetyTimeout);
       const fullText = targetTextRef.current;
       const lowerText = fullText.toLowerCase();
       const tagMarker = '[update_plan:';
@@ -368,7 +378,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
       );
       isStreamCompleteRef.current = true;
     } catch (err: any) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) {
+        clearTimeout(safetyTimeout);
+        setIsChatLoading(false);
+        setStreamingMessageId(null);
+        return;
+      }
       console.error("Coaching stream error:", err);
       const msg = err?.message || "";
       if (msg.includes("Settings > Secrets") || msg.includes("API key") || msg.includes("API_KEY_INVALID") || msg.includes("quota exceeded")) {
@@ -405,6 +420,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = (props) => {
       }
       isStreamCompleteRef.current = true;
     } finally {
+      clearTimeout(safetyTimeout);
       abortControllerRef.current = null;
     }
   };
